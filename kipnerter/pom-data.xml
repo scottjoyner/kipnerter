@@ -9,8 +9,8 @@
 	<packaging>war</packaging>
 	<name>kipnerter</name>
 	<organization>
-		<name>NCSU Computer Science Department</name>
-		<url>https://www.csc.ncsu.edu/</url>
+		<name>Kipnerter LLC</name>
+		<url>https://www.kipnerter.com/</url>
 	</organization>
 	<licenses>
 		<license>

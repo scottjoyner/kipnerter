@@ -21,18 +21,18 @@
 
 		<!-- List of persistent classes -->
 		<mapping
-			class="edu.ncsu.csc.itrust2.models.persistent.LogEntry" />
-		<mapping class="edu.ncsu.csc.itrust2.models.persistent.User" />
+			class="ims.scjoyner.inc.kipnerter.models.persistent.LogEntry" />
+		<mapping class="ims.scjoyner.inc.kipnerter.models.persistent.User" />
 		<mapping
-			class="edu.ncsu.csc.itrust2.models.persistent.Personnel" />
+			class="ims.scjoyner.inc.kipnerter.models.persistent.Personnel" />
 		<mapping
-			class="edu.ncsu.csc.itrust2.models.persistent.PasswordResetToken" />
+			class="ims.scjoyner.inc.kipnerter.models.persistent.PasswordResetToken" />
 		<mapping
-			class="edu.ncsu.csc.itrust2.models.persistent.LoginAttempt" />
+			class="ims.scjoyner.inc.kipnerter.models.persistent.LoginAttempt" />
 		<mapping
-			class="edu.ncsu.csc.itrust2.models.persistent.LoginLockout" />
+			class="ims.scjoyner.inc.kipnerter.models.persistent.LoginLockout" />
 		<mapping
-			class="edu.ncsu.csc.itrust2.models.persistent.LoginBan" />
+			class="ims.scjoyner.inc.kipnerter.models.persistent.LoginBan" />
 
 	</session-factory>
 </hibernate-configuration>

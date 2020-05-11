@@ -33,7 +33,6 @@ public class DefaultController {
     /**
      * Add or delete user
      *
-     * @param model
      *            data for front end
      * @return mapping
      */

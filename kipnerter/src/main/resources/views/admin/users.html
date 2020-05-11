@@ -30,7 +30,7 @@
 			
 		    $scope.users = [];
 	        $scope.loadUsers = function () {
-	          $http.get("/iTrust2/api/v1/users").then(
+	          $http.get("/kipnerter/api/v1/users").then(
 	            function (response) {
 	              $scope.users = response.data;
 	              $scope.message = "";
@@ -46,7 +46,7 @@
 		            $scope.errorAdding = err;
 		            $scope.successMessage = "";
 		          } else {
-		            $http.post("/iTrust2/api/v1/users", $scope.user).then(
+		            $http.post("/kipnerter/api/v1/users", $scope.user).then(
 		              function (response) {
 		            	    $scope.loadUsers();
 		                $scope.user.username = "";
@@ -65,7 +65,7 @@
 	        }
 			
 	        $scope.deleteUser = function(user) {
-	            $http.delete('/iTrust2/api/v1/users/' + user.username).then(
+	            $http.delete('/kipnerter/api/v1/users/' + user.username).then(
 	              function (response) {
 	                $scope.loadUsers();
 	              }, function (rejection) {

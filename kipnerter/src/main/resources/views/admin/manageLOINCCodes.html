@@ -31,13 +31,13 @@
 				$scope.val_icd = null;
 
 				//gets scale types
-				$http.get("/iTrust2/api/v1/labresultscale").then(
+				$http.get("/kipnerter/api/v1/labresultscale").then(
 		            function (response) {
 		            	$scope.property_types = response.data
 		            });
 				
 		        //Loads the ICD-10 code enumeration values for drop down menus
-		        $http.get("/iTrust2/api/v1/icdcodes").then(
+		        $http.get("/kipnerter/api/v1/icdcodes").then(
 		            function (response) {
 		                $scope.ICD_list = response.data;
 		                $scope.ICD_list.push({code: null})
@@ -153,7 +153,7 @@
 				$scope.codes = [];
 				$scope.loadTable = function() {
 					// get list of icd codes from rest api
-					$http.get("/iTrust2/api/v1/loinccodes").then(
+					$http.get("/kipnerter/api/v1/loinccodes").then(
 							function(response) {
 								$scope.codes = response.data; 
 								$scope.message = "";
@@ -199,7 +199,7 @@
  					} else {
 						if($scope.editMode) {
 							$scope.editMode = false;
-							$http.put("/iTrust2/api/v1/loinccode/" + $scope.currentlyEditing, $scope.code).then(
+							$http.put("/kipnerter/api/v1/loinccode/" + $scope.currentlyEditing, $scope.code).then(
 									function(response) {
 										$scope.success = "Successfully edited code"
 										$scope.errorAdding = "";
@@ -211,7 +211,7 @@
 									})
 
 						} else {
-							$http.post("/iTrust2/api/v1/loinccodes", $scope.code).then(
+							$http.post("/kipnerter/api/v1/loinccodes", $scope.code).then(
 									function(response) {
 										$scope.errorAdding = "";
 										$scope.success = "Successfully added code";
@@ -270,7 +270,7 @@
 
 				//Deletes a code
 				$scope.removeRow = function(code) {
-					$http.delete('/iTrust2/api/v1/loinccode/' + code.id).then(
+					$http.delete('/kipnerter/api/v1/loinccode/' + code.id).then(
 							function(response) {
 								$scope.loadTable();
 								$scope.message = "";

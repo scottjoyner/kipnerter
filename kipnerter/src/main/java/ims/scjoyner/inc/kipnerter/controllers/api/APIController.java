@@ -1,4 +1,3 @@
-package ims.scjoyner.inc.kipnerter.controllers.api;
 
 import com.google.gson.Gson;
 

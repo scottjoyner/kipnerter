@@ -14,7 +14,7 @@
 				$scope.codes = [];
 				$scope.loadTable = function() {
 					// get list of icd codes from rest api
-					$http.get("/iTrust2/api/v1/icdcodes").then(
+					$http.get("/kipnerter/api/v1/icdcodes").then(
 							function(response) {
 								$scope.codes = response.data; // or just response?
 								$scope.message = "";
@@ -31,7 +31,7 @@
 					} else if (/^[A-Z][0-9][0-9|A-Z](\.[0-9|A-Z]{0,4})?$/.test($scope.code.code) == false) {
 						$scope.errorAdding = "Code doesn't meet specifications";
 					} else {
-						$http.post("/iTrust2/api/v1/icdcodes", $scope.code).then(
+						$http.post("/kipnerter/api/v1/icdcodes", $scope.code).then(
 								function(response) {
 									$scope.loadTable();
 									$scope.code.code = "";
@@ -45,7 +45,7 @@
 				}
 				
 				$scope.removeRow = function(code) {
-					$http.delete('/iTrust2/api/v1/icdcode/' + code.id).then(
+					$http.delete('/kipnerter/api/v1/icdcode/' + code.id).then(
 							function(response) {
 								$scope.loadTable();
 								$scope.message = "";
