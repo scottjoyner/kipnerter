@@ -56,7 +56,38 @@ public enum TransactionType {
     /**
      * Missing email log
      */
-    CREATE_MISSING_EMAIL_LOG(106, "Missing Email Created", false);
+    CREATE_MISSING_EMAIL_LOG(106, "Missing Email Created", false), 
+    /**
+     * modify user demographics
+     */
+    EDIT_DEMOGRAPHICS(107, "Modified User Demographics", false), 
+    /**
+     * View User Demographics
+     */
+    VIEW_DEMOGRAPHICS(108, "Viewed User Demographics", false), 
+    /**
+     * Created new demographics
+     */
+    CREATE_DEMOGRAPHICS(109, "Created new user demographics", true), 
+    /**
+     * View a users log entrys
+     */
+    VIEW_USER_LOG(110, "View user log", false), 
+    /**
+     * Updated Password
+     */
+    PASSWORD_UPDATE_SUCCESS(111, "Password Updated", true), 
+    /**
+     * Create Password Change email
+     */
+    CREATE_PW_CHANGE_EMAIL(112, "Password created for email", true), 
+    /**
+     * Failed to update Password
+     */
+    PASSWORD_UPDATE_FAILURE(113, "Failed to update password", true);
+	
+	
+	
     
     /**
      * Creates a TransactionType for logging events
