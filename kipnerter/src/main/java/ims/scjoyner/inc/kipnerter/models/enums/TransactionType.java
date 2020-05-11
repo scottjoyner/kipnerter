@@ -48,7 +48,15 @@ public enum TransactionType {
     /**
      * User changed/updated
      */
-    UPDATE_USER ( 104, "User updated", false );
+    UPDATE_USER ( 104, "User updated", false ), 
+    /**
+     * Created a new lockout email from a failed request
+     */
+    CREATE_LOCKOUT_EMAIL (105, "Lockout Email Created", false ), 
+    /**
+     * Missing email log
+     */
+    CREATE_MISSING_EMAIL_LOG(106, "Missing Email Created", false);
     
     /**
      * Creates a TransactionType for logging events

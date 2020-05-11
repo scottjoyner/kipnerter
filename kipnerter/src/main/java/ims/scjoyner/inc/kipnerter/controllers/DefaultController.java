@@ -38,7 +38,30 @@ public class DefaultController {
      * @return mapping
      */
     @RequestMapping ( value = "/" )
-    public String manageUser ( final Model model ) {
+    public String index ( final Model model ) {
         return "/home";
+    }
+    /**
+     * Add or delete user
+     *
+     * @param model
+     *            data for front end
+     * @return mapping
+     */
+    @RequestMapping ( value = "/home" )
+    public String viewHomePage ( final Model model ) {
+        return "/home";
+    }
+    
+    /**
+     * Add or delete user
+     *
+     * @param model
+     *            data for front end
+     * @return mapping
+     */
+    @RequestMapping ( value = "/index" )
+    public String viewIndex () {
+        return "/index";
     }
 }

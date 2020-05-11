@@ -1,40 +1,38 @@
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-  <modelVersion>4.0.0</modelVersion>
-
-  <groupId>ims.scjoyner.inc</groupId>
-  <artifactId>kipnerter</artifactId>
-  <version>0.0.1</version>
-  <packaging>war</packaging>
-
-  <name>kipnerter</name>
-  <url>http://kipnerter.com</url>
-  
-  <organization>
-		<name>Kipnerter LLC.</name>
-		<url>http://kipnerter.com/</url>
-  </organization>
-  <licenses>
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+	<modelVersion>4.0.0</modelVersion>
+	<groupId>ims.scjoyner.inc</groupId>
+	<artifactId>kipnerter</artifactId>
+	<version>4.0.0</version>
+	<packaging>war</packaging>
+	<name>kipnerter</name>
+	<organization>
+		<name>NCSU Computer Science Department</name>
+		<url>https://www.csc.ncsu.edu/</url>
+	</organization>
+	<licenses>
 		<license>
 			<name>The Apache Software License, Version 2.0</name>
 			<url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
 			<distribution>repo</distribution>
 		</license>
 	</licenses>
-<properties>
+	<properties>
 		<m2eclipse.wtp.contextRoot>/kipnerter</m2eclipse.wtp.contextRoot>
 		<java.version>1.8</java.version>
-		<checkstyle.config.location>src/test/resources/reporting/csc_checkstyle.xml</checkstyle.config.location>
-		<cucumber.options>--plugin json:target/cucumber.json</cucumber.options>
-		<jacoco.version>0.8.4</jacoco.version>
-		<surefire.version>2.22.0</surefire.version>
-		<failsafe.version>2.22.0</failsafe.version>
 		<maven.compiler.version>3.7.0</maven.compiler.version>
-		<jetty.version>9.2.2.v20140723</jetty.version>
-		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 	</properties>
 
-<dependencyManagement>
+	<repositories>
+		<repository>
+			<id>jitpack.io</id>
+			<url>https://jitpack.io</url>
+		</repository>
+	</repositories>
+
+	<dependencyManagement>
 		<dependencies>
 			<dependency>
 				<groupId>org.springframework</groupId>
@@ -139,7 +137,7 @@
 		<dependency>
 			<groupId>org.springframework.security</groupId>
 			<artifactId>spring-security-config</artifactId>
-			<version>4.2.2.RELEASE</version>
+			<version>4.2.4.RELEASE</version>
 			<scope>compile</scope>
 		</dependency>
 		<dependency>
@@ -230,7 +228,7 @@
 		<dependency>
 			<groupId>org.springframework.security</groupId>
 			<artifactId>spring-security-test</artifactId>
-			<version>4.2.4.RELEASE</version>
+			<version>4.2.2.RELEASE</version>
 			<scope>test</scope>
 		</dependency>
 		<dependency>
@@ -275,7 +273,8 @@
 			<artifactId>hibernate-entitymanager</artifactId>
 			<version>5.0.11.Final</version>
 		</dependency>
-		
+
+
 
 		<dependency>
 			<groupId>io.github.bonigarcia</groupId>
@@ -384,7 +383,9 @@
 			<version>1.5.5</version>
 		</dependency>
 
+
 	</dependencies>
+
 
 	<build>
 		<finalName>kipnerter</finalName>
@@ -406,139 +407,26 @@
 				</configuration>
 			</plugin>
 			<plugin>
-				<artifactId>maven-war-plugin</artifactId>
-				<version>2.6</version>
-				<configuration>
-					<warSourceDirectory>WebRoot</warSourceDirectory>
-					<failOnMissingWebXml>false</failOnMissingWebXml>
-				</configuration>
-			</plugin>
-			<plugin>
-				<groupId>org.eclipse.jetty</groupId>
-				<artifactId>jetty-maven-plugin</artifactId>
-				<version>${jetty.version}</version>
-				<configuration>
-					<war>${project.basedir}/target/kipnerter.war</war>
-					<scanIntervalSeconds>10</scanIntervalSeconds>
-					<stopPort>8005</stopPort>
-					<stopKey>STOP</stopKey>
-					<webApp>
-						<contextPath>/kipnerter</contextPath>
-					</webApp>
-				</configuration>
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>exec-maven-plugin</artifactId>
+				<version>1.4.0</version>
 				<executions>
 					<execution>
-						<id>start-jetty</id>
-						<phase>pre-integration-test</phase>
+						<id>GenerateTestData</id>
+						<phase>process-test-classes</phase>
 						<goals>
-							<goal>stop</goal>
-							<goal>start</goal>
+							<goal>java</goal>
 						</goals>
 						<configuration>
-							<scanIntervalSeconds>0</scanIntervalSeconds>
-							<daemon>true</daemon>
-						</configuration>
-					</execution>
-					<execution>
-						<id>stop-jetty</id>
-						<phase>post-integration-test</phase>
-						<goals>
-							<goal>stop</goal>
-						</goals>
-					</execution>
-				</executions>
-			</plugin>
-			<!-- <plugin> <groupId>org.apache.tomcat.maven</groupId> <artifactId>tomcat7-maven-plugin</artifactId> 
-				<version>2.2</version> <configuration> <server>myserver</server> </configuration> 
-				<executions> <execution> <phase>pre-integration-test</phase> <goals> <goal>redeploy</goal> 
-				</goals> </execution> </executions> </plugin> -->
-			<plugin>
-				<groupId>org.jacoco</groupId>
-				<artifactId>jacoco-maven-plugin</artifactId>
-				<version>${jacoco.version}</version>
-				<executions>
-					<execution>
-						<id>pre-unit-test</id>
-						<goals>
-							<goal>prepare-agent</goal>
-						</goals>
-						<configuration>
-							<destFile>${project.build.directory}/coverage-reports/jacoco-ut.exec</destFile>
-							<propertyName>surefireArgLine</propertyName>
-						</configuration>
-					</execution>
-					<execution>
-						<id>post-unit-test</id>
-						<phase>test</phase>
-						<goals>
-							<goal>report</goal>
-						</goals>
-						<configuration>
-							<dataFile>${project.build.directory}/coverage-reports/jacoco-ut.exec</dataFile>
-							<outputDirectory>${project.reporting.outputDirectory}/jacoco-ut</outputDirectory>
-						</configuration>
-					</execution>
-					<execution>
-						<id>pre-integration-test</id>
-						<phase>pre-integration-test</phase>
-						<goals>
-							<goal>prepare-agent</goal>
-						</goals>
-						<configuration>
-							<destFile>${project.build.directory}/coverage-reports/jacoco-it.exec</destFile>
-							<propertyName>failsafeArgLine</propertyName>
-						</configuration>
-					</execution>
-					<execution>
-						<id>post-integration-test</id>
-						<phase>post-integration-test</phase>
-						<goals>
-							<goal>report</goal>
-						</goals>
-						<configuration>
-							<dataFile>${project.build.directory}/coverage-reports/jacoco-it.exec</dataFile>
-							<outputDirectory>${project.reporting.outputDirectory}/jacoco-it</outputDirectory>
-						</configuration>
-					</execution>
-				</executions>
-			</plugin>
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-surefire-plugin</artifactId>
-				<version>${surefire.version}</version>
-				<configuration>
-					<argLine>${surefireArgLine}</argLine>
-					<skip>${skipSurefireTests}</skip>
-					<useSystemClassLoader>false</useSystemClassLoader>
-				</configuration>
-			</plugin>
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-failsafe-plugin</artifactId>
-				<version>${failsafe.version}</version>
-				<configuration>
-					<systemPropertyVariables>
-						<server.port>8080</server.port>
-						<cucumber.options>${cucumber.options}</cucumber.options>
-					</systemPropertyVariables>
-					<useSystemClassLoader>false</useSystemClassLoader>
-				</configuration>
-				<executions>
-					<execution>
-						<id>integration-tests</id>
-						<phase>integration-test</phase>
-						<goals>
-							<goal>integration-test</goal>
-						</goals>
-						<configuration>
-							<argLine>${failsafeArgLine}</argLine>
+							<classpathScope>test</classpathScope>
+							<mainClass>ims.scjoyner.inc.kipnerter.utils.HibernateDataGenerator</mainClass>
+							<cleanupDaemonThreads>false</cleanupDaemonThreads>
 						</configuration>
 					</execution>
 				</executions>
 			</plugin>
 		</plugins>
 	</build>
-	
 	<reporting>
 		<plugins>
 			<plugin>
@@ -572,6 +460,7 @@
 												<artifactId>exec-maven-plugin</artifactId>
 												<versionRange>[1.0.0,)</versionRange>
 												<goals>
+
 													<goal>java</goal>
 												</goals>
 											</pluginExecutionFilter>
@@ -588,5 +477,6 @@
 			</build>
 		</profile>
 	</profiles>
-	<description>Kipnerter Java v.01</description>
+	<description>kipnerter v0</description>
 </project>
+
