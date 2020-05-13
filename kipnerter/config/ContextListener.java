@@ -1,4 +1,4 @@
-package edu.ncsu.csc.itrust2.config;
+package ims.scjoyner.inc.kipnerter.config;
 
 import javax.servlet.ServletContextEvent;
 import javax.servlet.ServletContextListener;

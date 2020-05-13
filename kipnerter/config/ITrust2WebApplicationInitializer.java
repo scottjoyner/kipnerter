@@ -8,11 +8,11 @@
  * KIND, either express or implied. See the License for the specific language
  * governing permissions and limitations under the License.
  */
-package edu.ncsu.csc.itrust2.config;
+package ims.scjoyner.inc.kipnerter.config;
 
 import org.springframework.core.annotation.Order;
 import org.springframework.security.web.context.AbstractSecurityWebApplicationInitializer;
 
 @Order ( 2 )
-public class ITrust2WebApplicationInitializer extends AbstractSecurityWebApplicationInitializer {
+public class KipnerterWebApplicationInitializer extends AbstractSecurityWebApplicationInitializer {
 }

@@ -17,7 +17,7 @@ import org.springframework.web.servlet.support.AbstractAnnotationConfigDispatche
 
 import ims.scjoyner.inc.kipnerter.mvc.config.WebMvcConfiguration;
 
-public class ITrust2ApplicationInitializer extends AbstractAnnotationConfigDispatcherServletInitializer {
+public class KipnerterApplicationInitializer extends AbstractAnnotationConfigDispatcherServletInitializer {
 
     @Override
     protected Class< ? >[] getRootConfigClasses () {
