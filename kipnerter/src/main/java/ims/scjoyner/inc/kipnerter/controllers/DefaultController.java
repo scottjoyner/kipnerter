@@ -14,32 +14,23 @@ import org.springframework.web.servlet.view.RedirectView;
 @Controller
 public class DefaultController {
 
-//    /**
-//     * This controller is used to redirect the authenticated user to the
-//     * appropriate landing screen based on their role.
-//     *
-//     * @param model
-//     *            The data from the front end
-//     * @return The page to be displayed to the user
-//     */
-//    @RequestMapping ( value = "/" )
-//    public RedirectView index ( final Model model ) {
-//        final Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-//        final List< ? extends GrantedAuthority> auths = (List< ? extends GrantedAuthority>) auth.getAuthorities();
-//        final GrantedAuthority ga = auths.get( 0 );
-//        return new RedirectView( ims.scjoyner.inc.kipnerter.models.enums.Role.valueOf( ga.toString() ).getLanding() );
-//    }
-//    
     /**
-     * Add or delete user
+     * This controller is used to redirect the authenticated user to the
+     * appropriate landing screen based on their role.
      *
-     *            data for front end
-     * @return mapping
+     * @param model
+     *            The data from the front end
+     * @return The page to be displayed to the user
      */
     @RequestMapping ( value = "/" )
-    public String index ( final Model model ) {
-        return "/home";
+    public RedirectView index ( final Model model ) {
+        final Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        final List< ? extends GrantedAuthority> auths = (List< ? extends GrantedAuthority>) auth.getAuthorities();
+        final GrantedAuthority ga = auths.get( 0 );
+        return new RedirectView( ims.scjoyner.inc.kipnerter.models.enums.Role.valueOf( ga.toString() ).getLanding() );
     }
+    
+
     /**
      * Add or delete user
      *

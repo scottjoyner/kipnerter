@@ -71,8 +71,8 @@ public class FailureHandler extends SimpleUrlAuthenticationFailureHandler {
                     final String email = EmailUtil.getEmailByUsername( name );
                     if ( email != null ) {
                         try {
-                            EmailUtil.sendEmail( email, "iTrust2: Your account has beeen locked out",
-                                    "Your iTrust2 account has been locked out due to too many failed log in attemtps." );
+                            EmailUtil.sendEmail( email, "Kipnerter: Your account has beeen locked out",
+                                    "Your Kipnerter account has been locked out due to too many failed log in attemtps." );
                             LoggerUtil.log( TransactionType.CREATE_LOCKOUT_EMAIL, name );
                         }
                         catch ( final MessagingException e ) {
@@ -116,8 +116,8 @@ public class FailureHandler extends SimpleUrlAuthenticationFailureHandler {
                         final String email = EmailUtil.getEmailByUsername( name );
                         if ( email != null ) {
                             try {
-                                EmailUtil.sendEmail( email, "iTrust2: Your account has beeen locked out",
-                                        "Your iTrust2 account has been locked out due to too many failed log in attemtps." );
+                                EmailUtil.sendEmail( email, "kipnerter: Your account has beeen locked out",
+                                        "Your kipnerter account has been locked out due to too many failed log in attemtps." );
                                 LoggerUtil.log( TransactionType.CREATE_LOCKOUT_EMAIL, name );
                             }
                             catch ( final MessagingException e ) {
@@ -142,8 +142,8 @@ public class FailureHandler extends SimpleUrlAuthenticationFailureHandler {
                         final String email = EmailUtil.getEmailByUsername( name );
                         if ( email != null ) {
                             try {
-                                EmailUtil.sendEmail( email, "iTrust2: Your account has beeen locked out",
-                                        "Your iTrust2 account has been locked out due to too many failed log in attemtps." );
+                                EmailUtil.sendEmail( email, "kipnerter: Your account has beeen locked out",
+                                        "Your kipnerter account has been locked out due to too many failed log in attemtps." );
                                 LoggerUtil.log( TransactionType.CREATE_LOCKOUT_EMAIL, name );
                             }
                             catch ( final MessagingException e ) {
