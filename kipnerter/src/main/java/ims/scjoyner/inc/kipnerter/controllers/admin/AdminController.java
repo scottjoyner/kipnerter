@@ -91,5 +91,19 @@ public class AdminController {
         return "/admin/manageICDCodes";
     }
 
+    /**
+     * Add code
+     *
+     * @param model
+     *            data for front end
+     * @return mapping
+     */
+    @RequestMapping ( value = "admin/home" )
+    @PreAuthorize ( "hasRole('ROLE_ADMIN')" )
+    public String viewDashboard ( final Model model ) {
+        return "/admin/dashboard/index";
+    }
+    
+    
 
 }

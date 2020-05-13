@@ -38,9 +38,9 @@ public class UserController {
      *
      * @return the image for Dr. Jenkins
      */
-    @GetMapping ( "/resources/img/DrJenkins.jpg" )
-    public String viewDrJenkins () {
-        return "../resources/img/DrJekins.jpg";
+    @GetMapping ( "/resources/img/wolfpack.jpg" )
+    public String viewWolfpack () {
+        return "../resources/img/wolfpack.jpg";
     }
 
 }
