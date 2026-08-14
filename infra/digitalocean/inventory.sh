@@ -11,6 +11,14 @@ printf '\n== Account ==\n'
 doctl account get
 printf '\n== Droplets ==\n'
 doctl compute droplet list
+printf '\n== SSH keys ==\n'
+doctl compute ssh-key list || true
+printf '\n== Snapshots ==\n'
+doctl compute snapshot list || true
+printf '\n== Backups: 4 GB target ==\n'
+doctl compute droplet backups 414171540 || true
+printf '\n== Backups: legacy Caddy ==\n'
+doctl compute droplet backups 302306571 || true
 printf '\n== Firewalls ==\n'
 doctl compute firewall list || true
 printf '\n== Volumes ==\n'
