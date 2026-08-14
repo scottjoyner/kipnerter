@@ -28,10 +28,14 @@ jobs:
       - name: Verify targets before mutation
         run: |
           set -euo pipefail
+          record_data() {
+            local domain="$1" id="$2"
+            doctl compute domain records list "$domain" --format ID,Data --no-header | awk -v id="$id" '$1==id {print $2; exit}'
+          }
           doctl compute droplet get 592440152 --format ID,Name,PublicIPv4,Status
           test "$(doctl compute droplet get 592440152 --format PublicIPv4 --no-header | tr -d '[:space:]')" = "$NEW_IP"
-          test "$(doctl compute domain records get kipnerter.com "$KIPNERTER_APEX_ID" --format Data --no-header | tr -d '[:space:]')" = "$OLD_IP"
-          test "$(doctl compute domain records get scottjoyner.dev "$SCOTT_APEX_ID" --format Data --no-header | tr -d '[:space:]')" = "$OLD_IP"
+          test "$(record_data kipnerter.com "$KIPNERTER_APEX_ID")" = "$OLD_IP"
+          test "$(record_data scottjoyner.dev "$SCOTT_APEX_ID")" = "$OLD_IP"
 
       - name: Cut over apex records and create companion hostnames
         run: |
@@ -58,11 +62,15 @@ jobs:
       - name: Confirm protected records remain unchanged
         run: |
           set -euo pipefail
+          record_data() {
+            local domain="$1" id="$2"
+            doctl compute domain records list "$domain" --format ID,Data --no-header | awk -v id="$id" '$1==id {$1=""; sub(/^ +/, ""); print; exit}'
+          }
           doctl compute domain records list kipnerter.com
           doctl compute domain records list scottjoyner.dev
-          test "$(doctl compute domain records get kipnerter.com 143075248 --format Data --no-header | tr -d '[:space:]')" = '165.227.81.99'
-          test "$(doctl compute domain records get kipnerter.com 143978159 --format Data --no-header | tr -d '[:space:]')" = 'QAm5WRkTRhMIgMaUYAPOaTSyBCxuhYlTG9vug6WSN2U'
-          test "$(doctl compute domain records get scottjoyner.dev 1715121096 --format Data --no-header | tr -d '[:space:]')" = 'openai-domain-verification=dv-C1j5JjYDVQHg1sdrLWMjSWfe'
+          test "$(record_data kipnerter.com 143075248)" = '165.227.81.99'
+          test "$(record_data kipnerter.com 143978159)" = 'QAm5WRkTRhMIgMaUYAPOaTSyBCxuhYlTG9vug6WSN2U'
+          test "$(record_data scottjoyner.dev 1715121096)" = 'openai-domain-verification=dv-C1j5JjYDVQHg1sdrLWMjSWfe'
 
       - name: Wait for public DNS and TLS
         run: |
