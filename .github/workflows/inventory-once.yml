@@ -5,6 +5,7 @@ on:
     branches: [master]
     paths:
       - .github/workflows/inventory-once.yml
+      - infra/digitalocean/inventory.sh
 
 permissions:
   contents: read
