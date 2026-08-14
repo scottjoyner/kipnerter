@@ -1,0 +1,58 @@
+name: infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Infrastructure operation
+        required: true
+        type: choice
+        options:
+          - inventory
+          - terraform-plan
+        default: inventory
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install doctl
+        if: inputs.action == 'inventory'
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Inventory DigitalOcean
+        if: inputs.action == 'inventory'
+        env:
+          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+        run: bash infra/digitalocean/inventory.sh
+
+      - name: Setup Terraform
+        if: inputs.action == 'terraform-plan'
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform plan
+        if: inputs.action == 'terraform-plan'
+        working-directory: infra/digitalocean/terraform
+        env:
+          TF_VAR_digitalocean_token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          terraform init -backend=false
+          terraform validate
+          terraform plan -input=false -lock=false -out=tfplan
+
+      - name: Render Terraform plan
+        if: inputs.action == 'terraform-plan'
+        working-directory: infra/digitalocean/terraform
+        run: terraform show -no-color tfplan
+
+# Deliberately no terraform apply here. Persistent remote state and import of
+# existing resources must be established before CI is permitted to mutate DO.

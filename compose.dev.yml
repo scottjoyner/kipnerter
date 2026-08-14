@@ -1,0 +1,13 @@
+services:
+  web:
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+
+  api:
+    environment:
+      KIPNERTER_ENV: development
+      CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8000:8000"

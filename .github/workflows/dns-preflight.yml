@@ -1,0 +1,53 @@
+name: dns-preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_ip:
+        description: Expected Kipnerter production IPv4
+        required: true
+        default: "143.198.19.141"
+
+permissions:
+  contents: read
+
+jobs:
+  dns:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check public DNS
+        env:
+          EXPECTED_IP: ${{ inputs.expected_ip }}
+        run: |
+          set -euo pipefail
+
+          check_record() {
+            host="$1"
+            expected="$2"
+            echo "== $host =="
+            system_value="$(dig +short A "$host" | tail -n1 || true)"
+            google_value="$(dig @8.8.8.8 +short A "$host" | tail -n1 || true)"
+            cloudflare_value="$(dig @1.1.1.1 +short A "$host" | tail -n1 || true)"
+            echo "system:     ${system_value:-<none>}"
+            echo "google:     ${google_value:-<none>}"
+            echo "cloudflare: ${cloudflare_value:-<none>}"
+            if [[ -n "$expected" ]]; then
+              [[ "$google_value" == "$expected" ]] || return 1
+              [[ "$cloudflare_value" == "$expected" ]] || return 1
+            fi
+          }
+
+          check_record preview.kipnerter.com "$EXPECTED_IP"
+          check_record api.kipnerter.com "$EXPECTED_IP"
+
+      - name: Show apex and authoritative nameservers
+        if: always()
+        run: |
+          echo '== kipnerter.com A =='
+          dig +short A kipnerter.com
+          echo '== kipnerter.com NS =='
+          dig +short NS kipnerter.com
+          echo '== TTL view =='
+          dig kipnerter.com A +noall +answer
+          dig preview.kipnerter.com A +noall +answer
+          dig api.kipnerter.com A +noall +answer
