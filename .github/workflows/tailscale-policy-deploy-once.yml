@@ -1,0 +1,97 @@
+name: tailscale-policy-deploy-once
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/tailscale-policy-deploy-once.yml
+
+permissions:
+  contents: read
+
+jobs:
+  apply-and-deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply minimally extended live tailnet policy
+        env:
+          TS_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          TS_CLIENT_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+        run: |
+          set -euo pipefail
+          TOKEN_JSON=$(curl -fsS -u "$TS_CLIENT_ID:$TS_CLIENT_SECRET" -d '' https://api.tailscale.com/api/v2/oauth/token)
+          ACCESS_TOKEN=$(printf '%s' "$TOKEN_JSON" | jq -r '.access_token')
+          cat > "$RUNNER_TEMP/policy.hujson" <<'POLICY'
+          {
+            "grants": [
+              {"src": ["*"], "dst": ["*"], "ip": ["*"]}
+            ],
+            "ssh": [
+              {
+                "action": "check",
+                "src": ["autogroup:member"],
+                "dst": ["autogroup:self"],
+                "users": ["autogroup:nonroot", "root"]
+              },
+              {
+                "action": "check",
+                "src": ["autogroup:admin"],
+                "dst": ["tag:kipnerter-prod"],
+                "users": ["autogroup:nonroot", "root"]
+              },
+              {
+                "action": "accept",
+                "src": ["tag:kipnerter-ci"],
+                "dst": ["tag:kipnerter-prod"],
+                "users": ["kipnerter"]
+              }
+            ],
+            "nodeAttrs": [
+              {"target": ["autogroup:member"], "attr": ["funnel"]}
+            ],
+            "tagOwners": {
+              "tag:kipnerter-ci": ["autogroup:admin"],
+              "tag:kipnerter-prod": ["autogroup:admin"],
+              "tag:kipnerter-edge": ["autogroup:admin"]
+            }
+          }
+          POLICY
+          curl -fsS \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H 'Content-Type: application/hujson' \
+            --data-binary @"$RUNNER_TEMP/policy.hujson" \
+            https://api.tailscale.com/api/v2/tailnet/-/acl >/tmp/policy-response
+          echo "Tailnet policy applied."
+
+      - name: Join tailnet as CI node
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+          ping: kipnerter-prod-01
+
+      - name: Verify Tailscale SSH authorization
+        run: |
+          set -euo pipefail
+          tailscale ssh kipnerter@kipnerter-prod-01 'id && hostname && tailscale ip -4'
+
+      - name: Deploy patched master revision
+        run: |
+          set -euo pipefail
+          tailscale ssh kipnerter@kipnerter-prod-01 \
+            "cd /opt/kipnerter && git fetch origin master && git checkout -f master && git reset --hard origin/master && docker compose --profile edge build && docker compose --profile edge up -d --remove-orphans"
+
+      - name: Verify patched service health
+        run: |
+          set -euo pipefail
+          for attempt in {1..30}; do
+            if curl -fsS https://api.kipnerter.com/health && curl -fsS https://preview.kipnerter.com >/dev/null; then
+              exit 0
+            fi
+            sleep 5
+          done
+          exit 1
