@@ -1,0 +1,47 @@
+---
+- name: Join Kipnerter hosts to Tailscale
+  hosts: kipnerter
+  become: true
+  vars:
+    tailscale_hostname: kipnerter-prod-01
+    tailscale_tags: tag:kipnerter-prod,tag:kipnerter-edge
+  tasks:
+    - name: Require a Tailscale credential
+      ansible.builtin.assert:
+        that:
+          - tailscale_auth_key is defined
+          - tailscale_auth_key | length > 0
+        fail_msg: "Pass tailscale_auth_key from a secret store; never commit it."
+
+    - name: Install Tailscale
+      ansible.builtin.shell: curl -fsSL https://tailscale.com/install.sh | sh
+      args:
+        creates: /usr/bin/tailscale
+
+    - name: Enable tailscaled
+      ansible.builtin.systemd:
+        name: tailscaled
+        enabled: true
+        state: started
+
+    - name: Register host and enable Tailscale SSH
+      ansible.builtin.command:
+        argv:
+          - tailscale
+          - up
+          - "--auth-key={{ tailscale_auth_key }}"
+          - "--hostname={{ tailscale_hostname }}"
+          - "--advertise-tags={{ tailscale_tags }}"
+          - --ssh
+          - --accept-dns=true
+      no_log: true
+      changed_when: true
+
+    - name: Show tailnet addresses
+      ansible.builtin.command: tailscale ip
+      register: tailscale_ip
+      changed_when: false
+
+    - name: Report Tailscale address
+      ansible.builtin.debug:
+        var: tailscale_ip.stdout_lines
