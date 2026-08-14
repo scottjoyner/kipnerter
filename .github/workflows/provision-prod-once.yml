@@ -21,6 +21,8 @@ jobs:
       IMAGE: ubuntu-24-04-x64
       PREVIEW_RECORD_ID: '1828981839'
       API_RECORD_ID: '1828981921'
+      FAILED_DROPLET_ID: '592438889'
+      FAILED_FIREWALL_ID: '44a1a57b-6701-4139-b246-94a0ae7cf875'
     steps:
       - uses: actions/checkout@v4
 
@@ -35,6 +37,19 @@ jobs:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:kipnerter-ci
+
+      - name: Remove failed blue-green candidate only
+        run: |
+          set -euo pipefail
+          if doctl compute firewall get "$FAILED_FIREWALL_ID" >/dev/null 2>&1; then
+            doctl compute firewall delete "$FAILED_FIREWALL_ID" --force
+          fi
+          if doctl compute droplet get "$FAILED_DROPLET_ID" >/dev/null 2>&1; then
+            doctl compute droplet delete "$FAILED_DROPLET_ID" --force
+          fi
+          # Refuse to touch either legacy host in this workflow.
+          doctl compute droplet get 302306571 --format ID,Name,PublicIPv4,Status
+          doctl compute droplet get 414171540 --format ID,Name,PublicIPv4,Status
 
       - name: Create temporary bootstrap SSH key
         id: bootstrap_key
@@ -80,7 +95,6 @@ jobs:
             fi
             sleep 5
           done
-          echo "Droplet never received a public IPv4 address" >&2
           exit 1
 
       - name: Create bootstrap cloud firewall
@@ -102,15 +116,12 @@ jobs:
           HOST: ${{ steps.droplet.outputs.public_ip }}
         run: |
           set -euo pipefail
-          for attempt in {1..60}; do
-            if ssh -i "$RUNNER_TEMP/kipnerter_bootstrap" \
-              -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
-              root@"$HOST" true 2>/dev/null; then
+          for attempt in {1..90}; do
+            if ssh -i "$RUNNER_TEMP/kipnerter_bootstrap" -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@"$HOST" true 2>/dev/null; then
               exit 0
             fi
             sleep 5
           done
-          echo "SSH never became available" >&2
           exit 1
 
       - name: Bootstrap host, Tailscale, Docker, and application
@@ -126,13 +137,32 @@ jobs:
           ssh -i "$RUNNER_TEMP/kipnerter_bootstrap" -o StrictHostKeyChecking=no root@"$HOST" 'bash -se' <<'REMOTE'
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
+
+          cloud-init status --wait || true
+          wait_for_apt() {
+            for attempt in $(seq 1 180); do
+              if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && \
+                 ! fuser /var/lib/dpkg/lock >/dev/null 2>&1 && \
+                 ! fuser /var/cache/apt/archives/lock >/dev/null 2>&1; then
+                return 0
+              fi
+              sleep 2
+            done
+            echo "apt/dpkg lock did not clear" >&2
+            return 1
+          }
+
+          wait_for_apt
+          dpkg --configure -a
           apt-get update
+          wait_for_apt
           apt-get install -y ca-certificates curl git docker.io docker-compose-v2 unattended-upgrades
           systemctl enable --now docker
 
-          if ! command -v tailscale >/dev/null 2>&1; then
-            curl -fsSL https://tailscale.com/install.sh | sh
-          fi
+          wait_for_apt
+          curl -fsSL https://tailscale.com/install.sh -o /tmp/install-tailscale.sh
+          sh /tmp/install-tailscale.sh
+          rm -f /tmp/install-tailscale.sh
           systemctl enable --now tailscaled
 
           if ! id kipnerter >/dev/null 2>&1; then
@@ -147,19 +177,17 @@ jobs:
           printf 'kipnerter ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/90-kipnerter
           chmod 0440 /etc/sudoers.d/90-kipnerter
 
+          TS_AUTH_KEY=$(cat /root/.tailscale-bootstrap)
           tailscale up \
-            --auth-key=file:/root/.tailscale-bootstrap \
+            --auth-key="$TS_AUTH_KEY" \
             --advertise-tags=tag:kipnerter-prod \
             --hostname=kipnerter-prod-01 \
             --ssh
-          rm -f /root/.tailscale-bootstrap
+          unset TS_AUTH_KEY
+          shred -u /root/.tailscale-bootstrap 2>/dev/null || rm -f /root/.tailscale-bootstrap
 
-          install -d -m 0755 -o kipnerter -g kipnerter /opt/kipnerter
-          if [ ! -d /opt/kipnerter/.git ]; then
-            rm -rf /opt/kipnerter
-            git clone https://github.com/scottjoyner/kipnerter.git /opt/kipnerter
-          fi
-          git -C /opt/kipnerter fetch --prune origin
+          rm -rf /opt/kipnerter
+          git clone https://github.com/scottjoyner/kipnerter.git /opt/kipnerter
           git -C /opt/kipnerter checkout -f master
           git -C /opt/kipnerter reset --hard origin/master
           chown -R kipnerter:kipnerter /opt/kipnerter
@@ -168,6 +196,12 @@ jobs:
           docker compose --profile edge build
           docker compose --profile edge up -d --remove-orphans
           docker compose ps
+          for attempt in $(seq 1 30); do
+            if docker compose exec -T api python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"; then
+              break
+            fi
+            sleep 2
+          done
           docker compose exec -T api python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health').read().decode())"
           REMOTE
 
@@ -180,7 +214,6 @@ jobs:
             fi
             sleep 5
           done
-          echo "Tailscale path to production host failed" >&2
           exit 1
 
       - name: Move preview and API DNS to clean host
@@ -190,23 +223,25 @@ jobs:
           set -euo pipefail
           doctl compute domain records update kipnerter.com --record-id "$PREVIEW_RECORD_ID" --record-type A --record-name preview --record-data "$NEW_IP" --record-ttl 300
           doctl compute domain records update kipnerter.com --record-id "$API_RECORD_ID" --record-type A --record-name api --record-data "$NEW_IP" --record-ttl 300
-          doctl compute domain records list kipnerter.com
 
       - name: Verify public TLS and application health
+        env:
+          NEW_IP: ${{ steps.droplet.outputs.public_ip }}
         run: |
           set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq dnsutils
           for attempt in {1..60}; do
             API_IP=$(dig +short api.kipnerter.com A @1.1.1.1 | tail -1)
             PREVIEW_IP=$(dig +short preview.kipnerter.com A @1.1.1.1 | tail -1)
-            echo "api=$API_IP preview=$PREVIEW_IP"
-            if curl --fail --silent --show-error https://api.kipnerter.com/health >/tmp/health && \
+            echo "api=$API_IP preview=$PREVIEW_IP expected=$NEW_IP"
+            if [ "$API_IP" = "$NEW_IP" ] && [ "$PREVIEW_IP" = "$NEW_IP" ] && \
+               curl --fail --silent --show-error https://api.kipnerter.com/health >/tmp/health && \
                curl --fail --silent --show-error https://preview.kipnerter.com >/tmp/preview; then
               cat /tmp/health
               exit 0
             fi
             sleep 10
           done
-          echo "Public TLS/application validation failed" >&2
           exit 1
 
       - name: Remove public bootstrap SSH rule
@@ -214,9 +249,8 @@ jobs:
           set -euo pipefail
           doctl compute firewall remove-rules "${{ steps.firewall.outputs.firewall_id }}" \
             --inbound-rules "protocol:tcp,ports:22,address:${{ steps.firewall.outputs.runner_ip }}/32"
-          doctl compute firewall get "${{ steps.firewall.outputs.firewall_id }}"
 
-      - name: Remove temporary SSH key from host and DigitalOcean
+      - name: Remove temporary SSH key from host
         if: success()
         env:
           HOST: ${{ steps.droplet.outputs.public_ip }}
@@ -224,8 +258,7 @@ jobs:
           set -euo pipefail
           TEMP_PUB=$(cat "$RUNNER_TEMP/kipnerter_bootstrap.pub")
           ssh -i "$RUNNER_TEMP/kipnerter_bootstrap" -o StrictHostKeyChecking=no root@"$HOST" \
-            "grep -Fvx '$TEMP_PUB' /root/.ssh/authorized_keys > /root/.ssh/authorized_keys.new || true; mv /root/.ssh/authorized_keys.new /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys; grep -Fvx '$TEMP_PUB' /home/kipnerter/.ssh/authorized_keys > /home/kipnerter/.ssh/authorized_keys.new || true; mv /home/kipnerter/.ssh/authorized_keys.new /home/kipnerter/.ssh/authorized_keys; chown kipnerter:kipnerter /home/kipnerter/.ssh/authorized_keys; chmod 600 /home/kipnerter/.ssh/authorized_keys"
-          doctl compute ssh-key delete "${{ steps.bootstrap_key.outputs.key_id }}" --force
+            "sed -i '\|$TEMP_PUB|d' /root/.ssh/authorized_keys; sed -i '\|$TEMP_PUB|d' /home/kipnerter/.ssh/authorized_keys; chown kipnerter:kipnerter /home/kipnerter/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys /home/kipnerter/.ssh/authorized_keys"
 
       - name: Report production state
         if: success()
@@ -234,16 +267,17 @@ jobs:
           echo "Production IPv4: ${{ steps.droplet.outputs.public_ip }}"
           echo "Firewall ID: ${{ steps.firewall.outputs.firewall_id }}"
           tailscale status
+          doctl compute droplet get "${{ steps.droplet.outputs.droplet_id }}"
+          doctl compute firewall get "${{ steps.firewall.outputs.firewall_id }}"
 
-      - name: Preserve bootstrap access details on failure
+      - name: Preserve state on failure
         if: failure()
         run: |
-          echo "Provisioning failed before cutover completed."
-          echo "If the droplet was created, inspect it before cleanup."
+          echo "Provisioning failed before DNS validation completed; legacy hosts remain untouched."
           doctl compute droplet list || true
           doctl compute firewall list || true
 
-      - name: Delete temporary DigitalOcean SSH key if still present
+      - name: Delete temporary DigitalOcean SSH key
         if: always()
         run: |
           KEY_ID='${{ steps.bootstrap_key.outputs.key_id }}'
