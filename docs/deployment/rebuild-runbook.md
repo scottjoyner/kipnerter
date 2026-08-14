@@ -1,16 +1,20 @@
 # Kipnerter DigitalOcean rebuild runbook
 
-This runbook treats the legacy DigitalOcean workloads as disposable after a final inventory/snapshot checkpoint. Do not delete DNS zones, snapshots, volumes, or droplets until the current service inventory has been captured.
+This runbook treats the legacy DigitalOcean workloads as disposable after a final inventory/snapshot checkpoint. The accelerated path retains the existing 4 GB NYC3 Droplet and rebuilds it in place so its public IP stays `143.198.19.141`.
 
 ## Known legacy topology
 
 | Resource | Current value | Intended disposition |
 | --- | --- | --- |
 | `caddy` droplet | `302306571` / `143.244.166.142` / NYC1 / 1 GB | retire after cutover |
-| `ubuntu-s-2vcpu-4gb-nyc3-01` | `414171540` / `143.198.19.141` / NYC3 / 4 GB | preferred first production host or rebuild target |
-| `kipnerter.com` apex | `143.244.166.142` | preserve until new edge passes validation |
+| `ubuntu-s-2vcpu-4gb-nyc3-01` | `414171540` / `143.198.19.141` / NYC3 / 4 GB | rebuild in place as production |
+| `kipnerter.com` apex | `143.244.166.142`, TTL 3600 | reduce TTL first; preserve until validation |
 | `app.kipnerter.com` | `165.227.81.99` | inventory owner/workload before modifying |
 | `_acme-challenge.kipnerter.com` | existing TXT record | preserve during migration |
+
+DigitalOcean rebuilds preserve the Droplet's public IP while wiping/replacing its disk. Do **not** destroy Droplet `414171540` if we intend to retain `143.198.19.141`.
+
+See `docs/deployment/dns-cutover.md` for the accelerated DNS procedure.
 
 ## Required secrets
 
@@ -24,35 +28,94 @@ Create GitHub Environments named `staging` and `production`. Require manual appr
 
 The Tailscale OAuth client used by GitHub CI must be allowed to create auth keys for `tag:kipnerter-ci`. Host provisioning should use a credential allowed to assign `tag:kipnerter-prod` and `tag:kipnerter-edge`.
 
-## Phase 0: inspect only
+## Phase 0: start DNS cache expiry and inspect
 
-Run the `infrastructure` workflow with `inventory`. Capture droplets, DNS, firewalls, volumes and reserved IPs. On each legacy host also capture:
+Before changing any IP target, edit the existing `kipnerter.com` apex record in DigitalOcean and reduce TTL from `3600` to `300` while leaving its value at `143.244.166.142`.
+
+Create:
+
+- `preview.kipnerter.com` A `143.198.19.141`, TTL `300`
+- `api.kipnerter.com` A `143.198.19.141`, TTL `300` if absent
+
+Do not change `app.kipnerter.com` or delete the ACME/MX/TXT records.
+
+Then run the `infrastructure` workflow with `inventory`. Capture droplets, DNS, firewalls, volumes, images/snapshots, SSH keys and reserved IPs. On the retained 4 GB host also capture:
 
 ```bash
-docker ps -a
-docker images
-docker volume ls
-docker network ls
+docker ps -a || true
+docker images || true
+docker volume ls || true
+docker network ls || true
 sudo ss -lntup
 sudo systemctl --type=service --state=running
 sudo crontab -l || true
 sudo du -sh /var/lib/docker/* 2>/dev/null || true
-sudo find /etc/caddy /opt /srv /var/www -maxdepth 2 -type f 2>/dev/null | sort
+sudo find /etc/caddy /opt /srv /var/www -maxdepth 3 -type f 2>/dev/null | sort
 ```
 
 Archive only configs/data that are recognizable and still required.
 
-## Phase 1: establish persistent Terraform state
+## Phase 1: final snapshot and rebuild
 
-CI deliberately cannot `terraform apply` yet. Before mutation, configure a persistent encrypted remote backend and import any existing DigitalOcean resources that will be retained. Do not keep state as a GitHub artifact or commit it to the repository.
+Create a final named snapshot of Droplet `414171540` and record its snapshot ID. Then use DigitalOcean's **Rebuild / Restore base image** action to rebuild that same Droplet with a current Ubuntu LTS image.
 
-For the current 4 GB droplet, the eventual import shape is:
+Rebuild is intentionally different from destroy/recreate: the rebuild wipes the disk but preserves `143.198.19.141`.
+
+After rebuild, its SSH host fingerprint will change. Bootstrap access using a registered DigitalOcean SSH key.
+
+## Phase 2: bootstrap the production host
+
+Run Ansible against the rebuilt host:
+
+```bash
+ansible-playbook -i '143.198.19.141,' -u root infra/ansible/playbooks/bootstrap.yml
+ansible-playbook -i '143.198.19.141,' -u root infra/ansible/playbooks/tailscale.yml \
+  -e "tailscale_auth_key=$TS_AUTHKEY"
+```
+
+Expected host state:
+
+- `kipnerter` deployment user
+- Docker Engine + Compose plugin
+- Tailscale on the host
+- `tag:kipnerter-prod` and `tag:kipnerter-edge`
+- Tailscale SSH enabled
+- repository cloned to `/opt/kipnerter`
+- only 80/443 publicly exposed after Cloud Firewall activation
+
+After Tailscale SSH is validated, remove public SSH ingress unless there is a documented break-glass CIDR.
+
+## Phase 3: preview deployment
+
+Deploy the edge stack:
+
+```bash
+cd /opt/kipnerter
+docker compose --profile edge build
+docker compose --profile edge up -d --remove-orphans
+```
+
+Validate:
+
+- `https://preview.kipnerter.com`
+- `https://api.kipnerter.com/health`
+- `https://api.kipnerter.com/ready`
+- Tailscale SSH
+- GitHub Actions deployment connectivity
+
+The repository Caddy config already accepts `preview.kipnerter.com`.
+
+## Phase 4: establish persistent Terraform state and reconcile
+
+CI deliberately cannot `terraform apply` yet. Before mutation, configure a persistent encrypted backend and import retained resources rather than recreating them.
+
+For the retained 4 GB Droplet, the eventual import shape is:
 
 ```bash
 terraform import digitalocean_droplet.prod 414171540
 ```
 
-Only perform the import after `main.tf` is adjusted to match the retained host closely enough that the next plan does not replace it unexpectedly.
+Only perform the import after `main.tf` is adjusted from the real account inventory so the subsequent plan does not replace the Droplet unexpectedly.
 
 For an existing DNS zone that Terraform will manage later:
 
@@ -60,42 +123,21 @@ For an existing DNS zone that Terraform will manage later:
 terraform import digitalocean_domain.kipnerter kipnerter.com
 ```
 
-Import every DNS record that must survive before setting `manage_dns=true`.
+Import every retained DNS record before setting `manage_dns=true`.
 
-## Phase 2: bootstrap the production host
+## Phase 5: apex cutover
 
-Run Ansible against the selected/rebuilt host:
+Only after preview/API health is green and the previous 3600-second TTL has had time to age out, change:
 
-```bash
-ansible-playbook -i '<host>,' -u root infra/ansible/playbooks/bootstrap.yml
-ansible-playbook -i '<host>,' -u root infra/ansible/playbooks/tailscale.yml \
-  -e "tailscale_auth_key=$TS_AUTHKEY"
-```
+`kipnerter.com: 143.244.166.142 -> 143.198.19.141`
 
-After Tailscale SSH is validated, remove public SSH ingress from the DigitalOcean Cloud Firewall unless there is a documented break-glass CIDR.
+Keep TTL at `300` through the migration window. Use the `dns-preflight` workflow to compare Google and Cloudflare recursive resolver answers and display observed TTLs.
 
-Clone this repository to `/opt/kipnerter`, configure production secrets outside git, and validate:
+Leave the old Caddy host online throughout the rollback window.
 
-```bash
-docker compose --profile edge build
-docker compose --profile edge up -d
-curl -fsS https://api.kipnerter.com/health
-```
+## Phase 6: retire legacy edge
 
-Do not change the apex DNS record until a temporary hostname or direct-host test proves Caddy, web and API health.
-
-## Phase 3: DNS cutover
-
-1. Reduce TTL ahead of the cutover when practical.
-2. Confirm MX/TXT/verification records are preserved.
-3. Point `api.kipnerter.com` and a temporary validation hostname to the new edge first.
-4. Validate TLS, web, API, WebSocket/SSE paths and Tailscale-only upstream services.
-5. Change the `kipnerter.com` apex only after validation.
-6. Leave the old edge online through the rollback window.
-
-## Phase 4: retire legacy hosts
-
-After the new deployment and DNS have remained healthy, use `infra/digitalocean/destroy-old-host.sh`. It requires a droplet-specific confirmation string and takes a final snapshot before deletion.
+After the new deployment and DNS have remained healthy, use `infra/digitalocean/destroy-old-host.sh` against only the old Caddy Droplet. It requires a droplet-specific confirmation string and takes a final snapshot before deletion.
 
 Example:
 
@@ -106,14 +148,16 @@ DIGITALOCEAN_ACCESS_TOKEN=... \
 bash infra/digitalocean/destroy-old-host.sh
 ```
 
-Never point the script at the active production host. Terraform's production resource also has `prevent_destroy = true` as an independent safety rail.
+Never point the script at the retained production host.
 
 ## Rollback
 
-Deployments use immutable Git SHAs. To roll back on the host:
+Before the old Caddy host is retired, the fastest infrastructure rollback is DNS-first:
+
+`kipnerter.com -> 143.244.166.142`
+
+Application deployments use immutable Git SHAs and can also roll back on the new host:
 
 ```bash
 ROLLBACK_SHA=<known-good-sha> bash scripts/rollback.sh
 ```
-
-During DNS migration, the fastest infrastructure rollback is to restore the previous A record while the legacy edge is still alive.
