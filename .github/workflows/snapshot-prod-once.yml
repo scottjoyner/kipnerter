@@ -1,0 +1,38 @@
+name: snapshot-prod-once
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/snapshot-prod-once.yml
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      - name: Create pre-rebuild snapshot
+        run: |
+          set -euo pipefail
+          SNAPSHOT_NAME="pre-kipnerter-rebuild-414171540-2026-08-14"
+          if doctl compute snapshot list --resource droplet --format Name --no-header | grep -Fxq "$SNAPSHOT_NAME"; then
+            echo "Snapshot already exists: $SNAPSHOT_NAME"
+          else
+            doctl compute droplet-action snapshot 414171540 --snapshot-name "$SNAPSHOT_NAME" --wait
+          fi
+          echo "Waiting for snapshot to become visible..."
+          for attempt in {1..60}; do
+            if doctl compute snapshot list --resource droplet --format ID,Name,ResourceID,CreatedAt --no-header | grep -F "$SNAPSHOT_NAME"; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Snapshot did not become visible in time" >&2
+          exit 1
