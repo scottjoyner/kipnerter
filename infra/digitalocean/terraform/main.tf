@@ -75,6 +75,15 @@ resource "digitalocean_record" "apex" {
   ttl    = 300
 }
 
+resource "digitalocean_record" "preview" {
+  count  = var.manage_dns ? 1 : 0
+  domain = digitalocean_domain.kipnerter[0].id
+  type   = "A"
+  name   = "preview"
+  value  = digitalocean_droplet.prod.ipv4_address
+  ttl    = 300
+}
+
 resource "digitalocean_record" "api" {
   count  = var.manage_dns ? 1 : 0
   domain = digitalocean_domain.kipnerter[0].id
