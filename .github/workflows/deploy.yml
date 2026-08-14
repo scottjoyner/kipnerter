@@ -33,18 +33,15 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:kipnerter-ci
 
-      - name: Configure SSH
+      - name: Configure Tailscale SSH target
         env:
           DEPLOY_HOST: ${{ secrets.KIPNERTER_DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.KIPNERTER_DEPLOY_USER }}
-          SSH_PRIVATE_KEY: ${{ secrets.KIPNERTER_DEPLOY_SSH_KEY }}
         run: |
           set -euo pipefail
           install -m 0700 -d ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
-          chmod 0600 ~/.ssh/id_ed25519
           ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
-          printf 'Host kipnerter-target\n  HostName %s\n  User %s\n  IdentityFile ~/.ssh/id_ed25519\n' "$DEPLOY_HOST" "$DEPLOY_USER" >> ~/.ssh/config
+          printf 'Host kipnerter-target\n  HostName %s\n  User %s\n' "$DEPLOY_HOST" "$DEPLOY_USER" >> ~/.ssh/config
 
       - name: Deploy immutable git revision
         env:
