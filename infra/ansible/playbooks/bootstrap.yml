@@ -1,0 +1,80 @@
+---
+- name: Bootstrap Kipnerter production host
+  hosts: kipnerter
+  become: true
+  vars:
+    kipnerter_user: kipnerter
+    kipnerter_root: /opt/kipnerter
+  tasks:
+    - name: Install base packages
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - git
+          - jq
+          - ufw
+          - unattended-upgrades
+        state: present
+        update_cache: true
+
+    - name: Create application user
+      ansible.builtin.user:
+        name: "{{ kipnerter_user }}"
+        groups: sudo
+        append: true
+        shell: /bin/bash
+        create_home: true
+
+    - name: Create application root
+      ansible.builtin.file:
+        path: "{{ kipnerter_root }}"
+        state: directory
+        owner: "{{ kipnerter_user }}"
+        group: "{{ kipnerter_user }}"
+        mode: "0755"
+
+    - name: Install Docker repository key
+      ansible.builtin.shell: |
+        set -euo pipefail
+        install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+        chmod a+r /etc/apt/keyrings/docker.asc
+      args:
+        executable: /bin/bash
+        creates: /etc/apt/keyrings/docker.asc
+
+    - name: Add Docker apt repository
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        filename: docker
+        state: present
+
+    - name: Install Docker engine and compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+
+    - name: Add application user to docker group
+      ansible.builtin.user:
+        name: "{{ kipnerter_user }}"
+        groups: docker
+        append: true
+
+    - name: Enable Docker
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Enable unattended security upgrades
+      ansible.builtin.systemd:
+        name: unattended-upgrades
+        enabled: true
+        state: started
