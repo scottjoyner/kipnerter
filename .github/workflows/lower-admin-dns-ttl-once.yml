@@ -1,0 +1,26 @@
+name: lower-admin-dns-ttl-once
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/lower-admin-dns-ttl-once.yml
+
+permissions:
+  contents: read
+
+jobs:
+  dns:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      - name: Lower TTL without changing target
+        run: |
+          set -euo pipefail
+          doctl compute domain records update scottjoyner.dev --record-id 315374696 --record-type A --record-name @ --record-data 143.244.166.142 --record-ttl 300
+          doctl compute domain records update scottjoyner.dev --record-id 315374717 --record-type A --record-name www --record-data 143.244.166.142 --record-ttl 300
+          doctl compute domain records list scottjoyner.dev
