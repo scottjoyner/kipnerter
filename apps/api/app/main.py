@@ -3,9 +3,11 @@ from datetime import datetime, timezone
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .registry import models, services
+
 app = FastAPI(
     title="Kipnerter API",
-    version="0.1.0",
+    version="0.2.0",
     description="Public API gateway for Kipnerter web, iOS, AssistX, Sophia, research, ingestion, and MCP services.",
 )
 
@@ -44,5 +46,15 @@ def api_root() -> dict:
             "ingest",
             "embeddings",
             "mcp",
+            "services",
+            "models",
         ],
     }
+
+@app.get("/api/v1/services", tags=["platform"])
+def list_services() -> dict:
+    return {"services": [service.public_dict() for service in services()]}
+
+@app.get("/api/v1/models", tags=["platform"])
+def list_models() -> dict:
+    return {"models": models()}
