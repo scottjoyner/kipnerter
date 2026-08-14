@@ -1,0 +1,93 @@
+name: dns-cutover-once
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/dns-cutover-once.yml
+
+permissions:
+  contents: read
+
+jobs:
+  cutover:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      NEW_IP: 165.22.46.140
+      OLD_IP: 143.244.166.142
+      KIPNERTER_APEX_ID: '131272922'
+      SCOTT_APEX_ID: '315374696'
+      SCOTT_WWW_ID: '315374717'
+    steps:
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Verify targets before mutation
+        run: |
+          set -euo pipefail
+          doctl compute droplet get 592440152 --format ID,Name,PublicIPv4,Status
+          test "$(doctl compute droplet get 592440152 --format PublicIPv4 --no-header | tr -d '[:space:]')" = "$NEW_IP"
+          test "$(doctl compute domain records get kipnerter.com "$KIPNERTER_APEX_ID" --format Data --no-header | tr -d '[:space:]')" = "$OLD_IP"
+          test "$(doctl compute domain records get scottjoyner.dev "$SCOTT_APEX_ID" --format Data --no-header | tr -d '[:space:]')" = "$OLD_IP"
+
+      - name: Cut over apex records and create companion hostnames
+        run: |
+          set -euo pipefail
+          doctl compute domain records update kipnerter.com --record-id "$KIPNERTER_APEX_ID" --record-type A --record-name @ --record-data "$NEW_IP" --record-ttl 300
+
+          EXISTING_KIP_WWW=$(doctl compute domain records list kipnerter.com --format ID,Type,Name --no-header | awk '$2=="CNAME" && $3=="www" {print $1; exit}')
+          if [ -n "$EXISTING_KIP_WWW" ]; then
+            doctl compute domain records update kipnerter.com --record-id "$EXISTING_KIP_WWW" --record-type CNAME --record-name www --record-data 'kipnerter.com.' --record-ttl 300
+          else
+            doctl compute domain records create kipnerter.com --record-type CNAME --record-name www --record-data 'kipnerter.com.' --record-ttl 300
+          fi
+
+          doctl compute domain records update scottjoyner.dev --record-id "$SCOTT_APEX_ID" --record-type A --record-name @ --record-data "$NEW_IP" --record-ttl 300
+          doctl compute domain records update scottjoyner.dev --record-id "$SCOTT_WWW_ID" --record-type A --record-name www --record-data "$NEW_IP" --record-ttl 300
+
+          ADMIN_ID=$(doctl compute domain records list scottjoyner.dev --format ID,Type,Name --no-header | awk '$2=="A" && $3=="admin" {print $1; exit}')
+          if [ -n "$ADMIN_ID" ]; then
+            doctl compute domain records update scottjoyner.dev --record-id "$ADMIN_ID" --record-type A --record-name admin --record-data "$NEW_IP" --record-ttl 300
+          else
+            doctl compute domain records create scottjoyner.dev --record-type A --record-name admin --record-data "$NEW_IP" --record-ttl 300
+          fi
+
+      - name: Confirm protected records remain unchanged
+        run: |
+          set -euo pipefail
+          doctl compute domain records list kipnerter.com
+          doctl compute domain records list scottjoyner.dev
+          test "$(doctl compute domain records get kipnerter.com 143075248 --format Data --no-header | tr -d '[:space:]')" = '165.227.81.99'
+          test "$(doctl compute domain records get kipnerter.com 143978159 --format Data --no-header | tr -d '[:space:]')" = 'QAm5WRkTRhMIgMaUYAPOaTSyBCxuhYlTG9vug6WSN2U'
+          test "$(doctl compute domain records get scottjoyner.dev 1715121096 --format Data --no-header | tr -d '[:space:]')" = 'openai-domain-verification=dv-C1j5JjYDVQHg1sdrLWMjSWfe'
+
+      - name: Wait for public DNS and TLS
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq dnsutils
+          hosts=(kipnerter.com www.kipnerter.com api.kipnerter.com preview.kipnerter.com scottjoyner.dev admin.scottjoyner.dev)
+          for attempt in {1..60}; do
+            good=1
+            for host in "${hosts[@]}"; do
+              cf=$(dig +short "$host" A @1.1.1.1 | tail -1)
+              gg=$(dig +short "$host" A @8.8.8.8 | tail -1)
+              echo "$host cloudflare=$cf google=$gg"
+              if [ "$cf" != "$NEW_IP" ] || [ "$gg" != "$NEW_IP" ]; then good=0; fi
+            done
+            if [ "$good" = 1 ] && \
+               curl -fsS https://kipnerter.com >/dev/null && \
+               curl -fsS https://www.kipnerter.com >/dev/null && \
+               curl -fsS https://api.kipnerter.com/health && \
+               curl -fsS https://scottjoyner.dev >/dev/null && \
+               curl -fsS https://admin.scottjoyner.dev >/dev/null; then
+              echo 'DNS/TLS cutover validated.'
+              exit 0
+            fi
+            sleep 10
+          done
+          echo 'Cutover records were written, but propagation/TLS did not fully validate in the polling window.' >&2
+          exit 1
