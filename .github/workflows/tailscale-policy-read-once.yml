@@ -1,0 +1,39 @@
+name: tailscale-policy-read-once
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/tailscale-policy-read-once.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Obtain OAuth access token and inspect live policy
+        env:
+          TS_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          TS_CLIENT_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+        run: |
+          set -euo pipefail
+          TOKEN_JSON=$(curl -fsS -u "$TS_CLIENT_ID:$TS_CLIENT_SECRET" -d '' https://api.tailscale.com/api/v2/oauth/token)
+          ACCESS_TOKEN=$(printf '%s' "$TOKEN_JSON" | jq -r '.access_token')
+          SCOPE=$(printf '%s' "$TOKEN_JSON" | jq -r '.scope // ""')
+          test -n "$ACCESS_TOKEN" && test "$ACCESS_TOKEN" != null
+          echo "OAuth scopes: $SCOPE"
+          HTTP_CODE=$(curl -sS -o "$RUNNER_TEMP/policy.hujson" -w '%{http_code}' \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H 'Accept: application/hujson' \
+            https://api.tailscale.com/api/v2/tailnet/-/acl)
+          echo "Policy GET HTTP status: $HTTP_CODE"
+          if [ "$HTTP_CODE" != 200 ]; then
+            cat "$RUNNER_TEMP/policy.hujson"
+            exit 1
+          fi
+          echo '--- live policy ---'
+          cat "$RUNNER_TEMP/policy.hujson"
+          echo '--- end live policy ---'
