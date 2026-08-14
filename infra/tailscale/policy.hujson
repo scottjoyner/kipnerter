@@ -1,0 +1,60 @@
+{
+  // Merge these sections into the existing tailnet policy after review.
+  "tagOwners": {
+    "tag:kipnerter-prod": ["autogroup:admin"],
+    "tag:kipnerter-edge": ["autogroup:admin"],
+    "tag:kipnerter-ci": ["autogroup:admin"],
+    "tag:assistx": ["autogroup:admin"],
+    "tag:sophia": ["autogroup:admin"],
+    "tag:models": ["autogroup:admin"],
+    "tag:graph": ["autogroup:admin"]
+  },
+
+  "grants": [
+    {
+      "src": ["autogroup:admin"],
+      "dst": ["tag:kipnerter-prod"],
+      "ip": ["*"]
+    },
+    {
+      "src": ["tag:kipnerter-prod"],
+      "dst": ["tag:assistx"],
+      "ip": ["tcp:8000", "tcp:9100"]
+    },
+    {
+      "src": ["tag:kipnerter-prod"],
+      "dst": ["tag:sophia"],
+      "ip": ["tcp:8765"]
+    },
+    {
+      "src": ["tag:kipnerter-prod"],
+      "dst": ["tag:models"],
+      "ip": ["tcp:1234", "tcp:11434"]
+    },
+    {
+      "src": ["tag:kipnerter-prod"],
+      "dst": ["tag:graph"],
+      "ip": ["tcp:7687", "tcp:7474"]
+    },
+    {
+      "src": ["tag:kipnerter-ci"],
+      "dst": ["tag:kipnerter-prod"],
+      "ip": ["tcp:22", "tcp:443"]
+    }
+  ],
+
+  "ssh": [
+    {
+      "action": "check",
+      "src": ["autogroup:admin"],
+      "dst": ["tag:kipnerter-prod"],
+      "users": ["autogroup:nonroot", "root"]
+    },
+    {
+      "action": "accept",
+      "src": ["tag:kipnerter-ci"],
+      "dst": ["tag:kipnerter-prod"],
+      "users": ["kipnerter"]
+    }
+  ]
+}
