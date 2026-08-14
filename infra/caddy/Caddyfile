@@ -1,0 +1,18 @@
+{
+    email admin@kipnerter.com
+}
+
+kipnerter.com, www.kipnerter.com {
+    encode zstd gzip
+    reverse_proxy web:3000
+}
+
+api.kipnerter.com {
+    encode zstd gzip
+    reverse_proxy api:8000
+}
+
+scottjoyner.dev, admin.scottjoyner.dev {
+    encode zstd gzip
+    reverse_proxy web:3000
+}
