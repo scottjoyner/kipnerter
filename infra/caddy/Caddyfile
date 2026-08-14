@@ -1,4 +1,4 @@
-kipnerter.com, www.kipnerter.com {
+kipnerter.com, www.kipnerter.com, preview.kipnerter.com {
     encode zstd gzip
     reverse_proxy web:3000
 }
