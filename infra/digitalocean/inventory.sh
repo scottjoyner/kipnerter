@@ -10,11 +10,11 @@ command -v doctl >/dev/null || { echo "doctl is required" >&2; exit 1; }
 printf '\n== Account ==\n'
 doctl account get
 printf '\n== Droplets ==\n'
-doctl compute droplet list --format ID,Name,PublicIPv4,PrivateIPv4,Region,Size,Status,Tags
+doctl compute droplet list
 printf '\n== Firewalls ==\n'
-doctl compute firewall list
+doctl compute firewall list || true
 printf '\n== Volumes ==\n'
-doctl compute volume list
+doctl compute volume list || true
 printf '\n== Reserved IPs ==\n'
 doctl compute reserved-ip list || true
 printf '\n== Domains ==\n'
