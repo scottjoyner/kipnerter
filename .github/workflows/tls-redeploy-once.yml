@@ -25,9 +25,9 @@ jobs:
         run: |
           set -euo pipefail
           tar --exclude=.git -czf /tmp/kipnerter.tgz .
-          tailscale ssh -o StrictHostKeyChecking=no kipnerter@kipnerter-prod-01 'mkdir -p /opt/kipnerter'
-          cat /tmp/kipnerter.tgz | tailscale ssh -o StrictHostKeyChecking=no kipnerter@kipnerter-prod-01 'tar -xzf - -C /opt/kipnerter'
-          tailscale ssh -o StrictHostKeyChecking=no kipnerter@kipnerter-prod-01 'cd /opt/kipnerter && docker compose --profile edge up -d --build --remove-orphans && docker compose ps && docker compose logs --tail=100 caddy'
+          tailscale ssh kipnerter@kipnerter-prod-01 'mkdir -p /opt/kipnerter'
+          cat /tmp/kipnerter.tgz | tailscale ssh kipnerter@kipnerter-prod-01 'tar -xzf - -C /opt/kipnerter'
+          tailscale ssh kipnerter@kipnerter-prod-01 'cd /opt/kipnerter && docker compose --profile edge up -d --build --remove-orphans && docker compose ps && docker compose logs --tail=100 caddy'
       - name: Validate all production TLS endpoints
         run: |
           set -euo pipefail
