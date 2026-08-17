@@ -9,10 +9,10 @@ permissions:
   contents: read
 
 jobs:
-  deploy-and-discover:
+  apply-integrations:
     runs-on: ubuntu-latest
     environment: production
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Join tailnet
@@ -21,28 +21,24 @@ jobs:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:kipnerter-ci
-
       - name: Resolve production target
         id: prod
         run: |
           set -euo pipefail
-          tailscale status --json > /tmp/ts.json
+          tailscale status --json >/tmp/ts.json
           IP=$(python3 - <<'PY'
           import json
-          d=json.load(open('/tmp/ts.json'))
-          c=[]
+          d=json.load(open('/tmp/ts.json')); c=[]
           for p in d.get('Peer',{}).values():
               if p.get('Online') and 'tag:kipnerter-prod' in set(p.get('Tags') or []):
-                  ip=next((x for x in (p.get('TailscaleIPs') or []) if ':' not in x),None)
+                  ip=next((x for x in p.get('TailscaleIPs',[]) if ':' not in x),None)
                   if ip: c.append((p.get('HostName') or '',ip))
           if not c: raise SystemExit('no online production node')
           c.sort(); print(c[-1][1])
           PY
           )
           echo "ip=$IP" >> "$GITHUB_OUTPUT"
-          tailscale ping --timeout=10s "$IP"
-
-      - name: Deploy current master
+      - name: Deploy current master with discovered integrations
         env:
           PROD: ${{ steps.prod.outputs.ip }}
           ASSISTX_BASE_URL: ${{ secrets.ASSISTX_BASE_URL }}
@@ -50,6 +46,9 @@ jobs:
           LMSTUDIO_BASE_URL: ${{ secrets.LMSTUDIO_BASE_URL }}
         run: |
           set -euo pipefail
+          ASSISTX_BASE_URL="${ASSISTX_BASE_URL:-http://x1-370:8000}"
+          SOPHIA_BASE_URL="${SOPHIA_BASE_URL:-http://x1-370:8765}"
+          LMSTUDIO_BASE_URL="${LMSTUDIO_BASE_URL:-http://x1-370:1234}"
           tar --exclude=.git -czf /tmp/kipnerter.tgz .
           cat /tmp/kipnerter.tgz | tailscale ssh kipnerter@"$PROD" 'tar -xzf - -C /opt/kipnerter'
           {
@@ -60,57 +59,29 @@ jobs:
             printf 'SOPHIA_BASE_URL=%s\n' "$SOPHIA_BASE_URL"
             printf 'LMSTUDIO_BASE_URL=%s\n' "$LMSTUDIO_BASE_URL"
           } | tailscale ssh kipnerter@"$PROD" 'cat > /opt/kipnerter/.env && chmod 600 /opt/kipnerter/.env'
-          tailscale ssh kipnerter@"$PROD" 'cd /opt/kipnerter && docker compose --profile edge build --pull && docker compose --profile edge up -d --remove-orphans && docker compose ps'
-
-      - name: Verify patched runtime and dependency audit
+          tailscale ssh kipnerter@"$PROD" 'cd /opt/kipnerter && docker compose --profile edge build && docker compose --profile edge up -d --remove-orphans && docker compose ps'
+      - name: Verify public registry and private reachability
         env:
           PROD: ${{ steps.prod.outputs.ip }}
         run: |
           set -euo pipefail
-          tailscale ssh kipnerter@"$PROD" 'cd /opt/kipnerter && docker compose exec -T web node -e "console.log(\"next=\"+require(\"next/package.json\").version); console.log(\"react=\"+require(\"react/package.json\").version); console.log(\"react-dom=\"+require(\"react-dom/package.json\").version)"'
-          tailscale ssh kipnerter@"$PROD" 'cd /opt/kipnerter && docker compose exec -T web sh -lc "npm audit --omit=dev --json || true"' > /tmp/audit.json
-          python3 - <<'PY'
-          import json
-          d=json.load(open('/tmp/audit.json'))
-          print('audit_metadata=', d.get('metadata'))
-          for name,v in (d.get('vulnerabilities') or {}).items():
-              print(name, v.get('severity'), v.get('range'), 'fix=', v.get('fixAvailable'))
-          PY
           curl -fsS https://api.kipnerter.com/health
-          curl -fsS https://kipnerter.com >/dev/null
-
-      - name: Identify private services
-        run: |
-          set -euo pipefail
-          for url in \
-            http://x1-370:8000/health \
-            http://x1-370:8000/openapi.json \
-            http://x1-370:1234/v1/models \
-            http://x1-370:8765/ \
-            http://x1-370:8765/health \
-            http://x1-370:8765/openapi.json; do
-            echo "=== $url ==="
-            curl -sS --connect-timeout 3 --max-time 6 -w '\nHTTP %{http_code}\n' "$url" | head -c 3000 || true
-            echo
-          done
-
-      - name: Verify production container can reach x1-370 tailnet services
-        env:
-          PROD: ${{ steps.prod.outputs.ip }}
-        run: |
-          set -euo pipefail
+          SERVICES=$(curl -fsS https://api.kipnerter.com/api/v1/services)
+          MODELS=$(curl -fsS https://api.kipnerter.com/api/v1/models)
+          echo "$SERVICES"
+          echo "$MODELS"
+          python3 - "$SERVICES" "$MODELS" <<'PY'
+          import json,sys
+          s=json.loads(sys.argv[1]); m=json.loads(sys.argv[2])
+          ids={x['id'] for x in s['services']}
+          assert {'assistx','sophia','lmstudio'} <= ids, ids
+          text=json.dumps([s,m]).lower()
+          assert 'x1-370' not in text and '100.64.43.123' not in text, text
+          assert any(x.get('provider')=='lmstudio' for x in m['models']), m
+          print('public registry is configured and private topology is redacted')
+          PY
           tailscale ssh kipnerter@"$PROD" 'cd /opt/kipnerter && docker compose exec -T api python - <<"PY"
           import urllib.request
-          targets=[
-            "http://100.64.43.123:8000/health",
-            "http://100.64.43.123:1234/v1/models",
-            "http://x1-370:8000/health",
-            "http://x1-370:1234/v1/models",
-          ]
-          for u in targets:
-              try:
-                  with urllib.request.urlopen(u, timeout=5) as r:
-                      print(u, r.status, r.read(160).decode("utf-8", "replace"))
-              except Exception as e:
-                  print(u, "ERROR", repr(e))
+          for url in ["http://x1-370:8000/health","http://x1-370:1234/v1/models","http://x1-370:8765/"]:
+              with urllib.request.urlopen(url,timeout=5) as r: print(url,r.status)
           PY'
