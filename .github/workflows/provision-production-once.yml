@@ -1,0 +1,197 @@
+name: provision-production-once
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/provision-production-once.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-production-provision
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 45
+    env:
+      PROD_NAME: kipnerter-prod-01
+      PROD_REGION: nyc3
+      PROD_SIZE: s-2vcpu-4gb
+      PROD_IMAGE: ubuntu-24-04-x64
+      PROD_PROJECT: edf851d8-e342-4ffe-9b53-7fdca60b20a0
+      PROD_FIREWALL: 5c22ceb6-9aec-4932-b959-cae6f899c371
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Generate one-time Tailscale server auth key
+        env:
+          TS_API_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          TS_API_CLIENT_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+        run: |
+          set -euo pipefail
+          AUTHKEY=$(go run tailscale.com/cmd/get-authkey@latest -tags tag:kipnerter-prod)
+          echo "::add-mask::$AUTHKEY"
+          printf '%s' "$AUTHKEY" > /tmp/ts-authkey
+          chmod 600 /tmp/ts-authkey
+
+      - name: Create cloud-init bootstrap
+        run: |
+          set -euo pipefail
+          AUTHKEY=$(cat /tmp/ts-authkey)
+          cat > /tmp/cloud-init.yaml <<EOF
+          #cloud-config
+          package_update: true
+          package_upgrade: false
+          users:
+            - default
+            - name: kipnerter
+              groups: [sudo]
+              shell: /bin/bash
+              sudo: ALL=(ALL) NOPASSWD:ALL
+          write_files:
+            - path: /etc/kipnerter-bootstrap-version
+              permissions: '0644'
+              content: '2026-08-17-v1'
+          runcmd:
+            - [ bash, -lc, 'curl -fsSL https://get.docker.com | sh' ]
+            - [ bash, -lc, 'systemctl enable --now docker' ]
+            - [ bash, -lc, 'usermod -aG docker kipnerter' ]
+            - [ bash, -lc, 'curl -fsSL https://tailscale.com/install.sh | sh' ]
+            - [ bash, -lc, 'systemctl enable --now tailscaled' ]
+            - [ bash, -lc, "tailscale up --auth-key='${AUTHKEY}' --hostname=kipnerter-prod-01 --advertise-tags=tag:kipnerter-prod --ssh" ]
+            - [ bash, -lc, 'mkdir -p /opt/kipnerter && chown -R kipnerter:kipnerter /opt/kipnerter' ]
+          EOF
+
+      - name: Create production droplet
+        id: create
+        run: |
+          set -euo pipefail
+          EXISTING=$(doctl compute droplet list --format ID,Name --no-header | awk '$2=="'"$PROD_NAME"'" {print $1; exit}')
+          if [ -n "$EXISTING" ]; then
+            ID="$EXISTING"
+            echo "Reusing existing droplet $ID"
+          else
+            SSH_KEYS=$(doctl compute ssh-key list --format ID --no-header | paste -sd, -)
+            ARGS=("$PROD_NAME" --region "$PROD_REGION" --size "$PROD_SIZE" --image "$PROD_IMAGE" --project-id "$PROD_PROJECT" --enable-monitoring --enable-backups --enable-private-networking --user-data-file /tmp/cloud-init.yaml --wait --format ID --no-header)
+            if [ -n "$SSH_KEYS" ]; then ARGS+=(--ssh-keys "$SSH_KEYS"); fi
+            ID=$(doctl compute droplet create "${ARGS[@]}" | tail -1 | tr -d '[:space:]')
+          fi
+          test -n "$ID"
+          IP=$(doctl compute droplet get "$ID" --format PublicIPv4 --no-header | tr -d '[:space:]')
+          test -n "$IP"
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+          echo "ip=$IP" >> "$GITHUB_OUTPUT"
+          echo "Created production droplet id=$ID ip=$IP"
+
+      - name: Attach production firewall
+        run: |
+          set -euo pipefail
+          doctl compute firewall add-droplets "$PROD_FIREWALL" --droplet-ids "${{ steps.create.outputs.id }}" || true
+          doctl compute firewall get "$PROD_FIREWALL"
+
+      - name: Join tailnet from CI
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+
+      - name: Wait for cloud-init and Tailscale SSH
+        run: |
+          set -euo pipefail
+          for attempt in {1..90}; do
+            if tailscale ping --timeout=5s kipnerter-prod-01 >/dev/null 2>&1 && tailscale ssh kipnerter@kipnerter-prod-01 'test -f /etc/kipnerter-bootstrap-version && docker --version && docker compose version' >/dev/null 2>&1; then
+              echo 'Production host is ready on Tailscale.'
+              exit 0
+            fi
+            sleep 10
+          done
+          echo 'Production host never became reachable on Tailscale.' >&2
+          exit 1
+
+      - name: Upload and deploy current master
+        env:
+          ASSISTX_BASE_URL: ${{ secrets.ASSISTX_BASE_URL }}
+          SOPHIA_BASE_URL: ${{ secrets.SOPHIA_BASE_URL }}
+          LMSTUDIO_BASE_URL: ${{ secrets.LMSTUDIO_BASE_URL }}
+        run: |
+          set -euo pipefail
+          tar --exclude=.git -czf /tmp/kipnerter.tgz .
+          cat /tmp/kipnerter.tgz | tailscale ssh kipnerter@kipnerter-prod-01 'tar -xzf - -C /opt/kipnerter'
+          {
+            printf 'KIPNERTER_ENV=production\n'
+            printf 'NEXT_PUBLIC_API_URL=https://api.kipnerter.com\n'
+            printf 'CORS_ORIGINS=https://kipnerter.com,https://www.kipnerter.com,https://scottjoyner.dev,https://admin.scottjoyner.dev,https://preview.kipnerter.com\n'
+            printf 'ASSISTX_BASE_URL=%s\n' "$ASSISTX_BASE_URL"
+            printf 'SOPHIA_BASE_URL=%s\n' "$SOPHIA_BASE_URL"
+            printf 'LMSTUDIO_BASE_URL=%s\n' "$LMSTUDIO_BASE_URL"
+          } > /tmp/kipnerter.env
+          cat /tmp/kipnerter.env | tailscale ssh kipnerter@kipnerter-prod-01 'cat > /opt/kipnerter/.env && chmod 600 /opt/kipnerter/.env'
+          tailscale ssh kipnerter@kipnerter-prod-01 'cd /opt/kipnerter && docker compose --profile edge config >/tmp/kipnerter-compose.yml && docker compose --profile edge build --pull && docker compose --profile edge up -d --remove-orphans && docker compose ps'
+
+      - name: Point production DNS to new host
+        env:
+          NEW_IP: ${{ steps.create.outputs.ip }}
+        run: |
+          set -euo pipefail
+          upsert_a() {
+            domain="$1" name="$2"
+            id=$(doctl compute domain records list "$domain" --format ID,Type,Name --no-header | awk -v n="$name" '$2=="A" && $3==n {print $1; exit}')
+            if [ -n "$id" ]; then
+              doctl compute domain records update "$domain" --record-id "$id" --record-type A --record-name "$name" --record-data "$NEW_IP" --record-ttl 300
+            else
+              doctl compute domain records create "$domain" --record-type A --record-name "$name" --record-data "$NEW_IP" --record-ttl 300
+            fi
+          }
+          upsert_a kipnerter.com @
+          upsert_a kipnerter.com api
+          upsert_a kipnerter.com preview
+          upsert_a scottjoyner.dev @
+          upsert_a scottjoyner.dev www
+          upsert_a scottjoyner.dev admin
+          www_id=$(doctl compute domain records list kipnerter.com --format ID,Type,Name --no-header | awk '$2=="CNAME" && $3=="www" {print $1; exit}')
+          if [ -n "$www_id" ]; then
+            doctl compute domain records update kipnerter.com --record-id "$www_id" --record-type CNAME --record-name www --record-data 'kipnerter.com.' --record-ttl 300
+          else
+            doctl compute domain records create kipnerter.com --record-type CNAME --record-name www --record-data 'kipnerter.com.' --record-ttl 300
+          fi
+          echo "Production DNS now targets $NEW_IP"
+
+      - name: Validate DNS, TLS, API, and web
+        env:
+          NEW_IP: ${{ steps.create.outputs.ip }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq dnsutils
+          hosts=(kipnerter.com www.kipnerter.com api.kipnerter.com preview.kipnerter.com scottjoyner.dev admin.scottjoyner.dev)
+          for attempt in {1..90}; do
+            good=1
+            for host in "${hosts[@]}"; do
+              cf=$(dig +short "$host" A @1.1.1.1 | tail -1)
+              gg=$(dig +short "$host" A @8.8.8.8 | tail -1)
+              echo "$host cf=$cf google=$gg target=$NEW_IP"
+              [ "$cf" = "$NEW_IP" ] && [ "$gg" = "$NEW_IP" ] || good=0
+            done
+            if [ "$good" = 1 ] && curl -fsS https://api.kipnerter.com/health >/dev/null && curl -fsS https://kipnerter.com >/dev/null && curl -fsS https://www.kipnerter.com >/dev/null && curl -fsS https://preview.kipnerter.com >/dev/null && curl -fsS https://scottjoyner.dev >/dev/null && curl -fsS https://admin.scottjoyner.dev >/dev/null; then
+              echo 'Fresh production deployment is globally healthy.'
+              exit 0
+            fi
+            sleep 10
+          done
+          echo 'Production deployment did not fully validate in time.' >&2
+          exit 1
+
+      - name: Show final host state
+        if: always()
+        run: |
+          tailscale ssh kipnerter@kipnerter-prod-01 'cd /opt/kipnerter && docker compose ps && docker compose logs --tail=80 api web caddy' || true
