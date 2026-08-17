@@ -29,26 +29,29 @@ jobs:
           echo '=== firewalls ==='
           doctl compute firewall list
           echo '=== snapshots ==='
-          doctl compute snapshot list --resource droplet --format ID,Name,ResourceID,CreatedAt
-          if doctl compute droplet get 592440152 >/tmp/prod.json 2>/dev/null; then
+          doctl compute snapshot list --resource droplet --format ID,Name,CreatedAt || true
+          ID=$(doctl compute droplet list --format ID,Name --no-header | awk '$2=="kipnerter-prod-01" {print $1; exit}')
+          if [ -n "$ID" ]; then
             echo 'found=true' >> "$GITHUB_OUTPUT"
-            STATUS=$(doctl compute droplet get 592440152 --format Status --no-header | tr -d '[:space:]')
-            IP=$(doctl compute droplet get 592440152 --format PublicIPv4 --no-header | tr -d '[:space:]')
+            echo "id=$ID" >> "$GITHUB_OUTPUT"
+            STATUS=$(doctl compute droplet get "$ID" --format Status --no-header | tr -d '[:space:]')
+            IP=$(doctl compute droplet get "$ID" --format PublicIPv4 --no-header | tr -d '[:space:]')
             echo "status=$STATUS" >> "$GITHUB_OUTPUT"
             echo "ip=$IP" >> "$GITHUB_OUTPUT"
-            echo "Production droplet status=$STATUS ip=$IP"
+            echo "Production droplet id=$ID status=$STATUS ip=$IP"
           else
             echo 'found=false' >> "$GITHUB_OUTPUT"
-            echo 'Production droplet 592440152 is missing.' >&2
+            echo 'No kipnerter-prod-01 droplet exists.' >&2
           fi
 
       - name: Power on production droplet if needed
         if: steps.inspect.outputs.found == 'true' && steps.inspect.outputs.status != 'active'
         run: |
           set -euo pipefail
-          doctl compute droplet-action power-on 592440152 --wait || doctl compute droplet-action power-cycle 592440152 --wait
+          ID='${{ steps.inspect.outputs.id }}'
+          doctl compute droplet-action power-on "$ID" --wait || doctl compute droplet-action power-cycle "$ID" --wait
           for attempt in {1..30}; do
-            STATUS=$(doctl compute droplet get 592440152 --format Status --no-header | tr -d '[:space:]')
+            STATUS=$(doctl compute droplet get "$ID" --format Status --no-header | tr -d '[:space:]')
             echo "status=$STATUS"
             [ "$STATUS" = active ] && exit 0
             sleep 5
