@@ -33,15 +33,15 @@ def _service(service_id: str, kind: str, env_name: str, health_path: str = "/hea
 def services() -> list[Service]:
     candidates = [
         _service("assistx", "agent-gateway", "ASSISTX_BASE_URL"),
-        _service("sophia", "voice", "SOPHIA_BASE_URL"),
+        _service("sophia", "voice", "SOPHIA_BASE_URL", "/"),
         _service("lmstudio", "openai-compatible", "LMSTUDIO_BASE_URL", "/v1/models"),
     ]
     return [service for service in candidates if service is not None]
 
 
 def models() -> list[dict]:
-    # Keep private provider URLs internal. A later gateway route can proxy
-    # provider discovery without exposing Tailnet topology to public clients.
+    # Keep private provider URLs internal. Gateway routes proxy provider
+    # discovery without exposing Tailnet topology to public clients.
     return [
         {
             "provider": service.id,
