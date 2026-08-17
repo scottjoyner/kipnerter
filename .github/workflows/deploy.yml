@@ -82,6 +82,11 @@ jobs:
           tailscale ssh "$USER@$TARGET" 'sudo mkdir -p /opt/kipnerter && sudo chown -R '"$USER:$USER"' /opt/kipnerter'
           cat /tmp/kipnerter.tgz | tailscale ssh "$USER@$TARGET" 'tar -xzf - -C /opt/kipnerter'
           if [ "$ENVIRONMENT" = production ]; then
+            # These are private Tailnet service addresses, not credentials. GitHub
+            # environment values can override them when a service moves.
+            ASSISTX_BASE_URL="${ASSISTX_BASE_URL:-http://x1-370:8000}"
+            SOPHIA_BASE_URL="${SOPHIA_BASE_URL:-http://x1-370:8765}"
+            LMSTUDIO_BASE_URL="${LMSTUDIO_BASE_URL:-http://x1-370:1234}"
             {
               printf 'KIPNERTER_ENV=production\n'
               printf 'NEXT_PUBLIC_API_URL=https://api.kipnerter.com\n'
@@ -106,7 +111,10 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in {1..30}; do
-            if curl -fsS https://api.kipnerter.com/health >/dev/null && curl -fsS https://kipnerter.com >/dev/null; then
+            if curl -fsS https://api.kipnerter.com/health >/dev/null && \
+               curl -fsS https://api.kipnerter.com/api/v1/services >/dev/null && \
+               curl -fsS https://api.kipnerter.com/api/v1/models >/dev/null && \
+               curl -fsS https://kipnerter.com >/dev/null; then
               exit 0
             fi
             sleep 10
