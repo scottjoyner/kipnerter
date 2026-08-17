@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.spatial.example
 node_modules/
 .next/
 dist/
