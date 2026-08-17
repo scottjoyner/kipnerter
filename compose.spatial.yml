@@ -22,6 +22,12 @@ services:
       spatial-minio:
         condition: service_healthy
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    stop_grace_period: 30s
     networks: [frontend, spatial_backend]
 
   spatial-worker:
@@ -32,12 +38,18 @@ services:
     environment: *spatial-env
     depends_on:
       spatial-api:
-        condition: service_started
+        condition: service_healthy
       spatial-postgres:
         condition: service_healthy
       spatial-minio:
         condition: service_healthy
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    stop_grace_period: 60s
     networks: [spatial_backend]
 
   spatial-postgres:
@@ -53,7 +65,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
+      start_period: 10s
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 60s
     networks: [spatial_backend]
 
   spatial-minio:
@@ -69,7 +85,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
+      start_period: 10s
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 60s
     networks: [frontend, spatial_backend]
 
 networks:
