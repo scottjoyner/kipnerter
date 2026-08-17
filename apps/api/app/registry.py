@@ -1,5 +1,5 @@
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Optional
 
 
@@ -12,9 +12,15 @@ class Service:
     health_path: str = "/health"
 
     def public_dict(self) -> dict:
-        data = asdict(self)
-        # The API exposes topology metadata but never credentials.
-        return data
+        # Public clients only need stable capability metadata. The private
+        # Tailnet address stays server-side for gateway/proxy use.
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "configured": True,
+            "availability": "private",
+            "health_path": self.health_path,
+        }
 
 
 def _service(service_id: str, kind: str, env_name: str, health_path: str = "/health") -> Optional[Service]:
@@ -34,12 +40,13 @@ def services() -> list[Service]:
 
 
 def models() -> list[dict]:
-    # Provider/model discovery will replace this bootstrap view once remote
-    # OpenAI-compatible endpoints are connected.
+    # Keep private provider URLs internal. A later gateway route can proxy
+    # provider discovery without exposing Tailnet topology to public clients.
     return [
         {
             "provider": service.id,
-            "discovery_url": f"{service.base_url}/v1/models",
+            "configured": True,
+            "availability": "private",
         }
         for service in services()
         if service.kind == "openai-compatible"
