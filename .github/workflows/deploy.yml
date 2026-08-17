@@ -7,9 +7,7 @@ on:
         description: Deployment environment
         required: true
         type: choice
-        options:
-          - staging
-          - production
+        options: [staging, production]
         default: staging
 
 permissions:
@@ -23,6 +21,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -33,34 +32,90 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:kipnerter-ci
 
-      - name: Configure Tailscale SSH target
+      - name: Resolve deployment target
+        id: target
         env:
-          DEPLOY_HOST: ${{ secrets.KIPNERTER_DEPLOY_HOST }}
-          DEPLOY_USER: ${{ secrets.KIPNERTER_DEPLOY_USER }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          FALLBACK_HOST: ${{ secrets.KIPNERTER_DEPLOY_HOST }}
+          FALLBACK_USER: ${{ secrets.KIPNERTER_DEPLOY_USER }}
         run: |
           set -euo pipefail
-          install -m 0700 -d ~/.ssh
-          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
-          printf 'Host kipnerter-target\n  HostName %s\n  User %s\n' "$DEPLOY_HOST" "$DEPLOY_USER" >> ~/.ssh/config
+          if [ "$ENVIRONMENT" = production ]; then
+            tailscale status --json > /tmp/ts.json
+            TARGET=$(python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/ts.json'))
+          candidates=[]
+          for p in d.get('Peer',{}).values():
+              host=p.get('HostName') or ''
+              tags=set(p.get('Tags') or [])
+              if p.get('Online') and 'tag:kipnerter-prod' in tags and host.startswith('kipnerter-prod-01'):
+                  ip=next((x for x in (p.get('TailscaleIPs') or []) if ':' not in x), None)
+                  if ip: candidates.append((host,ip))
+          if not candidates: raise SystemExit('No online tagged production node found')
+          candidates.sort()
+          print(candidates[-1][1])
+          PY
+            )
+            USER=kipnerter
+          else
+            test -n "$FALLBACK_HOST" && test -n "$FALLBACK_USER"
+            TARGET="$FALLBACK_HOST"
+            USER="$FALLBACK_USER"
+          fi
+          echo "host=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "user=$USER" >> "$GITHUB_OUTPUT"
+          tailscale ping --timeout=10s "$TARGET"
+          tailscale ssh "$USER@$TARGET" 'hostname; docker --version; docker compose version'
 
-      - name: Deploy immutable git revision
+      - name: Upload immutable revision
         env:
-          DEPLOY_SHA: ${{ github.sha }}
+          TARGET: ${{ steps.target.outputs.host }}
+          USER: ${{ steps.target.outputs.user }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          ASSISTX_BASE_URL: ${{ secrets.ASSISTX_BASE_URL }}
+          SOPHIA_BASE_URL: ${{ secrets.SOPHIA_BASE_URL }}
+          LMSTUDIO_BASE_URL: ${{ secrets.LMSTUDIO_BASE_URL }}
         run: |
           set -euo pipefail
-          ssh kipnerter-target "cd /opt/kipnerter && git fetch origin && git checkout --detach '$DEPLOY_SHA' && docker compose --profile edge build && docker compose --profile edge up -d --remove-orphans"
+          tar --exclude=.git -czf /tmp/kipnerter.tgz .
+          tailscale ssh "$USER@$TARGET" 'sudo mkdir -p /opt/kipnerter && sudo chown -R '"$USER:$USER"' /opt/kipnerter'
+          cat /tmp/kipnerter.tgz | tailscale ssh "$USER@$TARGET" 'tar -xzf - -C /opt/kipnerter'
+          if [ "$ENVIRONMENT" = production ]; then
+            {
+              printf 'KIPNERTER_ENV=production\n'
+              printf 'NEXT_PUBLIC_API_URL=https://api.kipnerter.com\n'
+              printf 'CORS_ORIGINS=https://kipnerter.com,https://www.kipnerter.com,https://scottjoyner.dev,https://admin.scottjoyner.dev,https://preview.kipnerter.com\n'
+              printf 'ASSISTX_BASE_URL=%s\n' "$ASSISTX_BASE_URL"
+              printf 'SOPHIA_BASE_URL=%s\n' "$SOPHIA_BASE_URL"
+              printf 'LMSTUDIO_BASE_URL=%s\n' "$LMSTUDIO_BASE_URL"
+            } > /tmp/kipnerter.env
+            cat /tmp/kipnerter.env | tailscale ssh "$USER@$TARGET" 'cat > /opt/kipnerter/.env && chmod 600 /opt/kipnerter/.env'
+          fi
 
-      - name: Verify public health
+      - name: Build and deploy
+        env:
+          TARGET: ${{ steps.target.outputs.host }}
+          USER: ${{ steps.target.outputs.user }}
         run: |
           set -euo pipefail
-          for attempt in {1..20}; do
-            if curl --fail --silent --show-error https://api.kipnerter.com/health; then
+          tailscale ssh "$USER@$TARGET" 'cd /opt/kipnerter && docker compose --profile edge config >/tmp/kipnerter-compose.yml && docker compose --profile edge build --pull && docker compose --profile edge up -d --remove-orphans && docker compose ps'
+
+      - name: Verify production health
+        if: inputs.environment == 'production'
+        run: |
+          set -euo pipefail
+          for attempt in {1..30}; do
+            if curl -fsS https://api.kipnerter.com/health >/dev/null && curl -fsS https://kipnerter.com >/dev/null; then
               exit 0
             fi
-            sleep 5
+            sleep 10
           done
           exit 1
 
       - name: Show deployment state on failure
         if: failure()
-        run: ssh kipnerter-target "cd /opt/kipnerter && docker compose ps && docker compose logs --tail=100 api web caddy" || true
+        env:
+          TARGET: ${{ steps.target.outputs.host }}
+          USER: ${{ steps.target.outputs.user }}
+        run: tailscale ssh "$USER@$TARGET" 'cd /opt/kipnerter && docker compose ps && docker compose logs --tail=150 api web caddy' || true
