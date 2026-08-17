@@ -1,0 +1,201 @@
+name: Spatial release candidate
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - deploy/spatial-release.json
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-spatial-production
+  cancel-in-progress: false
+
+jobs:
+  deploy-and-prove:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 45
+    steps:
+      - name: Check out control plane
+        uses: actions/checkout@v4
+
+      - name: Read immutable API revision
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          API_SHA="$(python3 - <<'PY'
+          import json
+          with open('deploy/spatial-release.json', encoding='utf-8') as f:
+              value=json.load(f)['kipnerter_api_sha']
+          if len(value) != 40 or any(c not in '0123456789abcdef' for c in value.lower()):
+              raise SystemExit('invalid kipnerter_api_sha')
+          print(value)
+          PY
+          )"
+          echo "api_sha=$API_SHA" >> "$GITHUB_OUTPUT"
+          echo "Spatial release API SHA: $API_SHA"
+
+      - name: Check out private spatial API at exact SHA
+        uses: actions/checkout@v4
+        with:
+          repository: scottjoyner/kipnerter-api
+          ref: ${{ steps.release.outputs.api_sha }}
+          path: spatial-api
+          token: ${{ secrets.KIPNERTER_API_REPO_TOKEN }}
+          fetch-depth: 1
+
+      - name: Verify checked-out API revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTUAL="$(git -C spatial-api rev-parse HEAD)"
+          test "$ACTUAL" = "${{ steps.release.outputs.api_sha }}"
+
+      - name: Join production tailnet
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+
+      - name: Resolve tagged production host
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          tailscale status --json > /tmp/tailscale.json
+          TARGET="$(python3 - <<'PY'
+          import json
+          with open('/tmp/tailscale.json', encoding='utf-8') as f:
+              data=json.load(f)
+          candidates=[]
+          for peer in data.get('Peer', {}).values():
+              host=peer.get('HostName') or ''
+              tags=set(peer.get('Tags') or [])
+              if peer.get('Online') and 'tag:kipnerter-prod' in tags and host.startswith('kipnerter-prod-01'):
+                  ip=next((x for x in peer.get('TailscaleIPs') or [] if ':' not in x), None)
+                  if ip:
+                      candidates.append((host, ip))
+          if not candidates:
+              raise SystemExit('No online tag:kipnerter-prod host matching kipnerter-prod-01')
+          candidates.sort()
+          print(candidates[-1][1])
+          PY
+          )"
+          echo "host=$TARGET" >> "$GITHUB_OUTPUT"
+          tailscale ping --timeout=10s "$TARGET"
+          tailscale ssh "kipnerter@$TARGET" 'hostname; docker --version; docker compose version'
+
+      - name: Validate production secrets
+        env:
+          API_KEY: ${{ secrets.KIPNERTER_SPATIAL_API_KEY }}
+          DB_PASSWORD: ${{ secrets.KIPNERTER_SPATIAL_DB_PASSWORD }}
+          S3_ACCESS: ${{ secrets.KIPNERTER_SPATIAL_S3_ACCESS_KEY_ID }}
+          S3_SECRET: ${{ secrets.KIPNERTER_SPATIAL_S3_SECRET_ACCESS_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in API_KEY DB_PASSWORD S3_ACCESS S3_SECRET; do
+            value="${!name:-}"
+            test -n "$value" || { echo "::error::Missing $name"; exit 1; }
+            [[ "$value" != *$'\n'* ]] || { echo "::error::$name contains a newline"; exit 1; }
+          done
+          [[ ${#API_KEY} -ge 32 ]] || { echo '::error::API key must be at least 32 characters'; exit 1; }
+          [[ ${#DB_PASSWORD} -ge 20 ]] || { echo '::error::DB password must be at least 20 characters'; exit 1; }
+          [[ ${#S3_SECRET} -ge 32 ]] || { echo '::error::S3 secret must be at least 32 characters'; exit 1; }
+          [[ "$DB_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ ]] || { echo '::error::DB password must be URL-safe'; exit 1; }
+
+      - name: Package exact control plane and API source
+        shell: bash
+        run: tar --exclude=.git --exclude='*/.git' -czf /tmp/kipnerter-spatial-release.tgz .
+
+      - name: Upload release and merge spatial secrets
+        env:
+          TARGET: ${{ steps.target.outputs.host }}
+          API_KEY: ${{ secrets.KIPNERTER_SPATIAL_API_KEY }}
+          DB_PASSWORD: ${{ secrets.KIPNERTER_SPATIAL_DB_PASSWORD }}
+          S3_ACCESS: ${{ secrets.KIPNERTER_SPATIAL_S3_ACCESS_KEY_ID }}
+          S3_SECRET: ${{ secrets.KIPNERTER_SPATIAL_S3_SECRET_ACCESS_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tailscale ssh "kipnerter@$TARGET" 'sudo mkdir -p /opt/kipnerter && sudo chown -R kipnerter:kipnerter /opt/kipnerter'
+          cat /tmp/kipnerter-spatial-release.tgz | tailscale ssh "kipnerter@$TARGET" 'tar -xzf - -C /opt/kipnerter'
+          {
+            printf 'KIPNERTER_SPATIAL_API_KEY=%s\n' "$API_KEY"
+            printf 'KIPNERTER_SPATIAL_DB_PASSWORD=%s\n' "$DB_PASSWORD"
+            printf 'KIPNERTER_SPATIAL_S3_ACCESS_KEY_ID=%s\n' "$S3_ACCESS"
+            printf 'KIPNERTER_SPATIAL_S3_SECRET_ACCESS_KEY=%s\n' "$S3_SECRET"
+          } > /tmp/spatial-secrets.env
+          chmod 600 /tmp/spatial-secrets.env
+          cat /tmp/spatial-secrets.env | tailscale ssh "kipnerter@$TARGET" 'cat > /tmp/spatial-secrets.env && chmod 600 /tmp/spatial-secrets.env'
+          tailscale ssh "kipnerter@$TARGET" "python3 - <<'PY'
+          from pathlib import Path
+          root=Path('/opt/kipnerter')
+          current={}
+          env_path=root/'.env'
+          if env_path.exists():
+              for line in env_path.read_text().splitlines():
+                  if line and not line.lstrip().startswith('#') and '=' in line:
+                      k,v=line.split('=',1); current[k]=v
+          for line in Path('/tmp/spatial-secrets.env').read_text().splitlines():
+              k,v=line.split('=',1); current[k]=v
+          env_path.write_text(''.join(f'{k}={v}\n' for k,v in sorted(current.items())))
+          env_path.chmod(0o600)
+          Path('/tmp/spatial-secrets.env').unlink(missing_ok=True)
+          PY"
+          rm -f /tmp/spatial-secrets.env
+
+      - name: Build and deploy spatial services
+        env:
+          TARGET: ${{ steps.target.outputs.host }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tailscale ssh "kipnerter@$TARGET" 'cd /opt/kipnerter && docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge config >/tmp/kipnerter-spatial-compose.yml && docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge build --pull spatial-api spatial-worker && docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge up -d --remove-orphans spatial-postgres spatial-minio spatial-api spatial-worker caddy && docker compose -f docker-compose.yml -f compose.spatial.yml ps'
+
+      - name: Public lifecycle smoke test
+        env:
+          KIPNERTER_SPATIAL_API_KEY: ${{ secrets.KIPNERTER_SPATIAL_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            if curl -fsS https://api.kipnerter.com/health/ready >/dev/null; then break; fi
+            if [ "$attempt" -eq 30 ]; then echo '::error::Spatial API never became ready'; exit 1; fi
+            sleep 5
+          done
+          python3 scripts/spatial-smoke.py --output /tmp/kipnerter-spatial-smoke.json
+
+      - name: Prove RoomPlan worker processing
+        env:
+          TARGET: ${{ steps.target.outputs.host }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat /tmp/kipnerter-spatial-smoke.json | tailscale ssh "kipnerter@$TARGET" 'cat > /tmp/kipnerter-spatial-smoke.json'
+          tailscale ssh "kipnerter@$TARGET" 'cd /opt/kipnerter && sh scripts/spatial-worker-proof.sh /tmp/kipnerter-spatial-smoke.json'
+
+      - name: Capture deployment state
+        if: always()
+        env:
+          TARGET: ${{ steps.target.outputs.host }}
+        shell: bash
+        run: |
+          if [ -n "${TARGET:-}" ]; then
+            tailscale ssh "kipnerter@$TARGET" 'cd /opt/kipnerter && docker compose -f docker-compose.yml -f compose.spatial.yml ps' || true
+          fi
+
+      - name: Show failure logs
+        if: failure()
+        env:
+          TARGET: ${{ steps.target.outputs.host }}
+        shell: bash
+        run: |
+          if [ -n "${TARGET:-}" ]; then
+            tailscale ssh "kipnerter@$TARGET" 'cd /opt/kipnerter && docker compose -f docker-compose.yml -f compose.spatial.yml logs --tail=150 spatial-api spatial-worker spatial-postgres spatial-minio caddy' || true
+          fi
