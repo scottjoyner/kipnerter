@@ -1,0 +1,161 @@
+name: complete-production-rebuild-once
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/complete-production-rebuild-once.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-and-cutover:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Join tailnet
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+
+      - name: Resolve online production node
+        id: prod
+        run: |
+          set -euo pipefail
+          tailscale status --json > /tmp/ts.json
+          PROD_IP=$(python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/ts.json'))
+          peers=d.get('Peer',{})
+          candidates=[]
+          for p in peers.values():
+              tags=set(p.get('Tags') or [])
+              host=p.get('HostName') or ''
+              if p.get('Online') and 'tag:kipnerter-prod' in tags and host.startswith('kipnerter-prod-01'):
+                  ips=p.get('TailscaleIPs') or []
+                  v4=next((x for x in ips if ':' not in x), None)
+                  if v4: candidates.append((host,v4))
+          if not candidates:
+              raise SystemExit('No online tagged production node found')
+          candidates.sort()
+          print(candidates[-1][1])
+          PY
+          )
+          echo "ts_ip=$PROD_IP" >> "$GITHUB_OUTPUT"
+          tailscale ping --timeout=10s "$PROD_IP"
+          tailscale ssh kipnerter@"$PROD_IP" 'hostname; docker --version; docker compose version; id'
+
+      - name: Upload current master and production environment
+        env:
+          PROD_TS_IP: ${{ steps.prod.outputs.ts_ip }}
+          ASSISTX_BASE_URL: ${{ secrets.ASSISTX_BASE_URL }}
+          SOPHIA_BASE_URL: ${{ secrets.SOPHIA_BASE_URL }}
+          LMSTUDIO_BASE_URL: ${{ secrets.LMSTUDIO_BASE_URL }}
+        run: |
+          set -euo pipefail
+          tar --exclude=.git -czf /tmp/kipnerter.tgz .
+          tailscale ssh kipnerter@"$PROD_TS_IP" 'sudo mkdir -p /opt/kipnerter && sudo chown -R kipnerter:kipnerter /opt/kipnerter'
+          cat /tmp/kipnerter.tgz | tailscale ssh kipnerter@"$PROD_TS_IP" 'tar -xzf - -C /opt/kipnerter'
+          {
+            printf 'KIPNERTER_ENV=production\n'
+            printf 'NEXT_PUBLIC_API_URL=https://api.kipnerter.com\n'
+            printf 'CORS_ORIGINS=https://kipnerter.com,https://www.kipnerter.com,https://scottjoyner.dev,https://admin.scottjoyner.dev,https://preview.kipnerter.com\n'
+            printf 'ASSISTX_BASE_URL=%s\n' "$ASSISTX_BASE_URL"
+            printf 'SOPHIA_BASE_URL=%s\n' "$SOPHIA_BASE_URL"
+            printf 'LMSTUDIO_BASE_URL=%s\n' "$LMSTUDIO_BASE_URL"
+          } > /tmp/kipnerter.env
+          cat /tmp/kipnerter.env | tailscale ssh kipnerter@"$PROD_TS_IP" 'cat > /opt/kipnerter/.env && chmod 600 /opt/kipnerter/.env'
+
+      - name: Build and start web API and Caddy
+        env:
+          PROD_TS_IP: ${{ steps.prod.outputs.ts_ip }}
+        run: |
+          set -euo pipefail
+          tailscale ssh kipnerter@"$PROD_TS_IP" 'cd /opt/kipnerter && docker compose --profile edge config >/tmp/kipnerter-compose.yml && docker compose --profile edge build --pull && docker compose --profile edge up -d --remove-orphans && docker compose ps'
+
+      - name: Resolve public production IP
+        id: do
+        run: |
+          set -euo pipefail
+          ID=$(doctl compute droplet list --format ID,Name --no-header | awk '$2=="kipnerter-prod-01" {print $1; exit}')
+          test -n "$ID"
+          IP=$(doctl compute droplet get "$ID" --format PublicIPv4 --no-header | tr -d '[:space:]')
+          test -n "$IP"
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+          echo "ip=$IP" >> "$GITHUB_OUTPUT"
+          echo "Production public IP: $IP"
+
+      - name: Point production DNS to current droplet
+        env:
+          NEW_IP: ${{ steps.do.outputs.ip }}
+        run: |
+          set -euo pipefail
+          upsert_a() {
+            local domain="$1" name="$2"
+            local id
+            id=$(doctl compute domain records list "$domain" --format ID,Type,Name --no-header | awk -v n="$name" '$2=="A" && $3==n {print $1; exit}')
+            if [ -n "$id" ]; then
+              doctl compute domain records update "$domain" --record-id "$id" --record-type A --record-name "$name" --record-data "$NEW_IP" --record-ttl 300
+            else
+              doctl compute domain records create "$domain" --record-type A --record-name "$name" --record-data "$NEW_IP" --record-ttl 300
+            fi
+          }
+          upsert_a kipnerter.com @
+          upsert_a kipnerter.com api
+          upsert_a kipnerter.com preview
+          upsert_a scottjoyner.dev @
+          upsert_a scottjoyner.dev www
+          upsert_a scottjoyner.dev admin
+          www_id=$(doctl compute domain records list kipnerter.com --format ID,Type,Name --no-header | awk '$2=="CNAME" && $3=="www" {print $1; exit}')
+          if [ -n "$www_id" ]; then
+            doctl compute domain records update kipnerter.com --record-id "$www_id" --record-type CNAME --record-name www --record-data 'kipnerter.com.' --record-ttl 300
+          else
+            doctl compute domain records create kipnerter.com --record-type CNAME --record-name www --record-data 'kipnerter.com.' --record-ttl 300
+          fi
+
+      - name: Validate public DNS TLS and health
+        env:
+          NEW_IP: ${{ steps.do.outputs.ip }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq dnsutils
+          hosts=(kipnerter.com www.kipnerter.com api.kipnerter.com preview.kipnerter.com scottjoyner.dev admin.scottjoyner.dev)
+          for attempt in {1..90}; do
+            good=1
+            for host in "${hosts[@]}"; do
+              cf=$(dig +short "$host" A @1.1.1.1 | tail -1)
+              gg=$(dig +short "$host" A @8.8.8.8 | tail -1)
+              echo "$host cf=$cf google=$gg target=$NEW_IP"
+              [ "$cf" = "$NEW_IP" ] && [ "$gg" = "$NEW_IP" ] || good=0
+            done
+            if [ "$good" = 1 ] && \
+               curl -fsS https://api.kipnerter.com/health >/dev/null && \
+               curl -fsS https://kipnerter.com >/dev/null && \
+               curl -fsS https://www.kipnerter.com >/dev/null && \
+               curl -fsS https://preview.kipnerter.com >/dev/null && \
+               curl -fsS https://scottjoyner.dev >/dev/null && \
+               curl -fsS https://admin.scottjoyner.dev >/dev/null; then
+              echo 'Kipnerter production rebuild is healthy.'
+              exit 0
+            fi
+            sleep 10
+          done
+          exit 1
+
+      - name: Show final state
+        if: always()
+        env:
+          PROD_TS_IP: ${{ steps.prod.outputs.ts_ip }}
+        run: |
+          tailscale ssh kipnerter@"$PROD_TS_IP" 'cd /opt/kipnerter && docker compose ps && docker compose logs --tail=100 api web caddy' || true
