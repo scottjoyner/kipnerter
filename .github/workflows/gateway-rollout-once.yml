@@ -1,0 +1,82 @@
+name: gateway-rollout-once
+
+on:
+  push:
+    branches: [master]
+    paths: [.github/workflows/gateway-rollout-once.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  rollout:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Join tailnet
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+      - name: Resolve production
+        id: prod
+        run: |
+          set -euo pipefail
+          tailscale status --json >/tmp/ts.json
+          IP=$(python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/ts.json')); c=[]
+          for p in d.get('Peer',{}).values():
+              if p.get('Online') and 'tag:kipnerter-prod' in set(p.get('Tags') or []):
+                  ip=next((x for x in p.get('TailscaleIPs',[]) if ':' not in x),None)
+                  if ip: c.append((p.get('HostName') or '',ip))
+          if not c: raise SystemExit('no online prod node')
+          c.sort(); print(c[-1][1])
+          PY
+          )
+          echo "ip=$IP" >> "$GITHUB_OUTPUT"
+          tailscale ping --timeout=10s "$IP"
+      - name: Deploy gateway
+        env:
+          PROD: ${{ steps.prod.outputs.ip }}
+          TOKEN_OVERRIDE: ${{ secrets.KIPNERTER_GATEWAY_TOKEN }}
+        run: |
+          set -euo pipefail
+          tar --exclude=.git -czf /tmp/kipnerter.tgz .
+          cat /tmp/kipnerter.tgz | tailscale ssh kipnerter@"$PROD" 'tar -xzf - -C /opt/kipnerter'
+          TOKEN="$TOKEN_OVERRIDE"
+          if [ -z "$TOKEN" ]; then
+            TOKEN=$(tailscale ssh kipnerter@"$PROD" "sed -n 's/^KIPNERTER_GATEWAY_TOKEN=//p' /opt/kipnerter/.env 2>/dev/null | head -n1" || true)
+          fi
+          if [ -z "$TOKEN" ]; then
+            TOKEN=$(python3 - <<'PY'
+          import secrets
+          print(secrets.token_urlsafe(48))
+          PY
+            )
+          fi
+          {
+            printf 'KIPNERTER_ENV=production\n'
+            printf 'NEXT_PUBLIC_API_URL=https://api.kipnerter.com\n'
+            printf 'CORS_ORIGINS=https://kipnerter.com,https://www.kipnerter.com,https://scottjoyner.dev,https://admin.scottjoyner.dev,https://preview.kipnerter.com\n'
+            printf 'ASSISTX_BASE_URL=http://x1-370:8000\n'
+            printf 'SOPHIA_BASE_URL=http://x1-370:8765\n'
+            printf 'LMSTUDIO_BASE_URL=http://x1-370:1234\n'
+            printf 'KIPNERTER_GATEWAY_TOKEN=%s\n' "$TOKEN"
+            printf 'GATEWAY_MAX_BODY_BYTES=1048576\n'
+            printf 'GATEWAY_UPSTREAM_TIMEOUT_SECONDS=20\n'
+          } | tailscale ssh kipnerter@"$PROD" 'cat > /opt/kipnerter/.env && chmod 600 /opt/kipnerter/.env'
+          tailscale ssh kipnerter@"$PROD" 'cd /opt/kipnerter && docker compose --profile edge build --pull && docker compose --profile edge up -d --remove-orphans && docker compose ps'
+      - name: Verify gateway end to end
+        env:
+          PROD: ${{ steps.prod.outputs.ip }}
+        run: |
+          set -euo pipefail
+          curl -fsS https://api.kipnerter.com/health
+          curl -fsS https://api.kipnerter.com/api/v1/gateway/routes
+          curl -fsS https://api.kipnerter.com/api/v1/services/health
+          test "$(curl -sS -o /tmp/noauth -w '%{http_code}' https://api.kipnerter.com/api/v1/gateway/lmstudio/v1/models)" = 401
+          tailscale ssh kipnerter@"$PROD" 'cd /opt/kipnerter && set -a && . ./.env && set +a && curl -fsS -H "Authorization: Bearer $KIPNERTER_GATEWAY_TOKEN" https://api.kipnerter.com/api/v1/gateway/lmstudio/v1/models | python -c "import json,sys; d=json.load(sys.stdin); assert d.get(\"object\")==\"list\" and d.get(\"data\")"'
