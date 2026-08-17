@@ -1,0 +1,92 @@
+name: security-deploy-discovery-once
+
+on:
+  push:
+    branches: [master]
+    paths: [.github/workflows/security-deploy-discovery-once.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-and-discover:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Join tailnet
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+
+      - name: Resolve production target
+        id: prod
+        run: |
+          set -euo pipefail
+          tailscale status --json > /tmp/ts.json
+          IP=$(python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/ts.json'))
+          c=[]
+          for p in d.get('Peer',{}).values():
+              if p.get('Online') and 'tag:kipnerter-prod' in set(p.get('Tags') or []):
+                  ip=next((x for x in (p.get('TailscaleIPs') or []) if ':' not in x),None)
+                  if ip: c.append((p.get('HostName') or '',ip))
+          if not c: raise SystemExit('no online production node')
+          c.sort(); print(c[-1][1])
+          PY
+          )
+          echo "ip=$IP" >> "$GITHUB_OUTPUT"
+          tailscale ping --timeout=10s "$IP"
+
+      - name: Deploy current master security build
+        env:
+          PROD: ${{ steps.prod.outputs.ip }}
+          ASSISTX_BASE_URL: ${{ secrets.ASSISTX_BASE_URL }}
+          SOPHIA_BASE_URL: ${{ secrets.SOPHIA_BASE_URL }}
+          LMSTUDIO_BASE_URL: ${{ secrets.LMSTUDIO_BASE_URL }}
+        run: |
+          set -euo pipefail
+          tar --exclude=.git -czf /tmp/kipnerter.tgz .
+          cat /tmp/kipnerter.tgz | tailscale ssh kipnerter@"$PROD" 'tar -xzf - -C /opt/kipnerter'
+          {
+            printf 'KIPNERTER_ENV=production\n'
+            printf 'NEXT_PUBLIC_API_URL=https://api.kipnerter.com\n'
+            printf 'CORS_ORIGINS=https://kipnerter.com,https://www.kipnerter.com,https://scottjoyner.dev,https://admin.scottjoyner.dev,https://preview.kipnerter.com\n'
+            printf 'ASSISTX_BASE_URL=%s\n' "$ASSISTX_BASE_URL"
+            printf 'SOPHIA_BASE_URL=%s\n' "$SOPHIA_BASE_URL"
+            printf 'LMSTUDIO_BASE_URL=%s\n' "$LMSTUDIO_BASE_URL"
+          } | tailscale ssh kipnerter@"$PROD" 'cat > /opt/kipnerter/.env && chmod 600 /opt/kipnerter/.env'
+          tailscale ssh kipnerter@"$PROD" 'cd /opt/kipnerter && docker compose --profile edge build --pull && docker compose --profile edge up -d --remove-orphans && docker compose ps'
+
+      - name: Verify patched runtime
+        env:
+          PROD: ${{ steps.prod.outputs.ip }}
+        run: |
+          set -euo pipefail
+          tailscale ssh kipnerter@"$PROD" 'cd /opt/kipnerter && docker compose exec -T web node -e "console.log(\"next=\"+require(\"next/package.json\").version); console.log(\"react=\"+require(\"react/package.json\").version); console.log(\"react-dom=\"+require(\"react-dom/package.json\").version)"'
+          curl -fsS https://api.kipnerter.com/health
+          curl -fsS https://kipnerter.com >/dev/null
+
+      - name: Probe private service candidates
+        run: |
+          set -euo pipefail
+          echo '=== tailnet candidates ==='
+          tailscale status
+          for host in x1-370 xwing deathstar-xps-8920; do
+            echo "=== $host ==="
+            for port in 1234 8000 8080 8081 8765 9000 9100 11434; do
+              if timeout 2 bash -c "</dev/tcp/$host/$port" 2>/dev/null; then
+                echo "tcp $host:$port OPEN"
+                for path in /health /ready /v1/models /api/v1/models; do
+                  code=$(curl -sS -o /tmp/body -w '%{http_code}' --connect-timeout 2 --max-time 4 "http://$host:$port$path" || true)
+                  if [ "$code" != 000 ]; then
+                    echo "  $path -> $code $(head -c 180 /tmp/body | tr '\n' ' ')"
+                  fi
+                done
+              fi
+            done
+          done
