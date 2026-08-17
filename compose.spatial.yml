@@ -1,0 +1,81 @@
+services:
+  spatial-api:
+    build:
+      context: ./spatial-api
+    environment: &spatial-env
+      KIPNERTER_ENVIRONMENT: production
+      KIPNERTER_PERSISTENCE_MODE: database
+      KIPNERTER_DATABASE_URL: postgresql+asyncpg://kipnerter:${KIPNERTER_SPATIAL_DB_PASSWORD}@spatial-postgres:5432/kipnerter
+      KIPNERTER_S3_ENDPOINT_URL: http://spatial-minio:9000
+      KIPNERTER_S3_PUBLIC_ENDPOINT_URL: https://api.kipnerter.com
+      KIPNERTER_S3_REGION: us-east-1
+      KIPNERTER_S3_BUCKET: kipnerter-artifacts
+      KIPNERTER_S3_ACCESS_KEY_ID: ${KIPNERTER_SPATIAL_S3_ACCESS_KEY_ID}
+      KIPNERTER_S3_SECRET_ACCESS_KEY: ${KIPNERTER_SPATIAL_S3_SECRET_ACCESS_KEY}
+      KIPNERTER_AUTH_MODE: api_key
+      KIPNERTER_API_KEY: ${KIPNERTER_SPATIAL_API_KEY}
+    expose:
+      - "8000"
+    depends_on:
+      spatial-postgres:
+        condition: service_healthy
+      spatial-minio:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [frontend, spatial_backend]
+
+  spatial-worker:
+    build:
+      context: ./spatial-api
+    entrypoint: []
+    command: ["python", "-m", "kipnerter_api.worker"]
+    environment: *spatial-env
+    depends_on:
+      spatial-api:
+        condition: service_started
+      spatial-postgres:
+        condition: service_healthy
+      spatial-minio:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [spatial_backend]
+
+  spatial-postgres:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: kipnerter
+      POSTGRES_USER: kipnerter
+      POSTGRES_PASSWORD: ${KIPNERTER_SPATIAL_DB_PASSWORD}
+    volumes:
+      - spatial_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kipnerter -d kipnerter"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+    networks: [spatial_backend]
+
+  spatial-minio:
+    image: minio/minio:latest
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${KIPNERTER_SPATIAL_S3_ACCESS_KEY_ID}
+      MINIO_ROOT_PASSWORD: ${KIPNERTER_SPATIAL_S3_SECRET_ACCESS_KEY}
+    volumes:
+      - spatial_minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+    networks: [frontend, spatial_backend]
+
+networks:
+  spatial_backend:
+    internal: true
+
+volumes:
+  spatial_postgres_data:
+  spatial_minio_data:
