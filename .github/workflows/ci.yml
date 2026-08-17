@@ -41,10 +41,19 @@ jobs:
 
   containers:
     runs-on: ubuntu-latest
+    env:
+      KIPNERTER_SPATIAL_API_KEY: ci-placeholder-api-key-at-least-32-characters
+      KIPNERTER_SPATIAL_DB_PASSWORD: ci-placeholder-db-password
+      KIPNERTER_SPATIAL_S3_ACCESS_KEY_ID: ci-access-key
+      KIPNERTER_SPATIAL_S3_SECRET_ACCESS_KEY: ci-placeholder-storage-secret-at-least-32-chars
     steps:
       - uses: actions/checkout@v4
       - run: docker compose config --quiet
       - run: docker compose -f docker-compose.yml -f compose.dev.yml config --quiet
+      - run: docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge config --quiet
+      - run: python3 -m py_compile scripts/spatial-smoke.py
+      - run: sh -n scripts/spatial-worker-proof.sh
+      - run: docker run --rm -v "$PWD/infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2 caddy validate --config /etc/caddy/Caddyfile
       - run: docker compose build
 
   terraform:
