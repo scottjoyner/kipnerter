@@ -6,8 +6,8 @@ import hashlib
 import json
 import os
 import sys
-import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
 from typing import Any
@@ -98,13 +98,12 @@ def main() -> int:
     property_id = property_item["id"]
     print(f"PASS property={property_id}")
 
-    captured_at = datetime.now(UTC).isoformat()
     scan_payload = {
         "device_id": device_id,
         "property_id": property_id,
         "kind": "roomplan",
         "client_scan_id": client_scan_id,
-        "captured_at": captured_at,
+        "captured_at": datetime.now(UTC).isoformat(),
         "coordinate_frame": "roomplan-release-smoke-v1",
         "metadata": {"smoke": True, "run_id": run_id},
     }
@@ -168,8 +167,9 @@ def main() -> int:
     expect_status(status, {201}, "artifact declare")
     artifact_id = upload["artifact_id"]
 
-    put_headers = dict(upload.get("headers") or {})
-    put_req = urllib.request.Request(upload["url"], data=artifact_bytes, headers=put_headers, method="PUT")
+    put_req = urllib.request.Request(
+        upload["url"], data=artifact_bytes, headers=dict(upload.get("headers") or {}), method="PUT"
+    )
     try:
         with urllib.request.urlopen(put_req, timeout=60) as response:
             if response.status not in {200, 201, 204}:
