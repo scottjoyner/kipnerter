@@ -76,17 +76,27 @@ jobs:
           ASSISTX_BASE_URL: ${{ secrets.ASSISTX_BASE_URL }}
           SOPHIA_BASE_URL: ${{ secrets.SOPHIA_BASE_URL }}
           LMSTUDIO_BASE_URL: ${{ secrets.LMSTUDIO_BASE_URL }}
+          GATEWAY_TOKEN_OVERRIDE: ${{ secrets.KIPNERTER_GATEWAY_TOKEN }}
         run: |
           set -euo pipefail
           tar --exclude=.git -czf /tmp/kipnerter.tgz .
           tailscale ssh "$USER@$TARGET" 'sudo mkdir -p /opt/kipnerter && sudo chown -R '"$USER:$USER"' /opt/kipnerter'
           cat /tmp/kipnerter.tgz | tailscale ssh "$USER@$TARGET" 'tar -xzf - -C /opt/kipnerter'
           if [ "$ENVIRONMENT" = production ]; then
-            # These are private Tailnet service addresses, not credentials. GitHub
-            # environment values can override them when a service moves.
             ASSISTX_BASE_URL="${ASSISTX_BASE_URL:-http://x1-370:8000}"
             SOPHIA_BASE_URL="${SOPHIA_BASE_URL:-http://x1-370:8765}"
             LMSTUDIO_BASE_URL="${LMSTUDIO_BASE_URL:-http://x1-370:1234}"
+            GATEWAY_TOKEN="$GATEWAY_TOKEN_OVERRIDE"
+            if [ -z "$GATEWAY_TOKEN" ]; then
+              GATEWAY_TOKEN=$(tailscale ssh "$USER@$TARGET" "sed -n 's/^KIPNERTER_GATEWAY_TOKEN=//p' /opt/kipnerter/.env 2>/dev/null | head -n1" || true)
+            fi
+            if [ -z "$GATEWAY_TOKEN" ]; then
+              GATEWAY_TOKEN=$(python3 - <<'PY'
+          import secrets
+          print(secrets.token_urlsafe(48))
+          PY
+              )
+            fi
             {
               printf 'KIPNERTER_ENV=production\n'
               printf 'NEXT_PUBLIC_API_URL=https://api.kipnerter.com\n'
@@ -94,7 +104,11 @@ jobs:
               printf 'ASSISTX_BASE_URL=%s\n' "$ASSISTX_BASE_URL"
               printf 'SOPHIA_BASE_URL=%s\n' "$SOPHIA_BASE_URL"
               printf 'LMSTUDIO_BASE_URL=%s\n' "$LMSTUDIO_BASE_URL"
+              printf 'KIPNERTER_GATEWAY_TOKEN=%s\n' "$GATEWAY_TOKEN"
+              printf 'GATEWAY_MAX_BODY_BYTES=1048576\n'
+              printf 'GATEWAY_UPSTREAM_TIMEOUT_SECONDS=20\n'
             } > /tmp/kipnerter.env
+            chmod 600 /tmp/kipnerter.env
             cat /tmp/kipnerter.env | tailscale ssh "$USER@$TARGET" 'cat > /opt/kipnerter/.env && chmod 600 /opt/kipnerter/.env'
           fi
 
@@ -108,18 +122,22 @@ jobs:
 
       - name: Verify production health
         if: inputs.environment == 'production'
+        env:
+          TARGET: ${{ steps.target.outputs.host }}
+          USER: ${{ steps.target.outputs.user }}
         run: |
           set -euo pipefail
           for attempt in {1..30}; do
             if curl -fsS https://api.kipnerter.com/health >/dev/null && \
                curl -fsS https://api.kipnerter.com/api/v1/services >/dev/null && \
-               curl -fsS https://api.kipnerter.com/api/v1/models >/dev/null && \
+               curl -fsS https://api.kipnerter.com/api/v1/services/health >/dev/null && \
+               curl -fsS https://api.kipnerter.com/api/v1/gateway/routes >/dev/null && \
                curl -fsS https://kipnerter.com >/dev/null; then
-              exit 0
+              break
             fi
             sleep 10
           done
-          exit 1
+          tailscale ssh "$USER@$TARGET" 'cd /opt/kipnerter && set -a && . ./.env && set +a && curl -fsS -H "Authorization: Bearer $KIPNERTER_GATEWAY_TOKEN" https://api.kipnerter.com/api/v1/gateway/lmstudio/v1/models >/dev/null'
 
       - name: Show deployment state on failure
         if: failure()
