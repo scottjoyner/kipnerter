@@ -1,0 +1,22 @@
+{
+  "release_candidate": "2026-08-17-rc1",
+  "kipnerter_api_sha": "f4447b314f593197caa3e77765c8b478f3c893f4",
+  "api_origin": "https://api.kipnerter.com",
+  "artifact_origin": "https://api.kipnerter.com",
+  "artifact_bucket": "kipnerter-artifacts",
+  "coverage_policy": {
+    "unit_min_percent": 80,
+    "full_min_percent": 85,
+    "measured": false
+  },
+  "required_proofs": [
+    "lint_type_unit_coverage",
+    "postgis_minio_integration_coverage",
+    "zero_to_head_migrations",
+    "production_image_build",
+    "public_health_ready",
+    "presigned_roomplan_upload_verify_complete",
+    "roomplan_processing_report_completed",
+    "physical_ios_roomplan_sync"
+  ]
+}
