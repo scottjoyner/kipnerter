@@ -1,0 +1,28 @@
+name: tailscale-inventory-once
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/tailscale-inventory-once.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Join tailnet
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+      - name: Show tailnet status
+        run: |
+          set -euo pipefail
+          tailscale status
+          echo '=== production-name matches ==='
+          tailscale status --json | python3 -c 'import json,sys; d=json.load(sys.stdin); peers=d.get("Peer",{}); [print(p.get("HostName"), p.get("DNSName"), p.get("TailscaleIPs"), p.get("Online"), p.get("Tags")) for p in peers.values() if "kipnerter-prod" in (p.get("HostName") or "")]'
