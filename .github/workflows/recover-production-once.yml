@@ -1,0 +1,85 @@
+name: recover-production-once
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/recover-production-once.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-production-recovery
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Join production tailnet
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+
+      - name: Verify production host and current Docker state
+        run: |
+          set -euo pipefail
+          tailscale ping kipnerter-prod-01
+          tailscale ssh kipnerter@kipnerter-prod-01 'hostname; uname -a; df -h /; docker --version; docker compose version; echo "=== existing containers ==="; docker ps -a || true; echo "=== existing volumes ==="; docker volume ls || true'
+
+      - name: Upload current master to production
+        run: |
+          set -euo pipefail
+          tar --exclude=.git -czf /tmp/kipnerter.tgz .
+          tailscale ssh kipnerter@kipnerter-prod-01 'sudo mkdir -p /opt/kipnerter && sudo chown kipnerter:kipnerter /opt/kipnerter'
+          cat /tmp/kipnerter.tgz | tailscale ssh kipnerter@kipnerter-prod-01 'tar -xzf - -C /opt/kipnerter'
+
+      - name: Rebuild and start production stack
+        env:
+          ASSISTX_BASE_URL: ${{ secrets.ASSISTX_BASE_URL }}
+          SOPHIA_BASE_URL: ${{ secrets.SOPHIA_BASE_URL }}
+          LMSTUDIO_BASE_URL: ${{ secrets.LMSTUDIO_BASE_URL }}
+        run: |
+          set -euo pipefail
+          {
+            printf 'KIPNERTER_ENV=production\n'
+            printf 'NEXT_PUBLIC_API_URL=https://api.kipnerter.com\n'
+            printf 'CORS_ORIGINS=https://kipnerter.com,https://www.kipnerter.com,https://scottjoyner.dev,https://admin.scottjoyner.dev,https://preview.kipnerter.com\n'
+            printf 'ASSISTX_BASE_URL=%s\n' "$ASSISTX_BASE_URL"
+            printf 'SOPHIA_BASE_URL=%s\n' "$SOPHIA_BASE_URL"
+            printf 'LMSTUDIO_BASE_URL=%s\n' "$LMSTUDIO_BASE_URL"
+          } > /tmp/kipnerter.env
+          cat /tmp/kipnerter.env | tailscale ssh kipnerter@kipnerter-prod-01 'cat > /opt/kipnerter/.env && chmod 600 /opt/kipnerter/.env'
+          tailscale ssh kipnerter@kipnerter-prod-01 'cd /opt/kipnerter && docker compose --profile edge config >/tmp/kipnerter-compose.rendered.yml && docker compose --profile edge build --pull && docker compose --profile edge up -d --remove-orphans && docker compose ps'
+
+      - name: Wait for API and edge health
+        run: |
+          set -euo pipefail
+          for attempt in {1..60}; do
+            api=$(curl -fsS https://api.kipnerter.com/health 2>/dev/null || true)
+            if [ -n "$api" ] && \
+               curl -fsS https://preview.kipnerter.com >/dev/null 2>&1 && \
+               curl -fsS https://kipnerter.com >/dev/null 2>&1 && \
+               curl -fsS https://www.kipnerter.com >/dev/null 2>&1 && \
+               curl -fsS https://scottjoyner.dev >/dev/null 2>&1 && \
+               curl -fsS https://admin.scottjoyner.dev >/dev/null 2>&1; then
+              echo "API health: $api"
+              echo 'All production endpoints are healthy.'
+              exit 0
+            fi
+            sleep 10
+          done
+          echo 'Production endpoints did not become healthy in time.' >&2
+          exit 1
+
+      - name: Capture final production state
+        if: always()
+        run: |
+          tailscale ssh kipnerter@kipnerter-prod-01 'cd /opt/kipnerter && echo "=== compose ===" && docker compose ps && echo "=== caddy ===" && docker compose logs --tail=120 caddy && echo "=== api ===" && docker compose logs --tail=120 api && echo "=== web ===" && docker compose logs --tail=120 web' || true
