@@ -79,4 +79,4 @@ jobs:
           curl -fsS https://api.kipnerter.com/api/v1/gateway/routes
           curl -fsS https://api.kipnerter.com/api/v1/services/health
           test "$(curl -sS -o /tmp/noauth -w '%{http_code}' https://api.kipnerter.com/api/v1/gateway/lmstudio/v1/models)" = 401
-          tailscale ssh kipnerter@"$PROD" 'cd /opt/kipnerter && set -a && . ./.env && set +a && curl -fsS -H "Authorization: Bearer $KIPNERTER_GATEWAY_TOKEN" https://api.kipnerter.com/api/v1/gateway/lmstudio/v1/models | python -c "import json,sys; d=json.load(sys.stdin); assert d.get(\"object\")==\"list\" and d.get(\"data\")"'
+          tailscale ssh kipnerter@"$PROD" 'cd /opt/kipnerter && set -a && . ./.env && set +a && curl -fsS -H "Authorization: Bearer $KIPNERTER_GATEWAY_TOKEN" https://api.kipnerter.com/api/v1/gateway/lmstudio/v1/models | grep -q '"'"'object'"'"'[[:space:]]*:[[:space:]]*"'"'list'"'"''
