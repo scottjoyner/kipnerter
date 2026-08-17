@@ -12,7 +12,7 @@ on:
       spatial_api_ref:
         description: Exact kipnerter-api commit to deploy
         required: true
-        default: e64a78654bd771349f75d6be1438ad69c4305e6b
+        default: 3490c05ce529b9d8775e9c99f358bb95481331f5
         type: string
 
 permissions:
