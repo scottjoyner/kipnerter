@@ -9,6 +9,11 @@ on:
         type: choice
         options: [staging, production]
         default: staging
+      spatial_api_ref:
+        description: Exact kipnerter-api commit to deploy
+        required: true
+        default: e64a78654bd771349f75d6be1438ad69c4305e6b
+        type: string
 
 permissions:
   contents: read
@@ -21,9 +26,26 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out platform control plane
+        uses: actions/checkout@v4
+
+      - name: Check out immutable spatial backend
+        uses: actions/checkout@v4
+        with:
+          repository: scottjoyner/kipnerter-api
+          ref: ${{ inputs.spatial_api_ref }}
+          path: spatial-api
+          token: ${{ secrets.KIPNERTER_API_REPO_TOKEN }}
+          fetch-depth: 1
+
+      - name: Verify spatial backend revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTUAL="$(git -C spatial-api rev-parse HEAD)"
+          [[ "$ACTUAL" == "${{ inputs.spatial_api_ref }}" ]] || { echo "::error::Spatial checkout $ACTUAL does not match requested ${{ inputs.spatial_api_ref }}"; exit 1; }
 
       - name: Join tailnet
         uses: tailscale/github-action@v4
@@ -68,6 +90,23 @@ jobs:
           tailscale ping --timeout=10s "$TARGET"
           tailscale ssh "$USER@$TARGET" 'hostname; docker --version; docker compose version'
 
+      - name: Validate required spatial secrets
+        if: inputs.environment == 'production'
+        env:
+          API_KEY: ${{ secrets.KIPNERTER_SPATIAL_API_KEY }}
+          DB_PASSWORD: ${{ secrets.KIPNERTER_SPATIAL_DB_PASSWORD }}
+          S3_ACCESS: ${{ secrets.KIPNERTER_SPATIAL_S3_ACCESS_KEY_ID }}
+          S3_SECRET: ${{ secrets.KIPNERTER_SPATIAL_S3_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          for value in API_KEY DB_PASSWORD S3_ACCESS S3_SECRET; do
+            [[ -n "${!value:-}" ]] || { echo "::error::Missing required production secret $value"; exit 1; }
+          done
+          [[ ${#API_KEY} -ge 32 ]] || { echo "::error::KIPNERTER_SPATIAL_API_KEY must be at least 32 characters"; exit 1; }
+          [[ ${#DB_PASSWORD} -ge 20 ]] || { echo "::error::KIPNERTER_SPATIAL_DB_PASSWORD must be at least 20 characters"; exit 1; }
+          [[ "$DB_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ ]] || { echo "::error::KIPNERTER_SPATIAL_DB_PASSWORD must use URL-safe characters"; exit 1; }
+          [[ ${#S3_SECRET} -ge 32 ]] || { echo "::error::KIPNERTER_SPATIAL_S3_SECRET_ACCESS_KEY must be at least 32 characters"; exit 1; }
+
       - name: Upload immutable revision
         env:
           TARGET: ${{ steps.target.outputs.host }}
@@ -77,9 +116,13 @@ jobs:
           SOPHIA_BASE_URL: ${{ secrets.SOPHIA_BASE_URL }}
           LMSTUDIO_BASE_URL: ${{ secrets.LMSTUDIO_BASE_URL }}
           GATEWAY_TOKEN_OVERRIDE: ${{ secrets.KIPNERTER_GATEWAY_TOKEN }}
+          SPATIAL_API_KEY: ${{ secrets.KIPNERTER_SPATIAL_API_KEY }}
+          SPATIAL_DB_PASSWORD: ${{ secrets.KIPNERTER_SPATIAL_DB_PASSWORD }}
+          SPATIAL_S3_ACCESS_KEY_ID: ${{ secrets.KIPNERTER_SPATIAL_S3_ACCESS_KEY_ID }}
+          SPATIAL_S3_SECRET_ACCESS_KEY: ${{ secrets.KIPNERTER_SPATIAL_S3_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
-          tar --exclude=.git -czf /tmp/kipnerter.tgz .
+          tar --exclude=.git --exclude='*/.git' -czf /tmp/kipnerter.tgz .
           tailscale ssh "$USER@$TARGET" 'sudo mkdir -p /opt/kipnerter && sudo chown -R '"$USER:$USER"' /opt/kipnerter'
           cat /tmp/kipnerter.tgz | tailscale ssh "$USER@$TARGET" 'tar -xzf - -C /opt/kipnerter'
           if [ "$ENVIRONMENT" = production ]; then
@@ -107,9 +150,14 @@ jobs:
               printf 'KIPNERTER_GATEWAY_TOKEN=%s\n' "$GATEWAY_TOKEN"
               printf 'GATEWAY_MAX_BODY_BYTES=1048576\n'
               printf 'GATEWAY_UPSTREAM_TIMEOUT_SECONDS=20\n'
+              printf 'KIPNERTER_SPATIAL_API_KEY=%s\n' "$SPATIAL_API_KEY"
+              printf 'KIPNERTER_SPATIAL_DB_PASSWORD=%s\n' "$SPATIAL_DB_PASSWORD"
+              printf 'KIPNERTER_SPATIAL_S3_ACCESS_KEY_ID=%s\n' "$SPATIAL_S3_ACCESS_KEY_ID"
+              printf 'KIPNERTER_SPATIAL_S3_SECRET_ACCESS_KEY=%s\n' "$SPATIAL_S3_SECRET_ACCESS_KEY"
             } > /tmp/kipnerter.env
             chmod 600 /tmp/kipnerter.env
             cat /tmp/kipnerter.env | tailscale ssh "$USER@$TARGET" 'cat > /opt/kipnerter/.env && chmod 600 /opt/kipnerter/.env'
+            rm -f /tmp/kipnerter.env
           fi
 
       - name: Build and deploy
@@ -118,7 +166,7 @@ jobs:
           USER: ${{ steps.target.outputs.user }}
         run: |
           set -euo pipefail
-          tailscale ssh "$USER@$TARGET" 'cd /opt/kipnerter && docker compose --profile edge config >/tmp/kipnerter-compose.yml && docker compose --profile edge build --pull && docker compose --profile edge up -d --remove-orphans && docker compose ps'
+          tailscale ssh "$USER@$TARGET" 'cd /opt/kipnerter && docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge config >/tmp/kipnerter-compose.yml && docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge build --pull && docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge up -d --remove-orphans && docker compose -f docker-compose.yml -f compose.spatial.yml ps'
 
       - name: Verify production health
         if: inputs.environment == 'production'
@@ -129,6 +177,8 @@ jobs:
           set -euo pipefail
           for attempt in {1..30}; do
             if curl -fsS https://api.kipnerter.com/health >/dev/null && \
+               curl -fsS https://api.kipnerter.com/health/live >/dev/null && \
+               curl -fsS https://api.kipnerter.com/health/ready >/dev/null && \
                curl -fsS https://api.kipnerter.com/api/v1/services >/dev/null && \
                curl -fsS https://api.kipnerter.com/api/v1/services/health >/dev/null && \
                curl -fsS https://api.kipnerter.com/api/v1/gateway/routes >/dev/null && \
@@ -144,4 +194,4 @@ jobs:
         env:
           TARGET: ${{ steps.target.outputs.host }}
           USER: ${{ steps.target.outputs.user }}
-        run: tailscale ssh "$USER@$TARGET" 'cd /opt/kipnerter && docker compose ps && docker compose logs --tail=150 api web caddy' || true
+        run: tailscale ssh "$USER@$TARGET" 'cd /opt/kipnerter && docker compose -f docker-compose.yml -f compose.spatial.yml ps && docker compose -f docker-compose.yml -f compose.spatial.yml logs --tail=150 api web caddy spatial-api spatial-worker spatial-postgres spatial-minio' || true
