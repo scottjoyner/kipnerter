@@ -156,7 +156,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tailscale ssh "kipnerter@$TARGET" 'cd /opt/kipnerter && docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge config >/tmp/kipnerter-spatial-compose.yml && docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge build --pull spatial-api spatial-worker && docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge up -d --remove-orphans spatial-postgres spatial-minio spatial-api spatial-worker caddy && docker compose -f docker-compose.yml -f compose.spatial.yml ps'
+          tailscale ssh "kipnerter@$TARGET" 'cd /opt/kipnerter && docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge config >/tmp/kipnerter-spatial-compose.yml && docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge build --pull spatial-api spatial-worker && docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge up -d --remove-orphans spatial-postgres spatial-minio spatial-api spatial-worker caddy && docker compose -f docker-compose.yml -f compose.spatial.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile && docker compose -f docker-compose.yml -f compose.spatial.yml ps'
 
       - name: Public lifecycle smoke test
         env:
