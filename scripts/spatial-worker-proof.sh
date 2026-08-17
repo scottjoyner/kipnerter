@@ -38,27 +38,29 @@ while [ "$attempt" -le 30 ]; do
   if [ -n "$ROW" ]; then
     STATUS="$(printf '%s' "$ROW" | cut -d'|' -f1)"
     echo "Processing report: $ROW"
-    if [ "$STATUS" = "completed" ]; then
-      UNPUBLISHED="$(docker compose $COMPOSE_ARGS exec -T spatial-postgres \
-        psql -U kipnerter -d kipnerter -At \
-        -c "SELECT count(*) FROM outbox_events WHERE aggregate_id = '$SCAN_ID'::uuid AND event_type = 'scan.completed' AND published_at IS NULL;" 2>/dev/null || printf 'unknown')"
-      if [ "$UNPUBLISHED" != "0" ]; then
-        echo "scan.completed still unpublished for $SCAN_ID: $UNPUBLISHED" >&2
+    case "$STATUS" in
+      complete|completed)
+        UNPUBLISHED="$(docker compose $COMPOSE_ARGS exec -T spatial-postgres \
+          psql -U kipnerter -d kipnerter -At \
+          -c "SELECT count(*) FROM outbox_events WHERE aggregate_id = '$SCAN_ID'::uuid AND event_type = 'scan.completed' AND published_at IS NULL;" 2>/dev/null || printf 'unknown')"
+        if [ "$UNPUBLISHED" != "0" ]; then
+          echo "scan.completed still unpublished for $SCAN_ID: $UNPUBLISHED" >&2
+          exit 1
+        fi
+        echo "PASS RoomPlan worker completed scan=$SCAN_ID artifact=$ARTIFACT_ID and published its outbox event"
+        exit 0
+        ;;
+      failed)
+        echo "RoomPlan processing failed for $SCAN_ID" >&2
         exit 1
-      fi
-      echo "PASS RoomPlan worker completed scan=$SCAN_ID artifact=$ARTIFACT_ID and published its outbox event"
-      exit 0
-    fi
-    if [ "$STATUS" = "failed" ]; then
-      echo "RoomPlan processing failed for $SCAN_ID" >&2
-      exit 1
-    fi
+        ;;
+    esac
   fi
 
   sleep 2
   attempt=$((attempt + 1))
 done
 
-echo "Timed out waiting for completed RoomPlan processing report for scan=$SCAN_ID artifact=$ARTIFACT_ID" >&2
+echo "Timed out waiting for complete RoomPlan processing report for scan=$SCAN_ID artifact=$ARTIFACT_ID" >&2
 docker compose $COMPOSE_ARGS logs --tail=100 spatial-worker >&2 || true
 exit 1
