@@ -42,7 +42,7 @@ jobs:
           echo "ip=$IP" >> "$GITHUB_OUTPUT"
           tailscale ping --timeout=10s "$IP"
 
-      - name: Deploy current master security build
+      - name: Deploy current master
         env:
           PROD: ${{ steps.prod.outputs.ip }}
           ASSISTX_BASE_URL: ${{ secrets.ASSISTX_BASE_URL }}
@@ -62,31 +62,55 @@ jobs:
           } | tailscale ssh kipnerter@"$PROD" 'cat > /opt/kipnerter/.env && chmod 600 /opt/kipnerter/.env'
           tailscale ssh kipnerter@"$PROD" 'cd /opt/kipnerter && docker compose --profile edge build --pull && docker compose --profile edge up -d --remove-orphans && docker compose ps'
 
-      - name: Verify patched runtime
+      - name: Verify patched runtime and dependency audit
         env:
           PROD: ${{ steps.prod.outputs.ip }}
         run: |
           set -euo pipefail
           tailscale ssh kipnerter@"$PROD" 'cd /opt/kipnerter && docker compose exec -T web node -e "console.log(\"next=\"+require(\"next/package.json\").version); console.log(\"react=\"+require(\"react/package.json\").version); console.log(\"react-dom=\"+require(\"react-dom/package.json\").version)"'
+          tailscale ssh kipnerter@"$PROD" 'cd /opt/kipnerter && docker compose exec -T web sh -lc "npm audit --omit=dev --json || true"' > /tmp/audit.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/audit.json'))
+          print('audit_metadata=', d.get('metadata'))
+          for name,v in (d.get('vulnerabilities') or {}).items():
+              print(name, v.get('severity'), v.get('range'), 'fix=', v.get('fixAvailable'))
+          PY
           curl -fsS https://api.kipnerter.com/health
           curl -fsS https://kipnerter.com >/dev/null
 
-      - name: Probe private service candidates
+      - name: Identify private services
         run: |
           set -euo pipefail
-          echo '=== tailnet candidates ==='
-          tailscale status
-          for host in x1-370 xwing deathstar-xps-8920; do
-            echo "=== $host ==="
-            for port in 1234 8000 8080 8081 8765 9000 9100 11434; do
-              if timeout 2 bash -c "</dev/tcp/$host/$port" 2>/dev/null; then
-                echo "tcp $host:$port OPEN"
-                for path in /health /ready /v1/models /api/v1/models; do
-                  code=$(curl -sS -o /tmp/body -w '%{http_code}' --connect-timeout 2 --max-time 4 "http://$host:$port$path" || true)
-                  if [ "$code" != 000 ]; then
-                    echo "  $path -> $code $(head -c 180 /tmp/body | tr '\n' ' ')"
-                  fi
-                done
-              fi
-            done
+          for url in \
+            http://x1-370:8000/health \
+            http://x1-370:8000/openapi.json \
+            http://x1-370:1234/v1/models \
+            http://x1-370:8765/ \
+            http://x1-370:8765/health \
+            http://x1-370:8765/openapi.json; do
+            echo "=== $url ==="
+            curl -sS --connect-timeout 3 --max-time 6 -w '\nHTTP %{http_code}\n' "$url" | head -c 3000 || true
+            echo
           done
+
+      - name: Verify production container can reach x1-370 tailnet services
+        env:
+          PROD: ${{ steps.prod.outputs.ip }}
+        run: |
+          set -euo pipefail
+          tailscale ssh kipnerter@"$PROD" 'cd /opt/kipnerter && docker compose exec -T api python - <<"PY"
+          import urllib.request
+          targets=[
+            "http://100.64.43.123:8000/health",
+            "http://100.64.43.123:1234/v1/models",
+            "http://x1-370:8000/health",
+            "http://x1-370:1234/v1/models",
+          ]
+          for u in targets:
+              try:
+                  with urllib.request.urlopen(u, timeout=5) as r:
+                      print(u, r.status, r.read(160).decode("utf-8", "replace"))
+              except Exception as e:
+                  print(u, "ERROR", repr(e))
+          PY'
