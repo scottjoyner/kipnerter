@@ -29,5 +29,7 @@ jobs:
             echo "=== $host ==="
             echo "cloudflare=$(dig +short "$host" A @1.1.1.1 | tail -1)"
             echo "google=$(dig +short "$host" A @8.8.8.8 | tail -1)"
-            curl -fsS --resolve "$host:443:$IP" "https://$host${host/api.kipnerter.com//health}" -o /dev/null && echo 'direct_tls=ok' || echo 'direct_tls=fail'
+            path=/
+            [ "$host" = api.kipnerter.com ] && path=/health
+            curl -fsS --resolve "$host:443:$IP" "https://$host$path" -o /dev/null && echo 'direct_tls=ok' || echo 'direct_tls=fail'
           done
