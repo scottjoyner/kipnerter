@@ -1,0 +1,24 @@
+services:
+  location-api:
+    build:
+      context: ./location-api
+    environment:
+      KIPNERTER_LOCATION_HMAC_SECRET: ${KIPNERTER_LOCATION_HMAC_SECRET}
+      KIPNERTER_DB_PATH: /data/kipnerter-api.sqlite3
+      KIPNERTER_LOCATION_MAX_SKEW_SECONDS: 300
+      KIPNERTER_LOCATION_MAX_BODY_BYTES: 16384
+    expose:
+      - "8080"
+    volumes:
+      - location_api_data:/data
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    stop_grace_period: 30s
+    networks: [frontend]
+
+volumes:
+  location_api_data:
