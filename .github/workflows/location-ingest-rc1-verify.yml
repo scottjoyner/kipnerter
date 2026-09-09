@@ -1,0 +1,51 @@
+name: Location Ingest RC1 Verify
+
+on:
+  push:
+    branches:
+      - ops/location-ingest-rc1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-location-ingest-rc1-verify
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out control plane
+        uses: actions/checkout@v4
+
+      - name: Check out immutable location backend
+        uses: actions/checkout@v4
+        with:
+          repository: scottjoyner/kipnerter-api
+          ref: 7d6415b1e004b4e2df13b7879a4d722af04f8467
+          path: location-api
+          token: ${{ secrets.KIPNERTER_API_REPO_TOKEN }}
+          fetch-depth: 1
+
+      - name: Prove backend revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C location-api rev-parse HEAD)" = "7d6415b1e004b4e2df13b7879a4d722af04f8467"
+
+      - name: Run backend tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd location-api
+          python -m pip install --upgrade pip
+          pip install -e '.[test]'
+          python -m compileall -q app
+          python -m pytest -q
+          python -m pip check
+
+      - name: Build location container
+        shell: bash
+        run: docker build --tag kipnerter-location-api:rc1 ./location-api
