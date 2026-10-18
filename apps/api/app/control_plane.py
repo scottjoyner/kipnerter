@@ -61,21 +61,43 @@ async def _tailscale_read(path="/v1/nodes"):
 async def overview(request: Request, response: Response):
     _authorize(request, response)
     configured = {s.id: s for s in services()}
-    health = await asyncio.gather(*(service_health(s) for s in configured.values()))
-    health_by_id = {h["id"]: h for h in health}
+    results = await asyncio.gather(
+        *(service_health(s) for s in configured.values()),
+        _tailscale_read("/v1/integrations"),
+    )
+    health_by_id = {h["id"]: h for h in results[:-1]}
+    observer = results[-1]
+    local_by_id = {}
+    if isinstance(observer, dict) and isinstance(observer.get("integrations"), list):
+        for item in observer["integrations"][:12]:
+            if not isinstance(item, dict) or item.get("id") not in AGENTS:
+                continue
+            if item.get("status") not in ("healthy", "unavailable", "unverified"):
+                continue
+            local_by_id[item["id"]] = item
+    integrations = []
+    for name in AGENTS:
+        remote = health_by_id.get(name)
+        local = local_by_id.get(name)
+        status = remote["status"] if remote else (
+            local["status"] if local else "not_configured"
+        )
+        integrations.append({
+            "id": name,
+            "status": status,
+            "gateway_status": remote["status"] if remote else "not_configured",
+            "local_status": local["status"] if local else "unavailable",
+            "source": "production_upstream_probe" if remote else
+                      ("x1_observer" if local else "unconfigured"),
+            "latency_ms": remote["latency_ms"] if remote else
+                          (local.get("latency_ms") if local else None),
+        })
     return {
-        "integrations": [
-            {
-                "id": name,
-                "status": health_by_id[name]["status"] if name in health_by_id else "not_configured",
-                "latency_ms": health_by_id[name]["latency_ms"] if name in health_by_id else None,
-            }
-            for name in AGENTS
-        ],
-        "source": "server-side health probes",
+        "integrations": integrations,
+        "source": "read-only service probes (gateway and local presence reported separately)",
+        "observer_status": "reported" if local_by_id else "unavailable",
         "readonly": True,
     }
-
 
 @router.get("/traces")
 async def traces(request: Request, response: Response):

@@ -151,3 +151,55 @@ observer outside Tailscale, proxy it through Caddy, or place its secret in
 Even with a live collector, the public page cannot serve authenticated
 telemetry until the production OIDC configuration has been verified,
 the deployment SSH check completed, and the exact PR head released.
+
+## October 18: audited local service observations
+
+The optional observer now publishes `/v1/integrations` through the **same**
+tailnet-only port 8448 and existing independent token. It performs these
+fixed, read-only checks on `x1-370`:
+
+- AssistX: loopback `GET /health` on port 8000.
+- Sophia: active relay `GET /healthz` on port 8790. **Do not use the old
+  port 8765** as proof the voice service is online: nothing is listening
+  there on this host.
+- Hermes: the known `hermes-gateway.service` active-state check.
+- OpenCode: only launcher session history is available; process readiness
+  remains **unverified** rather than claiming it is an always-on server.
+
+The authenticated control-plane overview reports `local_status`,
+`gateway_status`, and `source` separately. Healthy locally does not imply
+the DigitalOcean API has authenticated reachability. The Sophia service
+registry's public/private health path is now `/healthz`.
+
+## Production identity and release preflight
+
+Tailscale's experimental `tsidp` must be explicitly deployed on an admin-
+approved tailnet node with HTTPS, durable state and the
+`tailscale.com/cap/tsidp` admin capability. Register a confidential OIDC
+client whose exact callback is:
+
+`https://kipnerter.com/api/auth/callback/tailscale`
+
+This requires the tailnet administrator to provision the IdP/client and the
+deployment environment secrets. The portal's browser must be able to reach
+the IdP on the tailnet; NextAuth on DigitalOcean must also reach discovery,
+token and JWKS endpoints through its authorized Tailscale connection.
+
+The GitHub production workflow now runs
+`scripts/portal_oidc_preflight.py` after its tailnet join, validating
+issuer discovery, HTTPS TLS, callback origin, and same-tailnet OIDC
+authorization/token/JWKS URLs. The OIDC client credentials themselves
+cannot be validated without a real login and must be verified separately.
+The preflight does not call an OIDC API using the client secret.
+
+Production no longer supplies the previously misleading default private
+URLs for AssistX, Sophia or LM Studio. The workflow requires explicit
+approved monitoring credentials and observer transport, then checks its
+authenticated `overview`, `nodes`, `sessions` and `traces` projections.
+It reads deployment secrets **as data, not by executing the .env file**.
+All fields must come from the correct GitHub environment secrets and be
+tested in staging before promotion. The frontend never receives them.
+
+The public `/chat` route is still on a draft PR until an authorized staging
+test, completed Tailscale SSH identity check, real OIDC login (and revocation)
+and rehearsed rollback provide production acceptance evidence.

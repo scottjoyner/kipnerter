@@ -33,7 +33,7 @@ def _service(service_id: str, kind: str, env_name: str, health_path: str = "/hea
 def services() -> list[Service]:
     candidates = [
         _service("assistx", "agent-gateway", "ASSISTX_BASE_URL"),
-        _service("sophia", "voice", "SOPHIA_BASE_URL", "/"),
+        _service("sophia", "voice", "SOPHIA_BASE_URL", "/healthz"),
         _service("lmstudio", "openai-compatible", "LMSTUDIO_BASE_URL", "/v1/models"),
         _service("hermes", "agent", "HERMES_BASE_URL"),
         _service("opencode", "agent", "OPENCODE_BASE_URL"),

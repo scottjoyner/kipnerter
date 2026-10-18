@@ -67,3 +67,29 @@ def test_no_unauthenticated_exec_surface(monkeypatch):
         "Authorization": "Bearer valid-only"
     })
     assert response.status_code == 405
+
+
+def test_overview_distinguishes_observer_from_gateway(monkeypatch):
+    from app import control_plane
+    monkeypatch.setenv("KIPNERTER_GATEWAY_TOKEN", "valid-only")
+    for key in ("ASSISTX_BASE_URL", "SOPHIA_BASE_URL", "LMSTUDIO_BASE_URL",
+                "HERMES_BASE_URL", "OPENCODE_BASE_URL", "FLEET_MONITOR_BASE_URL"):
+        monkeypatch.delenv(key, raising=False)
+    async def observer(path="/v1/nodes"):
+        assert path == "/v1/integrations"
+        return {"integrations": [
+            {"id": "assistx", "status": "healthy", "source": "local_loopback_probe", "latency_ms": 2},
+            {"id": "sophia", "status": "healthy", "source": "local_loopback_probe", "latency_ms": 1},
+            {"id": "opencode", "status": "unverified", "source": "session_ledger_only"},
+        ]}
+    monkeypatch.setattr(control_plane, "_tailscale_read", observer)
+    res = client.get("/api/v1/control-plane/overview", headers={
+        "Authorization": "Bearer valid-only"
+    })
+    assert res.status_code == 200
+    by_id = {entry["id"]: entry for entry in res.json()["integrations"]}
+    assert by_id["sophia"]["status"] == "healthy"
+    assert by_id["sophia"]["gateway_status"] == "not_configured"
+    assert by_id["sophia"]["source"] == "x1_observer"
+    assert by_id["opencode"]["status"] == "unverified"
+    assert res.headers["cache-control"] == "private, no-store"

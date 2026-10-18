@@ -61,12 +61,12 @@ def test_service_registry_does_not_expose_private_base_url(monkeypatch):
     assert 'tailnet' not in str(service).lower()
 
 
-def test_sophia_uses_root_health_surface(monkeypatch):
+def test_sophia_uses_liveness_health_surface(monkeypatch):
     clear_services(monkeypatch)
     monkeypatch.setenv('SOPHIA_BASE_URL', 'http://sophia.tailnet:8765')
     response = client.get('/api/v1/services')
     assert response.status_code == 200
-    assert response.json()['services'][0]['health_path'] == '/'
+    assert response.json()['services'][0]['health_path'] == '/healthz'
 
 
 def test_lmstudio_discovery_redacts_private_url(monkeypatch):

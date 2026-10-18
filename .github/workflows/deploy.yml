@@ -54,6 +54,13 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:kipnerter-ci
 
+      - name: Validate OIDC provider over Tailscale
+        if: inputs.environment == 'production'
+        env:
+          TSIDP_ISSUER: ${{ secrets.TSIDP_ISSUER }}
+          NEXTAUTH_URL: https://kipnerter.com
+        run: python3 scripts/portal_oidc_preflight.py
+
       - name: Resolve deployment target
         id: target
         env:
@@ -102,6 +109,11 @@ jobs:
           TSIDP_CLIENT_ID: ${{ secrets.TSIDP_CLIENT_ID }}
           TSIDP_CLIENT_SECRET: ${{ secrets.TSIDP_CLIENT_SECRET }}
           KIPNERTER_ALLOWED_EMAILS: ${{ secrets.KIPNERTER_ALLOWED_EMAILS }}
+          FLEET_MONITOR_BASE_URL: ${{ secrets.FLEET_MONITOR_BASE_URL }}
+          FLEET_MONITOR_TOKEN: ${{ secrets.FLEET_MONITOR_TOKEN }}
+          ASSISTX_BASE_URL: ${{ secrets.ASSISTX_BASE_URL }}
+          ASSISTX_MONITOR_USER: ${{ secrets.ASSISTX_MONITOR_USER }}
+          ASSISTX_MONITOR_PASSWORD: ${{ secrets.ASSISTX_MONITOR_PASSWORD }}
         run: |
           set -euo pipefail
           for value in API_KEY DB_PASSWORD S3_ACCESS S3_SECRET; do
@@ -113,6 +125,10 @@ jobs:
           done
           [[ ${#NEXTAUTH_SECRET} -ge 32 ]] || { echo "::error::NEXTAUTH_SECRET must be at least 32 chars"; exit 1; }
           [[ "$TSIDP_ISSUER" == https://* ]] || { echo "::error::TSIDP_ISSUER must use HTTPS"; exit 1; }
+          for value in FLEET_MONITOR_BASE_URL FLEET_MONITOR_TOKEN ASSISTX_BASE_URL ASSISTX_MONITOR_USER ASSISTX_MONITOR_PASSWORD; do
+            [[ -n "${!value:-}" ]] || { echo "::error::Missing required read-only fleet integration $value"; exit 1; }
+          done
+          [[ ${#FLEET_MONITOR_TOKEN} -ge 32 ]] || { echo "::error::FLEET_MONITOR_TOKEN must be >=32 chars"; exit 1; }
           [[ ${#API_KEY} -ge 32 ]] || { echo "::error::KIPNERTER_SPATIAL_API_KEY must be at least 32 characters"; exit 1; }
           [[ ${#DB_PASSWORD} -ge 20 ]] || { echo "::error::KIPNERTER_SPATIAL_DB_PASSWORD must be at least 20 characters"; exit 1; }
           [[ "$DB_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ ]] || { echo "::error::KIPNERTER_SPATIAL_DB_PASSWORD must use URL-safe characters"; exit 1; }
@@ -148,9 +164,11 @@ jobs:
           tailscale ssh "$USER@$TARGET" 'sudo mkdir -p /opt/kipnerter && sudo chown -R '"$USER:$USER"' /opt/kipnerter'
           cat /tmp/kipnerter.tgz | tailscale ssh "$USER@$TARGET" 'tar -xzf - -C /opt/kipnerter'
           if [ "$ENVIRONMENT" = production ]; then
-            ASSISTX_BASE_URL="${ASSISTX_BASE_URL:-http://x1-370:8000}"
-            SOPHIA_BASE_URL="${SOPHIA_BASE_URL:-http://x1-370:8765}"
-            LMSTUDIO_BASE_URL="${LMSTUDIO_BASE_URL:-http://x1-370:1234}"
+            # Do not manufacture private-service URLs. Each configured upstream
+            # must have an independently verified, permitted tailnet route.
+            ASSISTX_BASE_URL="${ASSISTX_BASE_URL:-}"
+            SOPHIA_BASE_URL="${SOPHIA_BASE_URL:-}"
+            LMSTUDIO_BASE_URL="${LMSTUDIO_BASE_URL:-}"
             GATEWAY_TOKEN="$GATEWAY_TOKEN_OVERRIDE"
             if [ -z "$GATEWAY_TOKEN" ]; then
               GATEWAY_TOKEN=$(tailscale ssh "$USER@$TARGET" "sed -n 's/^KIPNERTER_GATEWAY_TOKEN=//p' /opt/kipnerter/.env 2>/dev/null | head -n1" || true)
@@ -222,7 +240,37 @@ jobs:
             fi
             sleep 10
           done
-          tailscale ssh "$USER@$TARGET" 'cd /opt/kipnerter && set -a && . ./.env && set +a && curl -fsS -H "Authorization: Bearer $KIPNERTER_GATEWAY_TOKEN" https://api.kipnerter.com/api/v1/gateway/lmstudio/v1/models >/dev/null'
+                    # Read env as data, not as shell code. Never print the bearer secret.
+          tailscale ssh "$USER@$TARGET" /bin/bash -se <<'REMOTE'
+          python3 - <<'PY'
+          import json
+          import urllib.request
+          from pathlib import Path
+
+          line = next((line for line in Path('/opt/kipnerter/.env').read_text().splitlines()
+                       if line.startswith('KIPNERTER_GATEWAY_TOKEN=')), '')
+          token = line.partition('=')[2]
+          if len(token) < 32:
+              raise SystemExit('Invalid server-side gateway token')
+          headers = {'Authorization': 'Bearer ' + token, 'Accept': 'application/json'}
+          base = 'https://api.kipnerter.com/api/v1/control-plane/'
+          for name, expected in [('overview', 'reported'), ('nodes', 'live'),
+                                 ('sessions', 'reported'), ('traces', 'live')]:
+              with urllib.request.urlopen(
+                  urllib.request.Request(base + name, headers=headers), timeout=12
+              ) as reply:
+                  data = json.load(reply)
+              status = data.get('observer_status') if name == 'overview' else (
+                  data.get('tailscale_status') if name == 'nodes' else data.get('status')
+              )
+              if status != expected:
+                  raise SystemExit(f'{name}: missing required authenticated telemetry')
+              if name == 'nodes' and not data.get('nodes'):
+                  raise SystemExit('No authenticated fleet nodes observed')
+          print('Read-only fleet telemetry verified')
+          PY
+          REMOTE
+          echo "Authenticated control plane and Tailscale node feed verified."
 
       - name: Show deployment state on failure
         if: failure()

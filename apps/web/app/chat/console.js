@@ -121,7 +121,10 @@ export default function FleetConsole({ email }) {
         {tab === "agents" && <>
           <div className="page-intro"><p className="section-kicker">AGENT ORCHESTRATION</p><h1>Agents<span className="accent">.</span></h1><p>Service health signals only. Execution requires a separately authorized workflow.</p></div>
           <section className="integration-grid">{integrations.filter(s => ["assistx", "sophia", "hermes", "opencode"].includes(s.id)).map(s =>
-            <div key={s.id} className="integration-card"><div className="integration-icon">{human(s.id).slice(0, 1)}</div><h3>{human(s.id)}</h3><Badge status={s.status}/><p>{s.latency_ms == null ? "No verified response" : `Health probe: ${s.latency_ms} ms`}</p></div>)}</section>
+            <div key={s.id} className="integration-card"><div className="integration-icon">{human(s.id).slice(0, 1)}</div><h3>{human(s.id)}</h3><Badge status={s.status}/><p>{s.source === "x1_observer" && s.status === "healthy" ? "Healthy on x1-370 · production routing unverified" :
+              s.source === "x1_observer" ? "Local observation only · worker readiness unverified" :
+              s.source === "production_upstream_probe" ? "Probed from production API" :
+              "No verified response"}{s.latency_ms == null ? "" : ` · ${s.latency_ms} ms`}</p></div>)}</section>
           <section className="workspace-panel" style={{marginTop:20}}>
             <div className="panel-heading"><div><h2>Hermes & OpenCode sessions</h2><p>Read-only launcher receipts. Requested models are not execution attestations.</p></div><Badge status={data.sessions?.status || "unavailable"}/></div>
             {sessions.length ? <div className="data-list">{sessions.map(job => <div key={job.id} className="data-row">
