@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { snapshotExpired, canApplyPoll } from "../../lib/telemetry-freshness.mjs";
 
 const SECTIONS = [
   { id: "chat", icon: "◈", label: "Chat" },
@@ -27,9 +28,13 @@ export default function FleetConsole({ email }) {
   const [data, setData] = useState({});
   const [errors, setErrors] = useState({});
   const [updated, setUpdated] = useState(null);
+  const [connection, setConnection] = useState("connecting");
   useEffect(() => {
     let stopped = false;
+    let lastReceivedAt = 0;
+    let generation = 0;
     async function refresh() {
+      const ticket = ++generation;
       const results = await Promise.all(["overview", "models", "nodes", "traces", "sessions"].map(async key => {
         try {
           const response = await fetch(`/api/portal/${key}`, { cache: "no-store" });
@@ -37,10 +42,15 @@ export default function FleetConsole({ email }) {
           return [key, await response.json(), null];
         } catch (error) { return [key, null, error.message]; }
       }));
-      if (!stopped) {
-        setData(Object.fromEntries(results.map(([key, value]) => [key, value || { ...noData, status: "unavailable" }])));
+      if (canApplyPoll(ticket, generation, stopped)) {
+        const success = results.some(row => row[1] !== null);
+        setData(success
+          ? Object.fromEntries(results.map(([key, value]) => [key, value || { ...noData, status: "unavailable" }]))
+          : {});
         setErrors(Object.fromEntries(results.filter(row => row[2]).map(row => [row[0], row[2]])));
-        setUpdated(new Date().toLocaleTimeString());
+        lastReceivedAt = success ? Date.now() : 0;
+        setUpdated(success ? new Date().toLocaleTimeString() : null);
+        setConnection(success ? "polling fallback" : "unavailable");
       }
     }
     refresh();
@@ -51,15 +61,39 @@ export default function FleetConsole({ email }) {
       try {
         const next = JSON.parse(message.data);
         if (!next || typeof next !== "object" || Array.isArray(next)) return;
+        ++generation;
         setData(next);
         setErrors({});
+        lastReceivedAt = Date.now();
         setUpdated(new Date().toLocaleTimeString());
+        setConnection("live stream");
         streaming = true;
       } catch { /* preserve the last valid state until the fallback refresh */ }
     });
-    events.onerror = () => { streaming = false; };
+    events.onerror = () => {
+      streaming = false;
+      setConnection("reconnecting");
+    };
     const timer = setInterval(() => { if (!streaming) refresh(); }, 30000);
-    return () => { stopped = true; events.close(); clearInterval(timer); };
+    const expiry = setInterval(() => {
+      if (snapshotExpired(lastReceivedAt, Date.now())) {
+        lastReceivedAt = 0;
+        streaming = false;
+        ++generation;
+        // Clear the old green badges and observations immediately, even if
+        // an upstream SSE reconnect or fallback request is still outstanding.
+        setData({});
+        setUpdated(null);
+        setConnection("stale");
+      }
+    }, 5000);
+    return () => {
+      stopped = true;
+      ++generation;
+      events.close();
+      clearInterval(timer);
+      clearInterval(expiry);
+    };
   }, []);
   const integrations = data.overview?.integrations || [];
   const models = data.models?.models || [];
@@ -100,7 +134,7 @@ export default function FleetConsole({ email }) {
     <main className="portal-main">
       <header className="portal-header">
         <div className="header-breadcrumb">KIPNERTER <span>/</span> {SECTIONS.find(s => s.id === tab)?.label.toUpperCase()}</div>
-        <div className="header-tools"><span className="read-only">READ ONLY CONTROL PLANE</span><span>{updated ? `Refreshed ${updated}` : "Connecting…"}</span></div>
+        <div className="header-tools"><span className="read-only">READ ONLY CONTROL PLANE</span><span>{connection} · {updated ? `Observed ${updated}` : "No fresh observation"}</span></div>
       </header>
       <div className="portal-content">
         {tab === "chat" && <>

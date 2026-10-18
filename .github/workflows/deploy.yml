@@ -135,7 +135,24 @@ jobs:
           [[ "$DB_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ ]] || { echo "::error::KIPNERTER_SPATIAL_DB_PASSWORD must use URL-safe characters"; exit 1; }
           [[ ${#S3_SECRET} -ge 32 ]] || { echo "::error::KIPNERTER_SPATIAL_S3_SECRET_ACCESS_KEY must be at least 32 characters"; exit 1; }
 
-      - name: Upload immutable revision
+      - name: Preserve and verify production application rollback snapshot
+        if: inputs.environment == 'production'
+        env:
+          TARGET: ${{ steps.target.outputs.host }}
+          USER: ${{ steps.target.outputs.user }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::Non-immutable release SHA"; exit 1; }
+          # Snapshot the live deployed application BEFORE overwriting a file.
+          # This uses stdin to run the exact checked-in verifier and leaves
+          # only a mode-0600 archive in an owner-private directory. The SSH
+          # identity check in "Resolve deployment target" must pass first.
+          cat scripts/portal_release_backup.py | tailscale ssh "$USER@$TARGET" \
+            "python3 - snapshot --root /opt/kipnerter --backup-dir /home/kipnerter/.local/share/kipnerter-release-backups --revision $GITHUB_SHA"
+          # Database/volume state is NOT in this snapshot. Promotion still
+          # requires a separately rehearsed application/DB rollback.
+
+      - name: Upload revision after verified rollback snapshot
         env:
           TARGET: ${{ steps.target.outputs.host }}
           USER: ${{ steps.target.outputs.user }}

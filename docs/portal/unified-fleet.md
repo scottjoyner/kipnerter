@@ -388,3 +388,70 @@ eight authorized browser streams connect simultaneously, a ninth must receive
 HTTP 429, and a new connection must work after the clients close. This limit
 is per Node server worker, not a globally coordinated cross-replica quota;
 production concurrency/replica policy still requires staging validation.
+
+## October 18: pre-deployment rollback integrity — required gate
+
+Audit found that the old `scripts/rollback.sh` expected a Git checkout
+inside `/opt/kipnerter`, while the deployment workflow explicitly excludes
+every `.git` directory from its uploaded tarball. Git-based rollback was
+therefore **not supported by the deployed application layout**.
+
+The production workflow now stops *before writing any new release files* if
+it cannot create and verify a private versioned backup of the currently
+running application's local files. The exact `scripts/portal_release_backup.py`
+from the checked-out commit is streamed to the already SSH-authorized
+production user (not fetched from the public internet). It:
+
+- Requires a real existing operator-owned application directory with
+  `docker-compose.yml` and an existing private `.env`; refuses initial
+  deployments without explicit migration/recovery planning.
+- Denies symlinks, special files, unowned paths, oversized snapshots,
+  insufficient disk space, and backup directories nested inside the app.
+- Archives the prior application source and environment into
+  `/home/kipnerter/.local/share/kipnerter-release-backups/`
+  with mode-0700 directory and mode-0600 archive/checksum; it never
+  prints secret values.
+- Names each backup for the exact **new** 40-hex GitHub commit SHA
+  (`pre-<new-sha>.tar.gz`), prevents overwriting a previous snapshot,
+  validates archive members, and checks its SHA-256 checksum before upload.
+- Supports `verify` and `rehearse` actions; `rehearse` restores the
+  application to a separate **new** directory and never modifies the
+  running deployment or starts containers.
+
+Local fixture tests confirm backup/rehearsal roundtrips, prior-file
+preservation, secret-file permissions, checksum-tampering rejection,
+unversioned/missing deployment denial, and symlink rejection.
+
+**Critical limitation:** This is an application-file recovery checkpoint,
+**not yet a verified automatic production rollback**. The deploy flow still
+extracts new files in place; Docker's named Postgres/MinIO volumes, schema
+migrations, third-party identity state, and external credentials are **not**
+captured by the archive. An operator-approved staging rehearsal of the
+actual Compose rollback and a separate database/volume recovery plan are
+mandatory before promotion. The legacy Git-based rollback script now refuses
+tar-only deployments instead of misrepresenting them as recoverable.
+
+Production SSH still requires Tailscale's interactive identity approval.
+This workflow was not run against the production host, and no existing
+production files, volumes, or identities were modified during this work.
+
+## Streaming response limits and browser freshness
+
+The BFF/SSE path now reads each fixed upstream JSON projection incrementally,
+enforcing its 128 KB cap even when Content-Length is missing or false. Canceling
+an SSE browser stream aborts its active upstream fetch and sleeping loop, and
+the server closes slow-consuming streams instead of building an unlimited
+snapshot backlog. Existing capacity remains eight streams per Node.js
+process, with a two-minute hard lifetime. The one-process cap is not an
+authenticated cross-replica per-user quota.
+
+The browser treats a successful snapshot or valid polling result as a
+time-limited observation. After 45 seconds without a valid replacement it
+clears previous green badges and labels telemetry stale, rather than
+presenting old health data as live. It invalidates earlier fallback fetches
+when a newer SSE snapshot arrives, preventing an old response from replacing
+newer evidence. React page state is never a replay or admission authority.
+
+The bound-reader, abortable sleep, freshness, race prevention and previous
+full-stack session/SSE checks run in CI. The live x1-370 observer still
+distinguishes a fresh historical AssistX *index* from recent execution.

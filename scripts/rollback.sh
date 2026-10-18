@@ -6,6 +6,15 @@ set -euo pipefail
 ROOT=${KIPNERTER_ROOT:-/opt/kipnerter}
 cd "$ROOT"
 
+# Production currently deploys tar archives without .git. Refuse a fake
+# Git-based rollback instead of mutating an unknown Compose application.
+if [[ ! -d .git ]]; then
+  echo "RELEASE HOLD: no Git checkout at $ROOT. Git rollback is unavailable." >&2
+  echo "Use a separately verified private release snapshot and an approved" >&2
+  echo "staging restoration/Compose rehearsal; do not overwrite live data." >&2
+  exit 3
+fi
+
 git fetch origin --prune
 if ! git cat-file -e "${ROLLBACK_SHA}^{commit}" 2>/dev/null; then
   echo "Unknown rollback commit: $ROLLBACK_SHA" >&2
