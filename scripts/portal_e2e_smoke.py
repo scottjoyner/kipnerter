@@ -169,7 +169,7 @@ def run(real_observer):
                 if code != 401:
                     raise AssertionError(f"Expired synthetic session {path} returned {code}")
             print("expired signed session denied: 401")
-            for path in ("/api/portal/nodes", "/api/portal/sessions", "/api/portal/traces"):
+            for path in ("/api/portal/nodes", "/api/portal/models", "/api/portal/sessions", "/api/portal/traces"):
                 code, body, headers = request(base + path, cookie)
                 if code != 200:
                     raise AssertionError(f"Signed synthetic session {path} returned {code}")
@@ -181,6 +181,11 @@ def run(real_observer):
                     raise AssertionError("Missing private no-store cache policy")
                 if real_observer and path == "/api/portal/nodes":
                     assert value.get("tailscale_status") == "live" and value.get("nodes")
+                if real_observer and path == "/api/portal/models":
+                    assert value.get("source") == "assistx_local_inventory"
+                    assert value.get("status") in ("reported", "reported_empty")
+                if real_observer and path == "/api/portal/nodes":
+                    assert value.get("assistx_status") in ("reported", "reported_empty")
                 if real_observer and path == "/api/portal/sessions":
                     assert value.get("sessions")
                 if real_observer and path == "/api/portal/traces":
@@ -204,6 +209,7 @@ def run(real_observer):
                 if real_observer and (
                     event["traces"].get("source") != "assistx_trace_index"
                     or event["nodes"].get("tailscale_status") != "live"
+                    or event["models"].get("source") != "assistx_local_inventory"
                 ):
                     raise AssertionError("SSE did not include live private observer data")
                 print("authenticated SSE: unified snapshot returned")

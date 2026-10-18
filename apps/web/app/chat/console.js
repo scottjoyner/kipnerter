@@ -173,7 +173,11 @@ export default function FleetConsole({ email }) {
           <div className="page-intro"><p className="section-kicker">INFERENCE REGISTRY</p><h1>Models<span className="accent">.</span></h1><p>Read-only reported inventory. Discovery is not proof of loaded or admitted state.</p></div>
           <section className="workspace-panel"><div className="panel-heading"><h2>Reported inventory</h2><Badge status={data.models?.status || "unavailable"}/></div>
             {models.length ? <div className="data-list">{models.map(model => <div className="data-row" key={model.id}><span className="row-main">{model.id}</span><span>{model.nodes} reported nodes</span></div>)}</div> :
-              <Empty title="No verified model inventory" detail="Configure the upstream read-only AssistX catalog credentials to show reported models."/>}</section>
+              <Empty title={data.models?.status === "reported_empty" ?
+                "AssistX reports no registered models" : "No verified model inventory"}
+                detail={data.models?.status === "reported_empty" ?
+                "The private AssistX inventory endpoint returned an empty catalog. Tailscale presence does not prove model loading; provider discovery needs separate validation." :
+                "The fresh private AssistX inventory feed is unavailable. Credentials are never exposed to this portal."}/>}</section>
         </>}
         {tab === "nodes" && <>
           <div className="page-intro"><p className="section-kicker">TAILNET & COMPUTE</p><h1>Fleet nodes<span className="accent">.</span></h1><p>AssistX node inventory is shown separately from Tailscale connectivity verification.</p></div>
@@ -184,7 +188,7 @@ export default function FleetConsole({ email }) {
               <Empty title="No node reports yet" detail="Connect the authorized inventory endpoint; no devices are assumed online."/>}</section>
         </>}
         {tab === "traces" && <>
-          <div className="page-intro"><p className="section-kicker">OBSERVABILITY</p><h1>Live activity<span className="accent">.</span></h1><p>Automatically refreshed every 20 seconds. AssistX trace IDs and launcher job IDs are different types of evidence, not a proven shared lineage.</p></div>
+          <div className="page-intro"><p className="section-kicker">OBSERVABILITY</p><h1>Live activity<span className="accent">.</span></h1><p>Automatically refreshed about every 15 seconds. AssistX trace IDs and launcher job IDs are different types of evidence, not a proven shared lineage.</p></div>
           <section className="workspace-panel"><div className="panel-heading"><div><h2>Recent activity</h2><p>Metadata only · raw prompts and tool output are never forwarded.
             {data.traces?.status === "historical" ? " · Historical trace index; no recent execution observed." : ""}
             {data.traces?.last_event_at ? " · Latest event: " + new Date(data.traces.last_event_at).toLocaleString() : ""}
@@ -198,7 +202,7 @@ export default function FleetConsole({ email }) {
                 {item.hold ? " · archival hold" : ""}
                 {!item.verified ? " · uncorrelated job receipt" : ""}
               </small></div><Badge status={item.status}/></div>)}</div> :
-              <Empty title="No authenticated activity feed" detail="Configure separate read-only AssistX and fleet launcher observer credentials. This page never synthesizes traces."/>}
+              <Empty title="No authenticated activity feed" detail="The private monitor-only fleet observer is unavailable. This page never synthesizes traces or uses AssistX execution credentials."/>}
           </section>
         </>}
         {Object.keys(errors).length > 0 && <p className="portal-warning" role="status">Some private telemetry endpoints are unavailable. The dashboard displays no unverified status for those feeds.</p>}

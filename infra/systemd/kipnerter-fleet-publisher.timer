@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh AssistX sanitized model/node inventory
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=45s
+AccuracySec=5s
+Unit=kipnerter-fleet-publisher.service
+
+[Install]
+WantedBy=timers.target

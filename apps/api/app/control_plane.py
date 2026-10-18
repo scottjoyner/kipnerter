@@ -18,29 +18,6 @@ def _authorize(request: Request, response: Response) -> None:
     response.headers["Cache-Control"] = "private, no-store"
 
 
-def _assistx_auth():
-    user = os.getenv("ASSISTX_MONITOR_USER", "")
-    password = os.getenv("ASSISTX_MONITOR_PASSWORD", "")
-    if not user or not password:
-        return None
-    return httpx.BasicAuth(user, password)
-
-
-async def _assistx_read(path: str, params: dict | None = None):
-    service = next((s for s in services() if s.id == "assistx"), None)
-    auth = _assistx_auth()
-    if service is None or auth is None:
-        return None
-    try:
-        async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=False) as client:
-            result = await client.get(f"{service.base_url}{path}", params=params, auth=auth)
-            result.raise_for_status()
-            return result.json()
-    except (httpx.HTTPError, ValueError):
-        return None
-
-
-
 def _observer_is_fresh(payload, path, now=None):
     """Deny cached/replayed/wrong-origin readings older than 90 seconds."""
     expected = {
@@ -48,6 +25,7 @@ def _observer_is_fresh(payload, path, now=None):
         "/v1/sessions": "fleet-agent-launcher",
         "/v1/integrations": "x1-370",
         "/v1/traces": "assistx_trace_index",
+        "/v1/assistx-fleet": "assistx_local_inventory",
     }
     if path not in expected or not isinstance(payload, dict) or payload.get("source") != expected[path]:
         return False
@@ -128,16 +106,12 @@ async def overview(request: Request, response: Response):
 @router.get("/traces")
 async def traces(request: Request, response: Response):
     _authorize(request, response)
-    # The independent, sanitized local trace snapshot is safe to publish with
-    # the existing monitor-only token. Direct AssistX BasicAuth is an optional
-    # fallback and MUST NOT be reused as the browser credential.
+    # The browser-facing API never holds AssistX's general-purpose
+    # BasicAuth credentials or falls back to querying protected execution APIs.
     payload = await _tailscale_read("/v1/traces")
-    source = "assistx_trace_index" if isinstance(payload,dict) else "unavailable"
-    if not isinstance(payload, dict) or not isinstance(payload.get("traces"), list):
-        payload = await _assistx_read("/api/traces", {"limit": 25, "offset": 0})
-        source = "assistx_authenticated_index" if isinstance(payload,dict) else "unavailable"
     if not isinstance(payload, dict) or not isinstance(payload.get("traces"), list):
         return {"status": "unavailable", "traces": []}
+    source = "assistx_trace_index"
     allowed_outcomes = {"open", "failed", "completed"}
     rows = []
     for item in payload["traces"][:25]:
@@ -172,26 +146,24 @@ async def traces(request: Request, response: Response):
 async def nodes(request: Request, response: Response):
     _authorize(request, response)
     assistx, tailnet = await asyncio.gather(
-        _assistx_read("/api/fleet/nodes"), _tailscale_read()
+        _tailscale_read("/v1/assistx-fleet"), _tailscale_read("/v1/nodes")
     )
     raw_assistx = assistx.get("nodes", []) if isinstance(assistx, dict) else []
     tailnet_verified = isinstance(tailnet, dict) and isinstance(tailnet.get("nodes"), list)
     raw_tailnet = tailnet.get("nodes", []) if tailnet_verified else []
-    if not isinstance(raw_assistx, list):
-        raw_assistx = []
-    if not isinstance(raw_tailnet, list):
-        raw_tailnet = []
+    if not isinstance(raw_assistx,list): raw_assistx=[]
+    if not isinstance(raw_tailnet,list): raw_tailnet=[]
     by_name = {}
     for node in raw_assistx[:50]:
         if not isinstance(node, dict):
             continue
-        name = str(node.get("hostname") or "")[:80]
-        if not name or name.startswith("100."):
+        name = node.get("name")
+        if not isinstance(name,str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,79}", name):
             continue
         by_name[name.lower()] = {
-            "name": name, "source": "assistx",
-            "models": [str(m)[:100] for m in (node.get("loaded_models") or [])[:12]],
-            "last_seen": str(node.get("last_seen") or "")[:64],
+            "name": name, "source": "assistx_local_inventory",
+            "models": node.get("models", [])[:12],
+            "last_seen": "",
             "inflight": node.get("inflight") if type(node.get("inflight")) is int else None,
             "tailscale_online": None,
         }
@@ -211,7 +183,9 @@ async def nodes(request: Request, response: Response):
         "status": "live" if tailnet_verified else
                   ("reported" if isinstance(assistx, dict) else "unavailable"),
         "tailscale_status": "live" if tailnet_verified else "unavailable",
-        "assistx_status": "reported" if isinstance(assistx, dict) else "unavailable",
+        "assistx_status": ("reported_empty" if not raw_assistx else "reported")
+                           if isinstance(assistx, dict) else "unavailable",
+        "assistx_observed_at": assistx.get("observed_at") if isinstance(assistx,dict) else None,
         "observer_observed_at": tailnet.get("observed_at") if tailnet_verified else None,
         "nodes": list(by_name.values())[:100],
     }
@@ -219,17 +193,19 @@ async def nodes(request: Request, response: Response):
 @router.get("/models")
 async def model_inventory(request: Request, response: Response):
     _authorize(request, response)
-    payload = await _assistx_read("/api/fleet/models")
-    if not isinstance(payload, dict):
+    payload = await _tailscale_read("/v1/assistx-fleet")
+    if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
         return {"status": "unavailable", "models": []}
-    raw = payload.get("models", {})
-    if not isinstance(raw, dict):
-        return {"status": "unavailable", "models": []}
-    return {"status": "reported", "models": [
-        {"id": str(name)[:120], "nodes": len((data or {}).get("nodes") or [])}
-        for name, data in list(raw.items())[:50] if isinstance(data, dict)
-    ]}
-
+    raw = payload["models"]
+    result = [
+        {"id": model["id"], "nodes": model["nodes"]}
+        for model in raw[:50] if isinstance(model, dict)
+        and isinstance(model.get("id"), str) and type(model.get("nodes")) is int
+    ]
+    return {"status": "reported" if result else "reported_empty",
+            "source": "assistx_local_inventory",
+            "observer_observed_at": payload.get("observed_at"),
+            "models": result}
 
 
 @router.get("/sessions")

@@ -113,8 +113,6 @@ jobs:
           FLEET_MONITOR_BASE_URL: ${{ secrets.FLEET_MONITOR_BASE_URL }}
           FLEET_MONITOR_TOKEN: ${{ secrets.FLEET_MONITOR_TOKEN }}
           ASSISTX_BASE_URL: ${{ secrets.ASSISTX_BASE_URL }}
-          ASSISTX_MONITOR_USER: ${{ secrets.ASSISTX_MONITOR_USER }}
-          ASSISTX_MONITOR_PASSWORD: ${{ secrets.ASSISTX_MONITOR_PASSWORD }}
         run: |
           set -euo pipefail
           for value in API_KEY DB_PASSWORD S3_ACCESS S3_SECRET; do
@@ -126,7 +124,7 @@ jobs:
           done
           [[ ${#NEXTAUTH_SECRET} -ge 32 ]] || { echo "::error::NEXTAUTH_SECRET must be at least 32 chars"; exit 1; }
           [[ "$TSIDP_ISSUER" == https://* ]] || { echo "::error::TSIDP_ISSUER must use HTTPS"; exit 1; }
-          for value in FLEET_MONITOR_BASE_URL FLEET_MONITOR_TOKEN ASSISTX_BASE_URL ASSISTX_MONITOR_USER ASSISTX_MONITOR_PASSWORD; do
+          for value in FLEET_MONITOR_BASE_URL FLEET_MONITOR_TOKEN; do
             [[ -n "${!value:-}" ]] || { echo "::error::Missing required read-only fleet integration $value"; exit 1; }
           done
           [[ ${#FLEET_MONITOR_TOKEN} -ge 32 ]] || { echo "::error::FLEET_MONITOR_TOKEN must be >=32 chars"; exit 1; }
@@ -164,8 +162,6 @@ jobs:
           OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL }}
           FLEET_MONITOR_BASE_URL: ${{ secrets.FLEET_MONITOR_BASE_URL }}
           FLEET_MONITOR_TOKEN: ${{ secrets.FLEET_MONITOR_TOKEN }}
-          ASSISTX_MONITOR_USER: ${{ secrets.ASSISTX_MONITOR_USER }}
-          ASSISTX_MONITOR_PASSWORD: ${{ secrets.ASSISTX_MONITOR_PASSWORD }}
           NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
           TSIDP_ISSUER: ${{ secrets.TSIDP_ISSUER }}
           TSIDP_CLIENT_ID: ${{ secrets.TSIDP_CLIENT_ID }}
@@ -208,8 +204,6 @@ jobs:
               printf 'TSIDP_CLIENT_SECRET=%s\n' "$TSIDP_CLIENT_SECRET"
               printf 'KIPNERTER_ALLOWED_EMAILS=%s\n' "$KIPNERTER_ALLOWED_EMAILS"
               printf 'KIPNERTER_ALLOWED_TSIDP_SUBJECTS=%s\n' "$KIPNERTER_ALLOWED_TSIDP_SUBJECTS"
-              printf 'ASSISTX_MONITOR_USER=%s\n' "$ASSISTX_MONITOR_USER"
-              printf 'ASSISTX_MONITOR_PASSWORD=%s\n' "$ASSISTX_MONITOR_PASSWORD"
               printf 'HERMES_BASE_URL=%s\n' "$HERMES_BASE_URL"
               printf 'OPENCODE_BASE_URL=%s\n' "$OPENCODE_BASE_URL"
               printf 'FLEET_MONITOR_BASE_URL=%s\n' "$FLEET_MONITOR_BASE_URL"
@@ -265,7 +259,7 @@ jobs:
           headers = {'Authorization': 'Bearer ' + token, 'Accept': 'application/json'}
           base = 'https://api.kipnerter.com/api/v1/control-plane/'
           for name, expected in [('overview', 'reported'), ('nodes', 'live'),
-                                 ('sessions', 'reported'), ('traces', None)]:
+                                 ('models', None), ('sessions', 'reported'), ('traces', None)]:
               with urllib.request.urlopen(
                   urllib.request.Request(base + name, headers=headers), timeout=12
               ) as reply:
@@ -273,10 +267,13 @@ jobs:
               status = data.get('observer_status') if name == 'overview' else (
                   data.get('tailscale_status') if name == 'nodes' else data.get('status')
               )
-              if name == 'traces':
+              if name == 'models':
+                  if status not in ('reported','reported_empty') or data.get('source') != 'assistx_local_inventory':
+                      raise SystemExit('models: authenticated, sanitized AssistX inventory unavailable')
+              elif name == 'traces':
                   if status not in ('live', 'historical') or not data.get('traces'):
                       raise SystemExit('traces: authenticated metadata index unavailable')
-                  if data.get('source') not in ('assistx_trace_index', 'assistx_authenticated_index'):
+                  if data.get('source') != 'assistx_trace_index':
                       raise SystemExit('traces: unrecognized trace source')
               elif status != expected:
                   raise SystemExit(f'{name}: missing required authenticated telemetry')

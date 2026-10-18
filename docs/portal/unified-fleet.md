@@ -16,10 +16,11 @@ identity can access `/api/portal/{overview,nodes,models,traces}`.
    `KIPNERTER_GATEWAY_TOKEN`. All four portal endpoints reject missing/invalid
    credentials and return `Cache-Control: private, no-store`.
 3. **API → private fleet:** explicit services configured via environment.
-   AssistX read-only views use separate Basic credentials
-   (`ASSISTX_MONITOR_USER`/`ASSISTX_MONITOR_PASSWORD`). Do not reuse privileged
-   execution credentials. Traces project **only** ID, outcome, count, and timing:
-   no prompts, addresses, payloads, or tokens.
+   AssistX read-only views come from **sanitized private observer snapshots**,
+   not production-held general-purpose BasicAuth credentials. The fixed local
+   publisher performs its requests inside the AssistX container, then strips
+   every non-allowlisted field. Traces project **only** ID, outcome, count,
+   and timing: no prompts, addresses, payloads, or tokens.
 4. **Tailscale node presence:** optional `tailnet_observer.py` on a trusted
    fleet node reads `tailscale status --json` without sudo, strips addresses
    and identifiers other than hostnames, binds only loopback, requires a
@@ -42,8 +43,9 @@ identity can access `/api/portal/{overview,nodes,models,traces}`.
   `NEXTAUTH_SECRET`, `NEXTAUTH_URL=https://kipnerter.com`,
   `KIPNERTER_ALLOWED_EMAILS` and `KIPNERTER_ALLOWED_TSIDP_SUBJECTS` in GitHub deployment environment secrets.
   Without *all* values the portal fails closed and displays a setup notice.
-- Provision read-only AssistX credentials independently and restrict their
-  permissions to fleet/trace GET endpoints, then add their deployment secrets.
+- Enable the local scheduled AssistX snapshot publishers on x1-370.
+  Neither the web nor the public API requires AssistX BasicAuth, and there is
+  no credential-based fallback to privileged AssistX routes.
 - On the trusted node run the observer with an independent 32+ char secret.
   Verify a denied unauthenticated GET, a permitted request with the observer
   token, and ACL denial from an unrelated node before configuring API access.
@@ -274,8 +276,9 @@ Neo4j historical index, not direct real-time stream telemetry.
 The tailnet-only observer now serves `GET /v1/traces` with the same separate
 monitoring bearer token and HTTP 401 for unauthenticated clients. It returns
 503 when the publisher has failed or a snapshot is older than 90 seconds.
-The production API prefers this sanitized observer feed, with a separately
-credentialed AssistX read-only BasicAuth GET as an optional fallback.
+The production API uses **only** this sanitized observer feed. The previous
+  direct AssistX BasicAuth fallback is disabled and no privileged AssistX
+  credential is passed to the production API container.
 
 ### Actual tested evidence
 
@@ -455,3 +458,57 @@ newer evidence. React page state is never a replay or admission authority.
 The bound-reader, abortable sleep, freshness, race prevention and previous
 full-stack session/SSE checks run in CI. The live x1-370 observer still
 distinguishes a fresh historical AssistX *index* from recent execution.
+
+
+## October 18: local AssistX node and model inventory without privileged API credentials
+
+Direct, authenticated read-only checks of the running AssistX container
+confirmed that `GET /api/fleet/nodes` returned HTTP 200 with **zero nodes**
+and `GET /api/fleet/models` returned HTTP 200 with **zero models**. This is
+a **fresh, genuinely empty AssistX registry**, not a communication failure
+and definitely not evidence that Tailscale fleet machines are absent.
+
+A second local-only snapshot publisher,
+`kipnerter-fleet-publisher.service` with
+`kipnerter-fleet-publisher.timer`, now reads the two fixed endpoints
+*inside the already-authorized local AssistX container*. Its BasicAuth
+environment never leaves the container. It exports only an atomic, private
+0600 `assistx-fleet.json` snapshot with:
+- strict source and timestamp,
+- at most 50 sanitized node names plus model-name lists and inflight counts,
+- at most 50 sanitized model names and counts of reporting nodes.
+
+The bearer-protected, tailnet-only observer offers `GET /v1/assistx-fleet`.
+Requests without its independent token receive HTTP 401; invalid, tampered,
+symlinked, oversized or older-than-90-second snapshots are rejected. The
+public FastAPI control plane merges these projections with Tailscale online
+state without using the old general-purpose `ASSISTX_MONITOR_USER/PASSWORD`
+credentials. The production Compose and GitHub environment no longer pass
+those credentials. An empty successful model response is labeled
+`reported_empty`, distinct from `unavailable`.
+
+The x1-370 physical acceptance sample yielded:
+
+- Authenticated private `GET /v1/assistx-fleet`: HTTP 200 with **0 AssistX
+  nodes, 0 AssistX models**; anonymous HTTP 401.
+- Authenticated FastAPI `nodes`: HTTP 200 with **17 Tailscale-present nodes**,
+  and separate `assistx_status=reported_empty`.
+- Authenticated FastAPI `models`: HTTP 200 with
+  `source=assistx_local_inventory`, `status=reported_empty` and 0 rows.
+- Historical AssistX trace index remained at 25 metadata records, and the
+  launcher receipt feed remained at 11 records.
+
+Nothing has been submitted to Auto-Router, no model was loaded, no discovery
+rescan was forced, no existing container was changed, and no new Tailscale
+Serve/Funnel port was created. **Model discovery and actual loaded-model
+attestation remain unresolved downstream gates**, independent of this
+fresh-source telemetry milestone.
+
+Safe local checks:
+
+```bash
+systemctl --user status kipnerter-fleet-publisher.timer
+systemctl --user status kipnerter-fleet-publisher.service
+curl -i https://x1-370.tailcb8954.ts.net:8448/v1/assistx-fleet
+# Expected without token: HTTP 401
+```

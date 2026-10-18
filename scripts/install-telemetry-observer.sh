@@ -20,6 +20,8 @@ mkdir -p "$DEST/app" "$CONF" "$UNIT_DIR"
 install -m 0600 "$ROOT/apps/api/app/agent_sessions_observer.py" "$DEST/app/"
 install -m 0600 "$ROOT/apps/api/app/tailnet_observer.py" "$DEST/app/"
 install -m 0600 "$ROOT/apps/api/app/trace_snapshot_observer.py" "$DEST/app/"
+install -m 0600 "$ROOT/apps/api/app/assistx_fleet_observer.py" "$DEST/app/"
+install -m 0700 "$ROOT/scripts/refresh_assistx_fleet_snapshot.py" "$DEST/"
 install -m 0700 "$ROOT/scripts/refresh_assistx_trace_snapshot.py" "$DEST/"
 [[ ! -L "$DEST/app/__init__.py" ]] || { echo "symlinked package initializer denied"; exit 1; }
 touch "$DEST/app/__init__.py"
@@ -39,6 +41,8 @@ fi
 install -m 0644 "$ROOT/infra/systemd/$SERVICE" "$UNIT_DIR/$SERVICE"
 install -m 0644 "$ROOT/infra/systemd/kipnerter-trace-publisher.service" "$UNIT_DIR/"
 install -m 0644 "$ROOT/infra/systemd/kipnerter-trace-publisher.timer" "$UNIT_DIR/"
+install -m 0644 "$ROOT/infra/systemd/kipnerter-fleet-publisher.service" "$UNIT_DIR/"
+install -m 0644 "$ROOT/infra/systemd/kipnerter-fleet-publisher.timer" "$UNIT_DIR/"
 systemctl --user daemon-reload
 systemctl --user enable --now "$SERVICE"
 # One-shot snapshot publisher runs separately and is NEVER callable over HTTP.
@@ -46,6 +50,8 @@ systemctl --user enable --now "$SERVICE"
 # only allowlisted metadata; no privileged credentials leave that container.
 systemctl --user enable --now kipnerter-trace-publisher.timer
 systemctl --user start kipnerter-trace-publisher.service
+systemctl --user enable --now kipnerter-fleet-publisher.timer
+systemctl --user start kipnerter-fleet-publisher.service
 systemctl --user restart "$SERVICE"
 active=0
 for attempt in {1..15}; do

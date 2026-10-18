@@ -36,14 +36,18 @@ def test_control_plane_overview_is_redacted(monkeypatch):
 
 def test_traces_only_return_allowlisted_metadata(monkeypatch):
     monkeypatch.setenv("KIPNERTER_GATEWAY_TOKEN", "valid-only")
-    async def fake_read(path, params=None):
-        assert path == "/api/traces"
-        return {"traces": [{"correlation_id": "abc", "outcome": "failed",
-                            "events": 8, "duration_ms": 120,
-                            "payload": {"password": "DO-NOT-LEAK"},
-                            "prompt": "SENSITIVE", "last_ts_ms": 1234}]}
-    monkeypatch.setattr(control_plane, "_assistx_read", fake_read)
-    response = client.get("/api/v1/control-plane/traces", headers={"Authorization": "Bearer valid-only"})
+    async def observe(path="/v1/nodes"):
+        assert path == "/v1/traces"
+        from datetime import datetime,timezone
+        return {"source":"assistx_trace_index",
+                "observed_at":datetime.now(timezone.utc).isoformat(),
+                "traces":[{"correlation_id":"abc","outcome":"failed",
+                           "events":8,"duration_ms":120,
+                           "payload":{"password":"DO-NOT-LEAK"},
+                           "prompt":"SENSITIVE","last_ts_ms":1234}]}
+    monkeypatch.setattr(control_plane, "_tailscale_read", observe)
+    response = client.get("/api/v1/control-plane/traces", headers={
+        "Authorization": "Bearer valid-only"})
     assert response.status_code == 200
     assert response.json()["traces"][0]["correlation_id"] == "abc"
     assert "DO-NOT-LEAK" not in response.text and "SENSITIVE" not in response.text
@@ -51,14 +55,53 @@ def test_traces_only_return_allowlisted_metadata(monkeypatch):
 
 def test_nodes_do_not_expose_tailnet_ip(monkeypatch):
     monkeypatch.setenv("KIPNERTER_GATEWAY_TOKEN", "valid-only")
-    async def fake_read(path, params=None):
-        return {"nodes": [{"hostname": "xwing", "ip": "100.11.22.33",
-                           "loaded_models": ["model-a"], "inflight": 2}]}
-    monkeypatch.setattr(control_plane, "_assistx_read", fake_read)
-    response = client.get("/api/v1/control-plane/nodes", headers={"Authorization": "Bearer valid-only"})
-    assert response.status_code == 200
+    async def observe(path="/v1/nodes"):
+        if path=="/v1/nodes":
+            return {"source":"tailscale","nodes":[{"name":"xwing","online":True,
+                       "ip":"100.11.22.33"}]}
+        assert path=="/v1/assistx-fleet"
+        return {"source":"assistx_local_inventory","observed_at":"2026-10-18T20:00:00+00:00",
+                "nodes":[{"name":"xwing","models":["model-a"],"inflight":2}],
+                "models":[{"id":"model-a","nodes":1}]}
+    monkeypatch.setattr(control_plane,"_tailscale_read",observe)
+    response=client.get("/api/v1/control-plane/nodes",headers={
+        "Authorization":"Bearer valid-only"})
+    assert response.status_code==200
     assert "100.11.22.33" not in response.text
-    assert response.json()["nodes"][0]["name"] == "xwing"
+    assert response.json()["nodes"][0]["name"]=="xwing"
+    assert response.json()["nodes"][0]["source"]=="assistx_local_inventory"
+
+
+def test_inventory_empty_is_reported_empty_not_offline(monkeypatch):
+    from datetime import datetime, timezone
+    monkeypatch.setenv("KIPNERTER_GATEWAY_TOKEN","valid-only")
+    stamp=datetime.now(timezone.utc).isoformat()
+    async def observe(path="/v1/nodes"):
+        assert path=="/v1/assistx-fleet"
+        return {"source":"assistx_local_inventory", "observed_at":stamp,
+                "nodes":[],"models":[]}
+    monkeypatch.setattr(control_plane,"_tailscale_read",observe)
+    response=client.get("/api/v1/control-plane/models",headers={
+        "Authorization":"Bearer valid-only"})
+    assert response.status_code==200
+    assert response.json()["status"]=="reported_empty"
+    assert response.json()["models"]==[]
+    assert response.json()["source"]=="assistx_local_inventory"
+
+
+def test_privileged_assistx_monitor_credentials_have_no_effect(monkeypatch):
+    monkeypatch.setenv("KIPNERTER_GATEWAY_TOKEN", "valid-only")
+    monkeypatch.setenv("ASSISTX_MONITOR_USER", "SHOULD_NOT_BE_USED")
+    monkeypatch.setenv("ASSISTX_MONITOR_PASSWORD", "SHOULD_NOT_BE_USED")
+    async def observe(path="/v1/nodes"):
+        assert path=="/v1/traces"
+        return None
+    monkeypatch.setattr(control_plane, "_tailscale_read", observe)
+    result=client.get("/api/v1/control-plane/traces",headers={
+        "Authorization":"Bearer valid-only"})
+    assert result.status_code==200
+    assert result.json()["status"]=="unavailable"
+    assert "SHOULD_NOT_BE_USED" not in result.text
 
 
 def test_no_unauthenticated_exec_surface(monkeypatch):
@@ -130,10 +173,7 @@ def test_assistx_trace_observer_projection_with_no_basic_auth(monkeypatch):
                  "duration_ms": 40, "prompt": "SECRET"},
             ],
         }
-    async def fail_direct(*args, **kwargs):
-        raise AssertionError("No direct AssistX privileged credentials requested")
     monkeypatch.setattr(control_plane, "_tailscale_read", observe)
-    monkeypatch.setattr(control_plane, "_assistx_read", fail_direct)
     response = client.get("/api/v1/control-plane/traces",
                           headers={"Authorization": "Bearer test-read-only"})
     assert response.status_code == 200
@@ -153,3 +193,5 @@ def test_observer_trace_source_requires_fresh_signed_transport_metadata():
     assert control_plane._observer_is_fresh(payload, "/v1/traces", now)
     assert not control_plane._observer_is_fresh(payload | {"source": "spoof"},
                                                  "/v1/traces", now)
+    assert control_plane._observer_is_fresh(
+        payload | {"source":"assistx_local_inventory"}, "/v1/assistx-fleet", now)
