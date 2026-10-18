@@ -47,7 +47,7 @@ async function snapshot(token, origin) {
 export async function GET(request) {
   if (!authReady) return Response.json({ error: "identity not configured" }, { status: 503 });
   const session = await getServerSession(authOptions);
-  if (!isAllowed(session?.user?.email)) {
+  if (!isAllowed(session?.user?.email, session?.user?.id)) {
     return Response.json({ error: "authentication required" }, { status: 401 });
   }
   const token = process.env.KIPNERTER_GATEWAY_TOKEN;

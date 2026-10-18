@@ -2,6 +2,7 @@
 import asyncio
 import os
 import re
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Request, Response
 import httpx
 from .gateway import require_gateway_token, service_health
@@ -40,6 +41,28 @@ async def _assistx_read(path: str, params: dict | None = None):
 
 
 
+def _observer_is_fresh(payload, path, now=None):
+    """Deny cached/replayed/wrong-origin readings older than 90 seconds."""
+    expected = {
+        "/v1/nodes": "tailscale",
+        "/v1/sessions": "fleet-agent-launcher",
+        "/v1/integrations": "x1-370",
+    }
+    if path not in expected or not isinstance(payload, dict) or payload.get("source") != expected[path]:
+        return False
+    stamp = payload.get("observed_at")
+    if not isinstance(stamp, str):
+        return False
+    try:
+        observed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        if observed.tzinfo is None:
+            return False
+        checked = now or datetime.now(timezone.utc)
+        return checked - timedelta(seconds=90) <= observed.astimezone(timezone.utc) <= checked + timedelta(seconds=10)
+    except ValueError:
+        return False
+
+
 async def _tailscale_read(path="/v1/nodes"):
     service = next((s for s in services() if s.id == "fleet-monitor"), None)
     token = os.getenv("FLEET_MONITOR_TOKEN", "")
@@ -52,7 +75,8 @@ async def _tailscale_read(path="/v1/nodes"):
                 headers={"Authorization": f"Bearer {token}"},
             )
             result.raise_for_status()
-            return result.json()
+            payload = result.json()
+            return payload if _observer_is_fresh(payload, path) else None
     except (httpx.HTTPError, ValueError):
         return None
 
@@ -96,6 +120,7 @@ async def overview(request: Request, response: Response):
         "integrations": integrations,
         "source": "read-only service probes (gateway and local presence reported separately)",
         "observer_status": "reported" if local_by_id else "unavailable",
+        "observer_observed_at": observer.get("observed_at") if local_by_id else None,
         "readonly": True,
     }
 
@@ -167,6 +192,7 @@ async def nodes(request: Request, response: Response):
                   ("reported" if isinstance(assistx, dict) else "unavailable"),
         "tailscale_status": "live" if tailnet_verified else "unavailable",
         "assistx_status": "reported" if isinstance(assistx, dict) else "unavailable",
+        "observer_observed_at": tailnet.get("observed_at") if tailnet_verified else None,
         "nodes": list(by_name.values())[:100],
     }
 
@@ -217,4 +243,4 @@ async def agent_sessions(request: Request, response: Response):
             "harvest_hold": item.get("harvest_hold") is True,
         })
     return {"status": "reported", "source": "fleet-agent-launcher",
-            "sessions": results}
+            "observer_observed_at": payload.get("observed_at"), "sessions": results}

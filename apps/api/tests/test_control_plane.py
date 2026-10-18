@@ -93,3 +93,24 @@ def test_overview_distinguishes_observer_from_gateway(monkeypatch):
     assert by_id["sophia"]["source"] == "x1_observer"
     assert by_id["opencode"]["status"] == "unverified"
     assert res.headers["cache-control"] == "private, no-store"
+
+
+def test_observer_rejects_replayed_future_or_wrong_source_payloads():
+    from datetime import datetime, timezone, timedelta
+    now = datetime(2026, 10, 18, 16, 0, tzinfo=timezone.utc)
+    data = {"source": "tailscale", "observed_at": now.isoformat(), "nodes": []}
+    assert control_plane._observer_is_fresh(data, "/v1/nodes", now)
+    assert not control_plane._observer_is_fresh(data, "/v1/sessions", now)
+    assert not control_plane._observer_is_fresh(data | {
+        "observed_at": (now-timedelta(minutes=3)).isoformat(),
+    }, "/v1/nodes", now)
+    assert not control_plane._observer_is_fresh(data | {
+        "observed_at": (now+timedelta(minutes=1)).isoformat(),
+    }, "/v1/nodes", now)
+    assert not control_plane._observer_is_fresh(data | {
+        "observed_at": "2026-10-18T16:00:00",
+    }, "/v1/nodes", now)
+    assert not control_plane._observer_is_fresh(data | {
+        "source": "spoofed", "observed_at": "irrelevant",
+    }, "/v1/nodes", now)
+    assert not control_plane._observer_is_fresh(None, "/v1/nodes", now)

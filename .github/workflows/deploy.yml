@@ -109,6 +109,7 @@ jobs:
           TSIDP_CLIENT_ID: ${{ secrets.TSIDP_CLIENT_ID }}
           TSIDP_CLIENT_SECRET: ${{ secrets.TSIDP_CLIENT_SECRET }}
           KIPNERTER_ALLOWED_EMAILS: ${{ secrets.KIPNERTER_ALLOWED_EMAILS }}
+          KIPNERTER_ALLOWED_TSIDP_SUBJECTS: ${{ secrets.KIPNERTER_ALLOWED_TSIDP_SUBJECTS }}
           FLEET_MONITOR_BASE_URL: ${{ secrets.FLEET_MONITOR_BASE_URL }}
           FLEET_MONITOR_TOKEN: ${{ secrets.FLEET_MONITOR_TOKEN }}
           ASSISTX_BASE_URL: ${{ secrets.ASSISTX_BASE_URL }}
@@ -120,7 +121,7 @@ jobs:
             [[ -n "${!value:-}" ]] || { echo "::error::Missing required production secret $value"; exit 1; }
           done
           # Portal OIDC is a release gate, not merely a runtime warning.
-          for value in NEXTAUTH_SECRET TSIDP_ISSUER TSIDP_CLIENT_ID TSIDP_CLIENT_SECRET KIPNERTER_ALLOWED_EMAILS; do
+          for value in NEXTAUTH_SECRET TSIDP_ISSUER TSIDP_CLIENT_ID TSIDP_CLIENT_SECRET KIPNERTER_ALLOWED_EMAILS KIPNERTER_ALLOWED_TSIDP_SUBJECTS; do
             [[ -n "${!value:-}" ]] || { echo "::error::Missing portal authentication setting $value"; exit 1; }
           done
           [[ ${#NEXTAUTH_SECRET} -ge 32 ]] || { echo "::error::NEXTAUTH_SECRET must be at least 32 chars"; exit 1; }
@@ -153,6 +154,7 @@ jobs:
           TSIDP_CLIENT_ID: ${{ secrets.TSIDP_CLIENT_ID }}
           TSIDP_CLIENT_SECRET: ${{ secrets.TSIDP_CLIENT_SECRET }}
           KIPNERTER_ALLOWED_EMAILS: ${{ secrets.KIPNERTER_ALLOWED_EMAILS }}
+          KIPNERTER_ALLOWED_TSIDP_SUBJECTS: ${{ secrets.KIPNERTER_ALLOWED_TSIDP_SUBJECTS }}
           GATEWAY_TOKEN_OVERRIDE: ${{ secrets.KIPNERTER_GATEWAY_TOKEN }}
           SPATIAL_API_KEY: ${{ secrets.KIPNERTER_SPATIAL_API_KEY }}
           SPATIAL_DB_PASSWORD: ${{ secrets.KIPNERTER_SPATIAL_DB_PASSWORD }}
@@ -188,6 +190,7 @@ jobs:
               printf 'TSIDP_CLIENT_ID=%s\n' "$TSIDP_CLIENT_ID"
               printf 'TSIDP_CLIENT_SECRET=%s\n' "$TSIDP_CLIENT_SECRET"
               printf 'KIPNERTER_ALLOWED_EMAILS=%s\n' "$KIPNERTER_ALLOWED_EMAILS"
+              printf 'KIPNERTER_ALLOWED_TSIDP_SUBJECTS=%s\n' "$KIPNERTER_ALLOWED_TSIDP_SUBJECTS"
               printf 'ASSISTX_MONITOR_USER=%s\n' "$ASSISTX_MONITOR_USER"
               printf 'ASSISTX_MONITOR_PASSWORD=%s\n' "$ASSISTX_MONITOR_PASSWORD"
               printf 'HERMES_BASE_URL=%s\n' "$HERMES_BASE_URL"

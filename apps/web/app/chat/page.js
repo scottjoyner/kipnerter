@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Chat & Fleet | Kipnerter" };
 export default async function ChatPage() {
   const session = authReady ? await getServerSession(authOptions) : null;
-  if (isAllowed(session?.user?.email)) {
+  if (isAllowed(session?.user?.email, session?.user?.id)) {
     return <FleetConsole email={session.user.email} />;
   }
   return <main className="auth-shell">

@@ -1,20 +1,24 @@
-import NextAuth from "next-auth";
+import { admittedIdentity, approvedTsidpProfile, parseAllowlist } from "./identity.mjs";
+
 const issuer = process.env.TSIDP_ISSUER || "";
 const clientId = process.env.TSIDP_CLIENT_ID || "";
 const clientSecret = process.env.TSIDP_CLIENT_SECRET || "";
 const secret = process.env.NEXTAUTH_SECRET || "";
-const identities = (process.env.KIPNERTER_ALLOWED_EMAILS || "")
-  .split(",").map((email) => email.trim().toLowerCase()).filter(Boolean);
+const allowedEmails = parseAllowlist(process.env.KIPNERTER_ALLOWED_EMAILS);
+const allowedSubjects = parseAllowlist(process.env.KIPNERTER_ALLOWED_TSIDP_SUBJECTS);
 export const authReady = Boolean(
   issuer.startsWith("https://") && clientId && clientSecret && secret.length >= 32 &&
-  identities.length && process.env.NEXTAUTH_URL?.startsWith("https://")
+  allowedEmails.length && allowedSubjects.length &&
+  process.env.NEXTAUTH_URL === "https://kipnerter.com"
 );
-export function isAllowed(email) {
-  return Boolean(email && identities.includes(email.toLowerCase()));
+export function isAllowed(email, subject) {
+  return admittedIdentity(email, subject, allowedEmails, allowedSubjects);
 }
 export const authOptions = {
   secret,
-  session: { strategy: "jwt", maxAge: 3600 },
+  // Offline JWT sessions cannot guarantee instant IdP revocation.
+  // Force a new whois-backed sign-in after at most 15 minutes.
+  session: { strategy: "jwt", maxAge: 900 },
   providers: authReady ? [{
     id: "tailscale", name: "Tailscale", type: "oauth",
     wellKnown: `${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`,
@@ -26,14 +30,15 @@ export const authOptions = {
   }] : [],
   callbacks: {
     async signIn({ profile, user }) {
-      return profile?.email_verified === true && isAllowed(user?.email);
+      return approvedTsidpProfile(profile, user, allowedEmails, allowedSubjects);
     },
-    async session({ session }) {
-      if (!isAllowed(session?.user?.email)) return null;
-      return session;
+    async session({ session, token }) {
+      if (!isAllowed(session?.user?.email, token?.sub)) return null;
+      return { ...session, user: { ...session.user, id: token.sub } };
     },
     async redirect({ url, baseUrl }) {
-      return url.startsWith("/") ? `${baseUrl}${url}` : url.startsWith(`${baseUrl}/`) ? url : baseUrl;
+      return url.startsWith("/") ? `${baseUrl}${url}` :
+        url.startsWith(`${baseUrl}/`) ? url : baseUrl;
     },
   },
 };

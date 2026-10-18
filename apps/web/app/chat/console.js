@@ -126,7 +126,8 @@ export default function FleetConsole({ email }) {
               s.source === "production_upstream_probe" ? "Probed from production API" :
               "No verified response"}{s.latency_ms == null ? "" : ` · ${s.latency_ms} ms`}</p></div>)}</section>
           <section className="workspace-panel" style={{marginTop:20}}>
-            <div className="panel-heading"><div><h2>Hermes & OpenCode sessions</h2><p>Read-only launcher receipts. Requested models are not execution attestations.</p></div><Badge status={data.sessions?.status || "unavailable"}/></div>
+            <div className="panel-heading"><div><h2>Hermes & OpenCode sessions</h2><p>Read-only launcher receipts. Requested models are not execution attestations.
+              {data.sessions?.observer_observed_at ? " · Observed " + new Date(data.sessions.observer_observed_at).toLocaleTimeString() : ""}</p></div><Badge status={data.sessions?.status || "unavailable"}/></div>
             {sessions.length ? <div className="data-list">{sessions.map(job => <div key={job.id} className="data-row">
               <div><span className="row-main">{human(job.agent)} · {job.id}</span>
               <small>{job.model} · {job.created_utc ? new Date(job.created_utc).toLocaleString() : "unknown start"}</small>
@@ -142,7 +143,9 @@ export default function FleetConsole({ email }) {
         </>}
         {tab === "nodes" && <>
           <div className="page-intro"><p className="section-kicker">TAILNET & COMPUTE</p><h1>Fleet nodes<span className="accent">.</span></h1><p>AssistX node inventory is shown separately from Tailscale connectivity verification.</p></div>
-          <section className="workspace-panel"><div className="panel-heading"><h2>Fleet inventory</h2><Badge status={data.nodes?.status || "unavailable"}/></div>
+          <section className="workspace-panel"><div className="panel-heading"><div><h2>Fleet inventory</h2><p>{data.nodes?.observer_observed_at ?
+              "Tailscale observed " + new Date(data.nodes.observer_observed_at).toLocaleTimeString() :
+              "No fresh observer reading"}</p></div><Badge status={data.nodes?.status || "unavailable"}/></div>
             {nodes.length ? <div className="data-list">{nodes.map((node,i) => <div className="data-row" key={node.name+i}><div><span className="row-main">{node.name}</span><small>{node.models.length ? node.models.join(", ") : "No reported loaded models"}</small></div><span>{node.tailscale_online === true ? "● Online" : node.tailscale_online === false ? "○ Offline" : "Presence unverified"} · {node.inflight ?? "—"} tasks</span></div>)}</div> :
               <Empty title="No node reports yet" detail="Connect the authorized inventory endpoint; no devices are assumed online."/>}</section>
         </>}

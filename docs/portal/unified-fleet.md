@@ -10,7 +10,7 @@ identity can access `/api/portal/{overview,nodes,models,traces}`.
 1. **Browser → Next.js:** Tailscale-backed OIDC via separately deployed
    [tsidp](https://tailscale.com/docs/features/tsidp), with HTTPS issuer, PKCE/
    OAuth state handled by NextAuth, verified email, and explicit
-   `KIPNERTER_ALLOWED_EMAILS` allowlist. `NEXTAUTH_SECRET` must be a fresh
+   `KIPNERTER_ALLOWED_EMAILS` and `KIPNERTER_ALLOWED_TSIDP_SUBJECTS` allowlists. `NEXTAUTH_SECRET` must be a fresh
    high-entropy secret (at least 32 chars). No browser localStorage credentials.
 2. **Next.js → API:** server-side only, `http://api:8000`, using
    `KIPNERTER_GATEWAY_TOKEN`. All four portal endpoints reject missing/invalid
@@ -40,7 +40,7 @@ identity can access `/api/portal/{overview,nodes,models,traces}`.
   claims. `tsidp` is experimental; pin its version.
 - Configure `TSIDP_ISSUER`, `TSIDP_CLIENT_ID`, `TSIDP_CLIENT_SECRET`,
   `NEXTAUTH_SECRET`, `NEXTAUTH_URL=https://kipnerter.com`,
-  `KIPNERTER_ALLOWED_EMAILS` in GitHub deployment environment secrets.
+  `KIPNERTER_ALLOWED_EMAILS` and `KIPNERTER_ALLOWED_TSIDP_SUBJECTS` in GitHub deployment environment secrets.
   Without *all* values the portal fails closed and displays a setup notice.
 - Provision read-only AssistX credentials independently and restrict their
   permissions to fleet/trace GET endpoints, then add their deployment secrets.
@@ -203,3 +203,42 @@ tested in staging before promotion. The frontend never receives them.
 The public `/chat` route is still on a draft PR until an authorized staging
 test, completed Tailscale SSH identity check, real OIDC login (and revocation)
 and rehearsed rollback provide production acceptance evidence.
+
+
+## Verified tsidp claim compatibility and subject authorization (October 18)
+
+Source review of the current upstream tsidp token implementation found the
+OIDC identity token includes signed `sub` and `email` claims derived from
+Tailscale whois but **does not include `email_verified`**. The previous
+NextAuth callback required that absent claim to equal `true`, silently
+blocking all successful Tailscale sign-ins. The portal no longer assumes the
+claim exists; it explicitly denies a present false claim and requires both
+an exact signed-subject allowlist and an email allowlist.
+
+The deployment now requires the additional
+`KIPNERTER_ALLOWED_TSIDP_SUBJECTS` secret in GitHub's production
+environment **and** passes it into the web container. The list contains
+case-sensitive exact `sub` values taken from signed IdP test identities,
+not a username or display name. Empty lists fail closed.
+
+Both sign-in and each server-side NextAuth session callback check this paired
+identity, and the web route/API require that verified pair. This resolves
+tsidp token compatibility without granting email-only admission. Browser
+sessions expire at most 15 minutes after sign-in, since JWT-only sessions
+cannot guarantee immediate revocation or whois revalidation on each request.
+A real IdP sign-in and revocation test is still required before release.
+
+## Freshness and replay-sensitive displays
+
+The production API rejects a signed-transport observer response if its declared
+source does not match the requested read-only endpoint, its timezone-aware
+observation timestamp is missing or unparsable, it is more than 90 seconds old,
+or it is more than 10 seconds in the future. The adapter reports unavailable
+rather than displaying an old successful observation as live. The response
+also includes observation time for the UI so operators can distinguish a
+fresh node sample from an old Hermes/OpenCode job.
+
+This is a bounded freshness control, not signed checkpoints or tamper-proof
+replay protection. Bearer-token integrity and Tailscale TLS/grants remain
+prerequisites; do not call an observer reported response verified execution
+or authoritative archival custody.

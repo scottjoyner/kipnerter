@@ -38,6 +38,7 @@ jobs:
           node-version: "22"
       - run: npm ci --no-audit --no-fund
       - run: npm audit --omit=dev --audit-level=moderate
+      - run: node --test tests/*.test.mjs
       - run: npm run build
       - name: Verify anonymous portal is visible and telemetry fails closed
         shell: bash

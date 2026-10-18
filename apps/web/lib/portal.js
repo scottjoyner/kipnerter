@@ -6,7 +6,7 @@ export async function readPortal(section) {
   if (!SECTIONS.has(section)) return Response.json({ error: "not found" }, { status: 404 });
   if (!authReady) return Response.json({ error: "identity not configured" }, { status: 503 });
   const session = await getServerSession(authOptions);
-  if (!isAllowed(session?.user?.email)) {
+  if (!isAllowed(session?.user?.email, session?.user?.id)) {
     return Response.json({ error: "authentication required" }, { status: 401 });
   }
   const token = process.env.KIPNERTER_GATEWAY_TOKEN;
