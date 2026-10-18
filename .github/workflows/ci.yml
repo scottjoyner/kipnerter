@@ -40,6 +40,13 @@ jobs:
       - run: npm audit --omit=dev --audit-level=moderate
       - run: node --test tests/*.test.mjs
       - run: npm run build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Exercise real NextAuth / BFF / API / SSE against isolated fixtures
+        run: |
+          python3 -m pip install -r ../api/requirements.txt
+          python3 ../../scripts/portal_e2e_smoke.py
       - name: Verify anonymous portal is visible and telemetry fails closed
         shell: bash
         run: |

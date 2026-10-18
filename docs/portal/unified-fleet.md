@@ -311,3 +311,47 @@ systemctl --user disable --now kipnerter-trace-publisher.timer
 Old snapshots then expire naturally after 90 seconds. Do not remove the
 separate subscriber authentication check, publish the observer with Funnel,
 or expose the AssistX BasicAuth account directly to browsers.
+
+## End-to-end smoke proof (2026-10-18)
+
+`scripts/portal_e2e_smoke.py` is a self-contained, ephemeral integration
+exercise that launches the **real** FastAPI control plane and built Next.js
+portal on two free loopback-only ports. It generates a synthetic operator
+identity, a short-lived signed NextAuth JWT, and an isolated server-to-server
+API token. It **does not** create a real Tailscale login or a public endpoint.
+
+The smoke checks the actual browser-facing paths and real NextAuth session
+callback: anonymous BFF/SSE requests return 401; a signed but unallowlisted
+subject also returns 401; expired signed cookies are rejected; an approved
+synthetic subject can read only sanitized nodes, sessions and traces; the
+unified SSE snapshot arrives with no browser-side gateway or observer token.
+Every response is bounded and marked private/no-store.
+
+CI runs this check in *no-upstream mode*: missing private sources produce
+explicit `unavailable` records, not a fabricated healthy state. CI needs only
+the repo, Node 22, and the pinned FastAPI Python requirements; no privileged
+environment secrets or fleet connectivity.
+
+An operator on `x1-370` may separately run the same check against the
+**actual existing bearer-authenticated private observer**:
+
+```bash
+python3 scripts/portal_e2e_smoke.py --real-observer
+```
+
+This loads the *already-installed* observer credential from the Unix user's
+private 0600 environment file, **never prints or persists it**, and uses
+the dedicated tailnet-only Serve HTTPS endpoint. Real-data acceptance
+requires live node presence, Hermes/OpenCode launcher receipts, and the
+sanitized AssistX trace source. An empty/stale feed fails the test instead
+of being presented as working.
+
+Running either mode does not change Tailscale grants, Serve routing,
+production services, GitHub environment secrets, AssistX admission, or
+agent execution. It terminates both test servers after the run.
+
+**Scope limit:** The synthetic signed-cookie test does not prove identity
+provider discovery, OIDC authorization-code callback exchange, browser
+reachability of `tsidp`, user-triggered logout, real-time revocation, or
+deployment rollback. These require independently witnessed operator staging
+acceptance before a public production rollout.
