@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .gateway import proxy_request, public_routes, service_health
 from .registry import models, services
+from .console import router as console_router
 
 app = FastAPI(
     title="Kipnerter API",
@@ -22,6 +23,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(console_router)
 
 
 @app.get("/health", tags=["system"])
