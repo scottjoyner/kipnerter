@@ -1,6 +1,7 @@
 """Read-only, operator-authenticated projection; no arbitrary Tailnet proxying."""
 import asyncio
 import os
+import re
 from fastapi import APIRouter, Request, Response
 import httpx
 from .gateway import require_gateway_token, service_health
@@ -39,7 +40,7 @@ async def _assistx_read(path: str, params: dict | None = None):
 
 
 
-async def _tailscale_read():
+async def _tailscale_read(path="/v1/nodes"):
     service = next((s for s in services() if s.id == "fleet-monitor"), None)
     token = os.getenv("FLEET_MONITOR_TOKEN", "")
     if not service or len(token) < 32:
@@ -47,7 +48,7 @@ async def _tailscale_read():
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=False) as client:
             result = await client.get(
-                f"{service.base_url}/v1/nodes",
+                f"{service.base_url}{path}",
                 headers={"Authorization": f"Bearer {token}"},
             )
             result.raise_for_status()
@@ -160,3 +161,38 @@ async def model_inventory(request: Request, response: Response):
         {"id": str(name)[:120], "nodes": len((data or {}).get("nodes") or [])}
         for name, data in list(raw.items())[:50] if isinstance(data, dict)
     ]}
+
+
+
+@router.get("/sessions")
+async def agent_sessions(request: Request, response: Response):
+    _authorize(request, response)
+    payload = await _tailscale_read("/v1/sessions")
+    if not isinstance(payload, dict) or not isinstance(payload.get("sessions"), list):
+        return {"status": "unavailable", "sessions": []}
+    allowed_agents = {"hermes", "opencode"}
+    allowed_states = {"QUEUED", "RUNNING", "COMPLETED", "COMPLETED_UNVERIFIED", "FAILED",
+                      "TIMEOUT", "CANCELED", "START_FAILED"}
+    results = []
+    for item in payload["sessions"][:50]:
+        if not isinstance(item, dict) or item.get("agent") not in allowed_agents:
+            continue
+        job_id = item.get("id")
+        state = item.get("status")
+        if not isinstance(job_id, str) or not re.fullmatch(r"job-[a-f0-9]{12}", job_id):
+            continue
+        if state not in allowed_states:
+            continue
+        results.append({
+            "id": job_id,
+            "agent": item["agent"],
+            "status": state,
+            "model": str(item.get("model") or "")[:120],
+            "created_utc": str(item.get("created_utc") or "")[:45],
+            "ended_utc": str(item.get("ended_utc") or "")[:45],
+            "model_verified": item.get("model_verified") is True,
+            "archive_verified": item.get("archive_verified") is True,
+            "harvest_hold": item.get("harvest_hold") is True,
+        })
+    return {"status": "reported", "source": "fleet-agent-launcher",
+            "sessions": results}

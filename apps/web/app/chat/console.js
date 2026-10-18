@@ -12,7 +12,7 @@ const LABELS = {
   assistx: "Auto-AssistX", sophia: "Sophia", hermes: "Hermes",
   opencode: "OpenCode", "fleet-monitor": "Tailscale monitoring", lmstudio: "Inference",
 };
-const noData = { integrations: [], models: [], nodes: [], traces: [] };
+const noData = { integrations: [], models: [], nodes: [], traces: [], sessions: [] };
 function human(value) { return LABELS[value] || value; }
 function Badge({ status }) {
   return <span className={`state-badge ${["healthy", "live", "reported"].includes(status) ? "state-ok" : ""}`}>
@@ -30,7 +30,7 @@ export default function FleetConsole({ email }) {
   useEffect(() => {
     let stopped = false;
     async function refresh() {
-      const results = await Promise.all(["overview", "models", "nodes", "traces"].map(async key => {
+      const results = await Promise.all(["overview", "models", "nodes", "traces", "sessions"].map(async key => {
         try {
           const response = await fetch(`/api/portal/${key}`, { cache: "no-store" });
           if (!response.ok) throw Error(`HTTP ${response.status}`);
@@ -38,7 +38,7 @@ export default function FleetConsole({ email }) {
         } catch (error) { return [key, null, error.message]; }
       }));
       if (!stopped) {
-        setData(prev => Object.fromEntries(results.map(([key, value]) => [key, value || prev[key] || noData])));
+        setData(Object.fromEntries(results.map(([key, value]) => [key, value || { ...noData, status: "unavailable" }])));
         setErrors(Object.fromEntries(results.filter(row => row[2]).map(row => [row[0], row[2]])));
         setUpdated(new Date().toLocaleTimeString());
       }
@@ -51,6 +51,7 @@ export default function FleetConsole({ email }) {
   const models = data.models?.models || [];
   const nodes = data.nodes?.nodes || [];
   const traces = data.traces?.traces || [];
+  const sessions = data.sessions?.sessions || [];
   const healthy = integrations.filter(s => s.status === "healthy").length;
   return <div className="portal">
     <aside className="portal-sidebar">
@@ -62,7 +63,7 @@ export default function FleetConsole({ email }) {
           onClick={() => setTab(item.id)}><span className="nav-symbol">{item.icon}</span>{item.label}</button>)}
       </nav>
       <div className="sidebar-bottom">
-        <div className="sidebar-status"><span className="pulse" />Private fleet connection</div>
+        <div className="sidebar-status"><span className="pulse" />Private fleet · authenticated</div>
         <div className="sidebar-identity"><span className="avatar">{email[0]?.toUpperCase()}</span>
           <span className="identity-name">{email}<small>Authorized operator</small></span></div>
         <a className="signout-link" href="/api/auth/signout?callbackUrl=%2Fchat">Sign out ↗</a>
@@ -93,6 +94,14 @@ export default function FleetConsole({ email }) {
           <div className="page-intro"><p className="section-kicker">AGENT ORCHESTRATION</p><h1>Agents<span className="accent">.</span></h1><p>Service health signals only. Execution requires a separately authorized workflow.</p></div>
           <section className="integration-grid">{integrations.filter(s => ["assistx", "sophia", "hermes", "opencode"].includes(s.id)).map(s =>
             <div key={s.id} className="integration-card"><div className="integration-icon">{human(s.id).slice(0, 1)}</div><h3>{human(s.id)}</h3><Badge status={s.status}/><p>{s.latency_ms == null ? "No verified response" : `Health probe: ${s.latency_ms} ms`}</p></div>)}</section>
+          <section className="workspace-panel" style={{marginTop:20}}>
+            <div className="panel-heading"><div><h2>Hermes & OpenCode sessions</h2><p>Read-only launcher receipts. Requested models are not execution attestations.</p></div><Badge status={data.sessions?.status || "unavailable"}/></div>
+            {sessions.length ? <div className="data-list">{sessions.map(job => <div key={job.id} className="data-row">
+              <div><span className="row-main">{human(job.agent)} · {job.id}</span>
+              <small>{job.model} · {job.created_utc ? new Date(job.created_utc).toLocaleString() : "unknown start"}</small>
+              <small>{job.harvest_hold ? "Archive security hold" : job.archive_verified ? "Archive verified" : "Archive not verified"} · {job.model_verified ? "Model verified" : "Model not independently verified"}</small></div><Badge status={job.status?.toLowerCase()}/></div>)}</div> :
+              <Empty title="No verified agent sessions" detail="Requires an authenticated fleet observer connected to the launcher ledger; sessions are never fabricated."/>}
+          </section>
         </>}
         {tab === "models" && <>
           <div className="page-intro"><p className="section-kicker">INFERENCE REGISTRY</p><h1>Models<span className="accent">.</span></h1><p>Read-only reported inventory. Discovery is not proof of loaded or admitted state.</p></div>

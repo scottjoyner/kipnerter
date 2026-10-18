@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { authOptions, authReady, isAllowed } from "./auth";
 
-const SECTIONS = new Set(["overview", "nodes", "models", "traces"]);
+const SECTIONS = new Set(["overview", "nodes", "models", "traces", "sessions"]);
 export async function readPortal(section) {
   if (!SECTIONS.has(section)) return Response.json({ error: "not found" }, { status: 404 });
   if (!authReady) return Response.json({ error: "identity not configured" }, { status: 503 });

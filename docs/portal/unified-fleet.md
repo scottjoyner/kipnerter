@@ -50,13 +50,30 @@ identity can access `/api/portal/{overview,nodes,models,traces}`.
 - Deploy to staging, validate access controls and SSE/event continuity before
   deploying to production. The portal has no direct agent execution endpoint.
 
+## Read-only Hermes + OpenCode session integration
+
+- The observer has a second bearer-protected `GET /v1/sessions` endpoint.
+  It scans up to 5,000 local `fleet-agent-launcher` ledger entries with
+  `O_NOFOLLOW`, file-size limits, job ID validation, and fail-closed parsing.
+  It exports only IDs, agent type, status, requested model, timestamps, and
+  verification/archival flags. No prompts, native session IDs, tokens, filesystem
+  locations, full receipts, or raw agent traces are returned.
+- The API exposes those projections under `/api/v1/control-plane/sessions`,
+  and the authenticated web BFF under `/api/portal/sessions`.
+- This first observer reports only launcher-managed sessions on the node hosting
+  the observer; it is not yet a global multi-node OpenCode/Hermes inventory.
+  `harvest_hold=true` means knowledge#173's archive hold is preserved.
+- Run from the code checkout with `PYTHONPATH=apps/api
+  python3 -m app.tailnet_observer`; the collector deliberately refuses
+  non-loopback binding. Protect access over Tailscale Serve + scoped grants.
+
 ## Explicitly deferred
 
 - Chat dispatch is **held**, not silently routed through unadmitted LM Studio
   or Router. Resume only after Auto-AssistX/Auto-Router demonstrates per-user
   identity, admitted loaded models, signed receipts, and failover fencing.
 - Hermes, OpenCode, and Sophia currently expose health/configured status only.
-  A dedicated agent adapter, user-scoped conversations, and shared trace
+  A dedicated user-scoped conversations, and shared trace
   identifiers need contract tests; no remote shell or command runner is
   exposed by this branch.
 - Add event streams only after proving source authentication, bounded

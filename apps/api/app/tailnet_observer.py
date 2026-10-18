@@ -9,6 +9,7 @@ import os
 import subprocess
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from .agent_sessions_observer import sessions
 
 
 def sample():
@@ -47,15 +48,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             return self._reply(200, {"status": "ok"})
-        if self.path != "/v1/nodes":
+        if self.path not in ("/v1/nodes", "/v1/sessions"):
             return self._reply(404, {"error": "not found"})
         secret = os.environ.get("FLEET_MONITOR_TOKEN", "")
         supplied = self.headers.get("Authorization", "")
         if len(secret) < 32 or not hmac.compare_digest(supplied, f"Bearer {secret}"):
             return self._reply(401, {"error": "unauthorized"})
         try:
-            return self._reply(200, sample())
-        except (OSError, subprocess.SubprocessError, ValueError):
+            return self._reply(200, sample() if self.path == "/v1/nodes" else sessions())
+        except (OSError, subprocess.SubprocessError, ValueError, TypeError, UnicodeError):
             return self._reply(503, {"error": "collector unavailable"})
 
     def log_message(self, *_args):
