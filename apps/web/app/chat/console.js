@@ -44,8 +44,22 @@ export default function FleetConsole({ email }) {
       }
     }
     refresh();
-    const timer = setInterval(refresh, 20000);
-    return () => { stopped = true; clearInterval(timer); };
+    let streaming = false;
+    const events = new EventSource("/api/portal/live");
+    events.addEventListener("snapshot", message => {
+      if (stopped) return;
+      try {
+        const next = JSON.parse(message.data);
+        if (!next || typeof next !== "object" || Array.isArray(next)) return;
+        setData(next);
+        setErrors({});
+        setUpdated(new Date().toLocaleTimeString());
+        streaming = true;
+      } catch { /* preserve the last valid state until the fallback refresh */ }
+    });
+    events.onerror = () => { streaming = false; };
+    const timer = setInterval(() => { if (!streaming) refresh(); }, 30000);
+    return () => { stopped = true; events.close(); clearInterval(timer); };
   }, []);
   const integrations = data.overview?.integrations || [];
   const models = data.models?.models || [];

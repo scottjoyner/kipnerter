@@ -106,3 +106,48 @@ for the read-only observer; do not reuse existing routes.
 - Add event streams only after proving source authentication, bounded
   replay, per-user authorization, backpressure, and trace redaction.
 - Avoid storing browser tokens or redisplaying arbitrary trace payloads.
+
+## Authenticated near-live activity feed
+
+- The Next.js route `GET /api/portal/live` performs the same verified session
+  and email allowlist check as other browser-to-API routes. If OIDC is unconfigured,
+  anonymous users receive HTTP 503; missing authorization returns 401.
+- The event stream polls ONLY the five fixed, bearer-protected read-only
+  control-plane projections (overview, nodes, models, traces, sessions).
+  Arbitrary paths and submitted commands are not accepted.
+- Each stream lives at most two minutes, with a per-server-process limit of
+  eight simultaneous connections, a 15-second observation interval, a seven-
+  second upstream timeout, 128 KB per-response cap, and 15-second reconnect.
+  Stale/unavailable sources fail to an explicit unavailable state rather
+  than retaining a green indicator. No credential is ever sent to EventSource.
+- The UI automatically falls back to bounded 30-second fetches when SSE fails.
+  Source data remains *polled* and is not an upstream push subscription.
+- Do not open source-side full trace payloads until user-bound authorization
+  and retention controls are proven. The merged activity timeline intentionally
+  labels uncorrelated launcher jobs separately from AssistX trace IDs.
+
+## Tailnet HTTPS observer transport (October 18)
+
+A dedicated Tailscale Serve route was added on **8448** to the existing
+`x1-370` tailnet name, proxying its persistent loopback listener at 8769.
+Tailscale reports `(tailnet only)`; no Funnel routes were added. Both
+`/v1/nodes` and `/v1/sessions` returned HTTP 200 with the separate local
+bearer token, and an anonymous HTTPS request returned HTTP 401.
+
+To attach it to production, configure only on the private API container:
+
+```text
+FLEET_MONITOR_BASE_URL=https://x1-370.<tailnet>.ts.net:8448
+FLEET_MONITOR_TOKEN=<a separately transferred secret, never checked in>
+```
+
+The Tailscale policy must first allow `tag:kipnerter-prod` to reach that
+specific listener, not the whole node. The checked-in `infra/tailscale/policy.hujson`
+is a **proposal**, not proof of what is currently applied. Validate reachability
+from the *actual production identity* before enabling. Do not expose the
+observer outside Tailscale, proxy it through Caddy, or place its secret in
+`NEXT_PUBLIC_*` settings.
+
+Even with a live collector, the public page cannot serve authenticated
+telemetry until the production OIDC configuration has been verified,
+the deployment SSH check completed, and the exact PR head released.

@@ -39,6 +39,20 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm audit --omit=dev --audit-level=moderate
       - run: npm run build
+      - name: Verify anonymous portal is visible and telemetry fails closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run start -- --port 3012 >/tmp/kipnerter-web-ci.log 2>&1 &
+          PID=$!
+          trap 'kill "$PID" 2>/dev/null || true' EXIT
+          for attempt in {1..25}; do
+            if curl --fail --silent --max-time 2 http://127.0.0.1:3012/chat >/tmp/kipnerter-chat.html; then break; fi
+            sleep 1
+          done
+          grep -q 'PRIVATE AI WORKSPACE' /tmp/kipnerter-chat.html
+          [[ $(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3012/api/portal/live) = 503 ]]
+          [[ $(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3012/api/portal/traces) = 503 ]]
 
   containers:
     runs-on: ubuntu-latest
