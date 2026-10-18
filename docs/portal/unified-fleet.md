@@ -103,8 +103,9 @@ for the read-only observer; do not reuse existing routes.
   A dedicated user-scoped conversations, and shared trace
   identifiers need contract tests; no remote shell or command runner is
   exposed by this branch.
-- Add event streams only after proving source authentication, bounded
-  replay, per-user authorization, backpressure, and trace redaction.
+- Expand event streams beyond the existing bounded read-only metadata feed
+  only after proving per-user authorization, source-specific replay limits,
+  backpressure, revocation, and stronger trace lineage.
 - Avoid storing browser tokens or redisplaying arbitrary trace payloads.
 
 ## Authenticated near-live activity feed
@@ -242,3 +243,71 @@ This is a bounded freshness control, not signed checkpoints or tamper-proof
 replay protection. Bearer-token integrity and Tailscale TLS/grants remain
 prerequisites; do not call an observer reported response verified execution
 or authoritative archival custody.
+
+## October 18: genuine AssistX trace-index metadata feed
+
+The x1-370 host now runs a separate scheduled **metadata-only** publisher,
+`kipnerter-trace-publisher.timer` / `kipnerter-trace-publisher.service`,
+which updates the protected file:
+
+`~/.local/state/kipnerter-observer/traces.json`
+
+The source publisher calls the **existing local** `assistx-api` container
+through an allowlisted, fixed `GET /api/traces?limit=25&offset=0` URL.
+The container already holds its own BasicAuth configuration and makes this
+read-only request internally. No BasicAuth password is copied to the host,
+passed to Tailscale Serve, or returned to the browser.
+
+The publisher **cannot** be invoked through HTTP. Its host-side scheduled
+process runs once roughly every 45 seconds and writes a single 0600 snapshot
+with an atomic replacement (not an append-only transcript archive). Both
+the publisher and the observer independently check snapshot structure,
+ownership/private permissions, source identity, timestamps and bounded size.
+Only five fields per record survive:
+`correlation_id`, `outcome`, `events`, `last_ts_ms`, `duration_ms`.
+
+The original `knowledge#173` raw-trace archival security hold remains
+untouched. No new NAS writes, transcript harvests, model launches, or
+Auto-AssistX deployment were performed. The source is the existing AssistX
+Neo4j historical index, not direct real-time stream telemetry.
+
+The tailnet-only observer now serves `GET /v1/traces` with the same separate
+monitoring bearer token and HTTP 401 for unauthenticated clients. It returns
+503 when the publisher has failed or a snapshot is older than 90 seconds.
+The production API prefers this sanitized observer feed, with a separately
+credentialed AssistX read-only BasicAuth GET as an optional fallback.
+
+### Actual tested evidence
+
+- 25 real trace-index records were returned over authenticated Tailscale HTTPS.
+- The exact FastAPI `/api/v1/control-plane/traces` projection returned HTTP
+  200, source `assistx_trace_index`, 25 records, and only the five allowed
+  fields per record. Anonymous Tailscale HTTP requests returned 401.
+- The latest execution event *in the sample* was **2026-10-16 13:28:41 UTC**,
+  although the index snapshot itself was fresh on October 18.
+- The API classifies that as `historical`, **not** `live`. It only claims
+  live activity when an underlying event timestamp is at most five minutes
+  old; a newly refreshed index alone cannot prove new executions.
+
+### Operator recovery / checks
+
+```bash
+systemctl --user status kipnerter-observer.service
+systemctl --user status kipnerter-trace-publisher.timer
+systemctl --user status kipnerter-trace-publisher.service
+# Safe, one-shot publisher refresh; no NAS harvest and no agent dispatch:
+systemctl --user start kipnerter-trace-publisher.service
+# Token-free HTTP test must deny:
+curl -i https://x1-370.tailcb8954.ts.net:8448/v1/traces
+```
+
+To stop the metadata publishing without affecting the existing observer or
+its other tailnet routes:
+
+```bash
+systemctl --user disable --now kipnerter-trace-publisher.timer
+```
+
+Old snapshots then expire naturally after 90 seconds. Do not remove the
+separate subscriber authentication check, publish the observer with Funnel,
+or expose the AssistX BasicAuth account directly to browsers.

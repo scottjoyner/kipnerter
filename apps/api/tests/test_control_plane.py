@@ -114,3 +114,42 @@ def test_observer_rejects_replayed_future_or_wrong_source_payloads():
         "source": "spoofed", "observed_at": "irrelevant",
     }, "/v1/nodes", now)
     assert not control_plane._observer_is_fresh(None, "/v1/nodes", now)
+
+
+def test_assistx_trace_observer_projection_with_no_basic_auth(monkeypatch):
+    from datetime import datetime, timezone
+    monkeypatch.setenv("KIPNERTER_GATEWAY_TOKEN", "test-read-only")
+    async def observe(path="/v1/nodes"):
+        assert path == "/v1/traces"
+        return {
+            "source": "assistx_trace_index",
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "traces": [
+                {"correlation_id": "node:abc123", "outcome": "completed",
+                 "events": 5, "last_ts_ms": 1789950400000,
+                 "duration_ms": 40, "prompt": "SECRET"},
+            ],
+        }
+    async def fail_direct(*args, **kwargs):
+        raise AssertionError("No direct AssistX privileged credentials requested")
+    monkeypatch.setattr(control_plane, "_tailscale_read", observe)
+    monkeypatch.setattr(control_plane, "_assistx_read", fail_direct)
+    response = client.get("/api/v1/control-plane/traces",
+                          headers={"Authorization": "Bearer test-read-only"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source"] == "assistx_trace_index"
+    assert payload["status"] == "historical"
+    assert payload["last_event_at"] is not None
+    assert "SECRET" not in response.text
+    assert payload["traces"][0]["correlation_id"] == "node:abc123"
+    assert response.headers["cache-control"] == "private, no-store"
+
+
+def test_observer_trace_source_requires_fresh_signed_transport_metadata():
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    payload = {"source": "assistx_trace_index", "observed_at": now.isoformat()}
+    assert control_plane._observer_is_fresh(payload, "/v1/traces", now)
+    assert not control_plane._observer_is_fresh(payload | {"source": "spoof"},
+                                                 "/v1/traces", now)

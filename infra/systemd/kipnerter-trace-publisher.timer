@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh AssistX trace metadata snapshot every 45 seconds
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=45s
+AccuracySec=5s
+Unit=kipnerter-trace-publisher.service
+
+[Install]
+WantedBy=timers.target

@@ -13,6 +13,7 @@ import urllib.error
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from .agent_sessions_observer import sessions
+from .trace_snapshot_observer import recent_traces
 
 
 def sample():
@@ -102,7 +103,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             return self._reply(200, {"status": "ok"})
-        if self.path not in ("/v1/nodes", "/v1/sessions", "/v1/integrations"):
+        if self.path not in ("/v1/nodes", "/v1/sessions", "/v1/integrations", "/v1/traces"):
             return self._reply(404, {"error": "not found"})
         secret = os.environ.get("FLEET_MONITOR_TOKEN", "")
         supplied = self.headers.get("Authorization", "")
@@ -113,6 +114,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/v1/nodes": sample,
                 "/v1/sessions": sessions,
                 "/v1/integrations": integration_status,
+                "/v1/traces": recent_traces,
             }
             return self._reply(200, data[self.path]())
         except (OSError, subprocess.SubprocessError, ValueError, TypeError, UnicodeError):

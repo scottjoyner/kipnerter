@@ -151,7 +151,10 @@ export default function FleetConsole({ email }) {
         </>}
         {tab === "traces" && <>
           <div className="page-intro"><p className="section-kicker">OBSERVABILITY</p><h1>Live activity<span className="accent">.</span></h1><p>Automatically refreshed every 20 seconds. AssistX trace IDs and launcher job IDs are different types of evidence, not a proven shared lineage.</p></div>
-          <section className="workspace-panel"><div className="panel-heading"><div><h2>Recent activity</h2><p>Metadata only · raw prompts and tool output are never forwarded.</p></div>
+          <section className="workspace-panel"><div className="panel-heading"><div><h2>Recent activity</h2><p>Metadata only · raw prompts and tool output are never forwarded.
+            {data.traces?.status === "historical" ? " · Historical trace index; no recent execution observed." : ""}
+            {data.traces?.last_event_at ? " · Latest event: " + new Date(data.traces.last_event_at).toLocaleString() : ""}
+            </p></div>
             <Badge status={data.traces?.status === "live" && data.sessions?.status === "reported" ? "live" : "partial"}/></div>
             {timeline.length ? <div className="data-list">{timeline.map(item => <div className="data-row" key={item.key}>
               <div><span className="row-main trace-id">{item.kind} · {item.id}</span>

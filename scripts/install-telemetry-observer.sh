@@ -19,6 +19,8 @@ umask 077
 mkdir -p "$DEST/app" "$CONF" "$UNIT_DIR"
 install -m 0600 "$ROOT/apps/api/app/agent_sessions_observer.py" "$DEST/app/"
 install -m 0600 "$ROOT/apps/api/app/tailnet_observer.py" "$DEST/app/"
+install -m 0600 "$ROOT/apps/api/app/trace_snapshot_observer.py" "$DEST/app/"
+install -m 0700 "$ROOT/scripts/refresh_assistx_trace_snapshot.py" "$DEST/"
 [[ ! -L "$DEST/app/__init__.py" ]] || { echo "symlinked package initializer denied"; exit 1; }
 touch "$DEST/app/__init__.py"
 chmod 0600 "$DEST/app/__init__.py"
@@ -35,8 +37,15 @@ else
   [[ ! -L "$CONF/observer.env" ]] || { echo "symlinked secret file denied"; exit 1; }
 fi
 install -m 0644 "$ROOT/infra/systemd/$SERVICE" "$UNIT_DIR/$SERVICE"
+install -m 0644 "$ROOT/infra/systemd/kipnerter-trace-publisher.service" "$UNIT_DIR/"
+install -m 0644 "$ROOT/infra/systemd/kipnerter-trace-publisher.timer" "$UNIT_DIR/"
 systemctl --user daemon-reload
 systemctl --user enable --now "$SERVICE"
+# One-shot snapshot publisher runs separately and is NEVER callable over HTTP.
+# This unit uses the existing local AssistX container's current auth and emits
+# only allowlisted metadata; no privileged credentials leave that container.
+systemctl --user enable --now kipnerter-trace-publisher.timer
+systemctl --user start kipnerter-trace-publisher.service
 systemctl --user restart "$SERVICE"
 active=0
 for attempt in {1..15}; do

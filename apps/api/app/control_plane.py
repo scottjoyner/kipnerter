@@ -47,6 +47,7 @@ def _observer_is_fresh(payload, path, now=None):
         "/v1/nodes": "tailscale",
         "/v1/sessions": "fleet-agent-launcher",
         "/v1/integrations": "x1-370",
+        "/v1/traces": "assistx_trace_index",
     }
     if path not in expected or not isinstance(payload, dict) or payload.get("source") != expected[path]:
         return False
@@ -127,7 +128,14 @@ async def overview(request: Request, response: Response):
 @router.get("/traces")
 async def traces(request: Request, response: Response):
     _authorize(request, response)
-    payload = await _assistx_read("/api/traces", {"limit": 25, "offset": 0})
+    # The independent, sanitized local trace snapshot is safe to publish with
+    # the existing monitor-only token. Direct AssistX BasicAuth is an optional
+    # fallback and MUST NOT be reused as the browser credential.
+    payload = await _tailscale_read("/v1/traces")
+    source = "assistx_trace_index" if isinstance(payload,dict) else "unavailable"
+    if not isinstance(payload, dict) or not isinstance(payload.get("traces"), list):
+        payload = await _assistx_read("/api/traces", {"limit": 25, "offset": 0})
+        source = "assistx_authenticated_index" if isinstance(payload,dict) else "unavailable"
     if not isinstance(payload, dict) or not isinstance(payload.get("traces"), list):
         return {"status": "unavailable", "traces": []}
     allowed_outcomes = {"open", "failed", "completed"}
@@ -145,7 +153,19 @@ async def traces(request: Request, response: Response):
             "last_ts_ms": item.get("last_ts_ms") if type(item.get("last_ts_ms")) is int else None,
             "duration_ms": item.get("duration_ms") if type(item.get("duration_ms")) is int else None,
         })
-    return {"status": "live", "traces": rows}
+    # Freshly read historical indexes are not proof of live execution.
+    # Require at least one event <= 5 minutes old for "live" activity.
+    newest = max((row["last_ts_ms"] for row in rows
+                  if type(row["last_ts_ms"]) is int), default=None)
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    event_live = newest is not None and 0 <= now_ms - newest <= 300000
+    last_event_at = datetime.fromtimestamp(newest / 1000, timezone.utc).isoformat() if (
+        newest is not None and 0 < newest <= now_ms + 10000
+    ) else None
+    return {"status": "live" if event_live else "historical", "source": source,
+            "observer_observed_at": payload.get("observed_at") if source == "assistx_trace_index" else None,
+            "last_event_at": last_event_at,
+            "traces": rows}
 
 
 @router.get("/nodes")
