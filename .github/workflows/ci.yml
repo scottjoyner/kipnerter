@@ -54,6 +54,8 @@ jobs:
       - run: docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge config --quiet
       - run: python3 -m py_compile scripts/spatial-smoke.py
       - run: sh -n scripts/spatial-worker-proof.sh
+      - run: bash -n scripts/install-telemetry-observer.sh
+      - run: python3 -m py_compile apps/api/app/tailnet_observer.py apps/api/app/agent_sessions_observer.py
       - run: docker run --rm -v "$PWD/infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2 caddy validate --config /etc/caddy/Caddyfile
       - run: docker compose build
 

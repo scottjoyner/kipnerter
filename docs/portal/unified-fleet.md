@@ -67,6 +67,33 @@ identity can access `/api/portal/{overview,nodes,models,traces}`.
   python3 -m app.tailnet_observer`; the collector deliberately refuses
   non-loopback binding. Protect access over Tailscale Serve + scoped grants.
 
+## Local observer operationalization (x1-370)
+
+On October 17, 2026 the local read-only collector was installed on x1-370 with:
+
+```bash
+scripts/install-telemetry-observer.sh --install
+systemctl --user is-active kipnerter-observer.service
+```
+
+The service uses the caller's **real** Unix home, not any isolated MCP HOME,
+and installs under `~/.local/share/kipnerter-observer`. An independent,
+unprinted bearer token is generated into `~/.config/kipnerter-observer/observer.env`
+with mode `0600`; the unit binds only `127.0.0.1:8769`.
+
+The host's user systemd manager rejects capability/mount namespace sandbox
+directives with `218/CAPABILITIES`, so the compatible unit uses user-level
+isolation, a loopback-only listener, and strict per-request authentication.
+A stronger service-level sandbox should be tested independently, not
+silently deployed when unsupported. The persistent observer does not imply
+a public or tailnet endpoint: no Tailscale Serve/Funnel changes were made.
+
+Verified with the active daemon: anonymous GET `/v1/nodes` returns 401;
+token-authorized reads return 18 tailnet nodes and 11 local launcher jobs
+without paths, IPs or raw trace data. For production access, first approve
+the correct tailnet grants and explicitly publish a dedicated Serve path
+for the read-only observer; do not reuse existing routes.
+
 ## Explicitly deferred
 
 - Chat dispatch is **held**, not silently routed through unadmitted LM Studio
