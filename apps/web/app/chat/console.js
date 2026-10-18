@@ -53,6 +53,20 @@ export default function FleetConsole({ email }) {
   const traces = data.traces?.traces || [];
   const sessions = data.sessions?.sessions || [];
   const healthy = integrations.filter(s => s.status === "healthy").length;
+  // These are observations from distinct systems, not a cryptographic trace join.
+  const timeline = [
+    ...traces.map(trace => ({
+      key: "assistx:" + trace.correlation_id, kind: "AssistX trace", id: trace.correlation_id,
+      status: trace.outcome, count: trace.events, duration_ms: trace.duration_ms,
+      time: Number(trace.last_ts_ms) || 0, verified: true,
+    })),
+    ...sessions.map(job => ({
+      key: "launcher:" + job.id, kind: human(job.agent) + " job", id: job.id,
+      status: job.status.toLowerCase(), model: job.model,
+      time: Date.parse(job.created_utc) || 0, verified: false,
+      hold: job.harvest_hold,
+    })),
+  ].sort((a, b) => b.time - a.time).slice(0, 50);
   return <div className="portal">
     <aside className="portal-sidebar">
       <a className="portal-logo" href="/">K<span>·</span><span className="portal-logo-text">KIPNERTER<small>UNIFIED FLEET</small></span></a>
@@ -116,10 +130,19 @@ export default function FleetConsole({ email }) {
               <Empty title="No node reports yet" detail="Connect the authorized inventory endpoint; no devices are assumed online."/>}</section>
         </>}
         {tab === "traces" && <>
-          <div className="page-intro"><p className="section-kicker">OBSERVABILITY</p><h1>Live traces<span className="accent">.</span></h1><p>Recent correlation IDs and execution outcomes. Prompts, secrets, and tool payloads are intentionally omitted.</p></div>
-          <section className="workspace-panel"><div className="panel-heading"><h2>Recent execution traces</h2><Badge status={data.traces?.status || "unavailable"}/></div>
-            {traces.length ? <div className="data-list">{traces.map((trace,i) => <div className="data-row" key={trace.correlation_id+i}><div><span className="row-main trace-id">{trace.correlation_id}</span><small>{trace.events ?? "—"} events · {trace.duration_ms ?? "—"} ms</small></div><Badge status={trace.outcome}/></div>)}</div> :
-              <Empty title="Trace feed unavailable" detail="An authenticated read-only AssistX trace source must be configured. No synthetic events are displayed."/>}</section>
+          <div className="page-intro"><p className="section-kicker">OBSERVABILITY</p><h1>Live activity<span className="accent">.</span></h1><p>Automatically refreshed every 20 seconds. AssistX trace IDs and launcher job IDs are different types of evidence, not a proven shared lineage.</p></div>
+          <section className="workspace-panel"><div className="panel-heading"><div><h2>Recent activity</h2><p>Metadata only · raw prompts and tool output are never forwarded.</p></div>
+            <Badge status={data.traces?.status === "live" && data.sessions?.status === "reported" ? "live" : "partial"}/></div>
+            {timeline.length ? <div className="data-list">{timeline.map(item => <div className="data-row" key={item.key}>
+              <div><span className="row-main trace-id">{item.kind} · {item.id}</span>
+              <small>{item.time ? new Date(item.time).toLocaleString() : "No timestamp"}
+                {item.model ? " · requested " + item.model : ""}
+                {item.count != null ? " · " + item.count + " events" : ""}
+                {item.hold ? " · archival hold" : ""}
+                {!item.verified ? " · uncorrelated job receipt" : ""}
+              </small></div><Badge status={item.status}/></div>)}</div> :
+              <Empty title="No authenticated activity feed" detail="Configure separate read-only AssistX and fleet launcher observer credentials. This page never synthesizes traces."/>}
+          </section>
         </>}
         {Object.keys(errors).length > 0 && <p className="portal-warning" role="status">Some private telemetry endpoints are unavailable. The dashboard displays no unverified status for those feeds.</p>}
       </div>
