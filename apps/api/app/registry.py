@@ -35,6 +35,9 @@ def services() -> list[Service]:
         _service("assistx", "agent-gateway", "ASSISTX_BASE_URL"),
         _service("sophia", "voice", "SOPHIA_BASE_URL", "/"),
         _service("lmstudio", "openai-compatible", "LMSTUDIO_BASE_URL", "/v1/models"),
+        _service("hermes", "agent", "HERMES_BASE_URL"),
+        _service("opencode", "agent", "OPENCODE_BASE_URL"),
+        _service("fleet-monitor", "monitor", "FLEET_MONITOR_BASE_URL"),
     ]
     return [service for service in candidates if service is not None]
 

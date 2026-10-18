@@ -15,3 +15,87 @@ h1 { font-size: clamp(3rem, 8vw, 6.8rem); line-height: .94; letter-spacing: -.05
 .card h2 { margin: 0 0 12px; font-size: 1.1rem; }
 .card p { margin: 0; color: #9ca8bd; line-height: 1.55; }
 @media (max-width: 760px) { .shell { padding-top: 44px; } .hero { padding-top: 32px; } .grid { grid-template-columns: 1fr; } }
+
+/* Kipnerter unified operator portal */
+:root { --panel:#111725; --stroke:#273248; --muted:#91a0b8; --accent:#82aaff; }
+.auth-shell { min-height:100vh; display:flex; flex-direction:column; align-items:center; background:radial-gradient(ellipse at 50% -20%,#243355,#0b101b 55%); }
+.wordmark { align-self:flex-start; margin:32px 5%; font-size:13px; font-weight:850; letter-spacing:.2em; }
+.wordmark span { color:#71809e; font-weight:500; }
+.auth-card { width:min(560px,calc(100% - 36px)); margin:auto; padding:44px; border:1px solid var(--stroke); border-radius:24px; background:#121927; box-shadow:0 36px 110px #0005; }
+.auth-card h1 { font-size:clamp(2.2rem,5vw,3.8rem); line-height:1.08; }
+.auth-card > p { color:#a8b5cb; line-height:1.65; }
+.auth-glyph { display:grid; place-items:center; width:54px; height:54px; border-radius:17px; color:#0d1422; background:linear-gradient(145deg,#a1bfff,#698bf1); font-size:26px; font-weight:900; margin-bottom:32px; }
+.primary-btn { display:block; padding:16px; border-radius:12px; background:#9cb8ff; color:#111a2b; font-weight:750; text-align:center; margin-top:30px; }
+.auth-warning { background:#252b38; border:1px solid #505875; padding:18px; border-radius:12px; color:#d3ddec; line-height:1.6; margin-top:26px; }
+.auth-card .fine-print { font-size:12px; color:#7e90ad; margin-top:24px; }
+.portal { display:flex; min-height:100vh; background:#0b1019; color:#ebf1fe; }
+.portal-sidebar { width:242px; flex-shrink:0; border-right:1px solid #202b3b; background:#101622; padding:28px 15px 17px; display:flex; flex-direction:column; }
+.portal-logo { display:flex; align-items:center; gap:11px; padding:0 12px 38px; font-weight:900; font-size:26px; }
+.portal-logo > span:first-child { color:#8cafff; margin-left:-9px; }
+.portal-logo-text { font-size:12px; letter-spacing:.16em; line-height:1.5; }
+.portal-logo-text small { display:block; color:#7e8da6; font-size:9px; font-weight:600; letter-spacing:.16em; }
+.sidebar-caption { font-size:10px; letter-spacing:.16em; color:#60738f; padding:9px 14px; font-weight:800; }
+.portal-sidebar nav { display:flex; flex-direction:column; gap:5px; }
+.nav-entry { background:transparent; color:#9dacc3; border:1px solid transparent; border-radius:11px; display:flex; gap:13px; align-items:center; padding:12px 14px; font:600 13px inherit; font-family:inherit; text-align:left; cursor:pointer; }
+.nav-entry:hover, .nav-entry.selected { background:#202e47; border-color:#304461; color:#e5edff; }
+.nav-symbol { width:22px; color:#94b3ff; font-size:20px; text-align:center; }
+.sidebar-bottom { margin-top:auto; padding:18px 10px 0; }
+.sidebar-status { font-size:11px; color:#92a5c0; border-bottom:1px solid #2a3548; padding-bottom:17px; }
+.pulse { display:inline-block; height:7px; width:7px; border-radius:50%; background:#72809a; margin-right:10px; }
+.sidebar-identity { display:flex; align-items:center; gap:10px; margin-top:19px; }
+.avatar { background:#2b4272; display:grid; place-items:center; border-radius:11px; width:32px; height:32px; font-size:15px; font-weight:800; }
+.identity-name { font-size:11px; word-break:break-word; }
+.identity-name small { display:block; color:#7486a0; margin-top:4px; }
+.signout-link { display:block; margin:20px 0 4px; font-size:12px; color:#91a9d0; }
+.portal-main { min-width:0; flex:1; }
+.portal-header { min-height:68px; border-bottom:1px solid #202b3b; padding:19px clamp(18px,4vw,52px); display:flex; justify-content:space-between; align-items:center; gap:15px; }
+.header-breadcrumb { font-size:11px; color:#aab8ce; letter-spacing:.12em; font-weight:700; }
+.header-breadcrumb span { color:#546781; margin:0 10px; }
+.header-tools { display:flex; gap:20px; align-items:center; color:#7889a2; font-size:11px; }
+.read-only { font-size:10px; font-weight:800; letter-spacing:.08em; color:#9bb5e6; }
+.portal-content { max-width:1260px; margin:0 auto; padding:48px clamp(18px,4vw,56px) 76px; }
+.page-intro { margin-bottom:34px; }
+.section-kicker { color:#8aaafa; font-size:11px; letter-spacing:.2em; font-weight:800; margin:0 0 15px; }
+.page-intro h1 { font-size:clamp(2.6rem,5vw,4.6rem); margin:0 0 15px; letter-spacing:-.055em; line-height:1.07; }
+.page-intro>p:last-child { color:#98a7bf; line-height:1.6; margin-top:0; }
+.accent { color:#83a9ff; }
+.stat-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:13px; margin-bottom:25px; }
+.stat-card, .workspace-panel, .integration-card { border:1px solid var(--stroke); background:var(--panel); border-radius:16px; }
+.stat-card { padding:22px; min-width:0; }
+.stat-card>span { color:#9eaec7; font-size:12px; }
+.stat-card strong { display:block; font-size:39px; letter-spacing:-.04em; margin:12px 0 3px; font-variant-numeric:tabular-nums; }
+.stat-card strong small { font-size:16px; color:#6c819f; }
+.stat-card p { color:#7286a4; font-size:11px; margin:4px 0 0; }
+.workspace-panel { overflow:hidden; }
+.panel-heading { padding:20px 24px; display:flex; gap:12px; justify-content:space-between; align-items:center; border-bottom:1px solid #263246; }
+.panel-heading h2 { font-size:15px; margin:0 0 5px; }
+.panel-heading p { font-size:12px; color:#8a9eb9; margin:0; line-height:1.5; }
+.state-badge { display:inline-flex; align-items:center; gap:7px; white-space:nowrap; font-size:10px; text-transform:uppercase; letter-spacing:.04em; font-weight:800; color:#a1acc1; background:#232d3e; padding:7px 10px; border-radius:999px; }
+.state-dot { width:6px; height:6px; border-radius:50%; background:#8591a7; }
+.state-ok { background:#19352d; color:#81c6b0; }
+.state-ok .state-dot { background:#61c7a6; }
+.chat-welcome { display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:65px 25px 76px; }
+.chat-mark { font-size:42px; color:#a2bbff; }
+.chat-welcome h3 { font-size:24px; letter-spacing:-.035em; margin:18px 0 8px; }
+.chat-welcome p { max-width:420px; color:#8194b1; font-size:13px; line-height:1.7; }
+.composer-locked { display:flex; gap:12px; padding:20px; border-top:1px solid var(--stroke); background:#151e2b; font-size:12px; color:#7e90a9; align-items:center; }
+.composer-locked span:last-child { margin-left:auto; }
+.integration-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.integration-card { padding:24px; }
+.integration-icon { width:42px; height:42px; border-radius:13px; display:grid; place-items:center; background:#233758; color:#9dbaff; font-weight:800; }
+.integration-card h3 { margin:17px 0 12px; }
+.integration-card p { color:#8295b2; font-size:12px; }
+.data-list { padding:0 14px; }
+.data-row { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:17px 10px; border-bottom:1px solid #263245; font-size:12px; color:#9aacc5; }
+.data-row:last-child { border-bottom:0; }
+.data-row>div { min-width:0; }
+.row-main { display:block; font-weight:700; color:#e0e9fc; margin-bottom:5px; overflow-wrap:anywhere; }
+.data-row small { display:block; color:#8193ac; overflow-wrap:anywhere; }
+.trace-id { font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+.empty-state { text-align:center; padding:80px 20px; max-width:470px; margin:0 auto; }
+.empty-icon { font-size:39px; color:#5f7ba6; }
+.empty-state h3 { font-size:17px; }
+.empty-state p { color:#8193ac; font-size:12px; line-height:1.7; }
+.portal-warning { color:#a5b6d0; font-size:12px; margin-top:25px; }
+@media(max-width:850px) { .portal-sidebar{width:72px;padding:20px 8px;} .portal-logo{padding:0 14px 26px;} .portal-logo-text,.sidebar-caption,.nav-entry:not(.selected),.sidebar-bottom{display:none;} .nav-entry{font-size:0;justify-content:center;padding:12px;} .nav-symbol{font-size:22px;} .portal-header{padding:20px;} .portal-content{padding:34px 18px;} .header-tools .read-only{display:none;} }
+@media(max-width:560px) { .portal-sidebar{width:57px;} .stat-grid{grid-template-columns:1fr;} .integration-grid{grid-template-columns:1fr;} .panel-heading{align-items:start;flex-direction:column;} .portal-header{min-height:60px;} .portal-content{padding-top:28px;} .page-intro h1{font-size:2.5rem;} }

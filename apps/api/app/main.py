@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from .gateway import proxy_request, public_routes, service_health
+from .control_plane import router as control_plane_router
 from .registry import models, services
 
 app = FastAPI(
@@ -13,6 +14,8 @@ app = FastAPI(
     version="0.3.0",
     description="Public API gateway for Kipnerter web, iOS, AssistX, Sophia, research, ingestion, and MCP services.",
 )
+
+app.include_router(control_plane_router)
 
 origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if o.strip()]
 app.add_middleware(

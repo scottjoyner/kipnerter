@@ -115,6 +115,17 @@ jobs:
           ASSISTX_BASE_URL: ${{ secrets.ASSISTX_BASE_URL }}
           SOPHIA_BASE_URL: ${{ secrets.SOPHIA_BASE_URL }}
           LMSTUDIO_BASE_URL: ${{ secrets.LMSTUDIO_BASE_URL }}
+          HERMES_BASE_URL: ${{ secrets.HERMES_BASE_URL }}
+          OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL }}
+          FLEET_MONITOR_BASE_URL: ${{ secrets.FLEET_MONITOR_BASE_URL }}
+          FLEET_MONITOR_TOKEN: ${{ secrets.FLEET_MONITOR_TOKEN }}
+          ASSISTX_MONITOR_USER: ${{ secrets.ASSISTX_MONITOR_USER }}
+          ASSISTX_MONITOR_PASSWORD: ${{ secrets.ASSISTX_MONITOR_PASSWORD }}
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+          TSIDP_ISSUER: ${{ secrets.TSIDP_ISSUER }}
+          TSIDP_CLIENT_ID: ${{ secrets.TSIDP_CLIENT_ID }}
+          TSIDP_CLIENT_SECRET: ${{ secrets.TSIDP_CLIENT_SECRET }}
+          KIPNERTER_ALLOWED_EMAILS: ${{ secrets.KIPNERTER_ALLOWED_EMAILS }}
           GATEWAY_TOKEN_OVERRIDE: ${{ secrets.KIPNERTER_GATEWAY_TOKEN }}
           SPATIAL_API_KEY: ${{ secrets.KIPNERTER_SPATIAL_API_KEY }}
           SPATIAL_DB_PASSWORD: ${{ secrets.KIPNERTER_SPATIAL_DB_PASSWORD }}
@@ -142,6 +153,18 @@ jobs:
             fi
             {
               printf 'KIPNERTER_ENV=production\n'
+              printf 'NEXTAUTH_URL=https://kipnerter.com\n'
+              printf 'NEXTAUTH_SECRET=%s\n' "$NEXTAUTH_SECRET"
+              printf 'TSIDP_ISSUER=%s\n' "$TSIDP_ISSUER"
+              printf 'TSIDP_CLIENT_ID=%s\n' "$TSIDP_CLIENT_ID"
+              printf 'TSIDP_CLIENT_SECRET=%s\n' "$TSIDP_CLIENT_SECRET"
+              printf 'KIPNERTER_ALLOWED_EMAILS=%s\n' "$KIPNERTER_ALLOWED_EMAILS"
+              printf 'ASSISTX_MONITOR_USER=%s\n' "$ASSISTX_MONITOR_USER"
+              printf 'ASSISTX_MONITOR_PASSWORD=%s\n' "$ASSISTX_MONITOR_PASSWORD"
+              printf 'HERMES_BASE_URL=%s\n' "$HERMES_BASE_URL"
+              printf 'OPENCODE_BASE_URL=%s\n' "$OPENCODE_BASE_URL"
+              printf 'FLEET_MONITOR_BASE_URL=%s\n' "$FLEET_MONITOR_BASE_URL"
+              printf 'FLEET_MONITOR_TOKEN=%s\n' "$FLEET_MONITOR_TOKEN"
               printf 'NEXT_PUBLIC_API_URL=https://api.kipnerter.com\n'
               printf 'CORS_ORIGINS=https://kipnerter.com,https://www.kipnerter.com,https://scottjoyner.dev,https://admin.scottjoyner.dev,https://preview.kipnerter.com\n'
               printf 'ASSISTX_BASE_URL=%s\n' "$ASSISTX_BASE_URL"
@@ -182,7 +205,8 @@ jobs:
                curl -fsS https://api.kipnerter.com/api/v1/services >/dev/null && \
                curl -fsS https://api.kipnerter.com/api/v1/services/health >/dev/null && \
                curl -fsS https://api.kipnerter.com/api/v1/gateway/routes >/dev/null && \
-               curl -fsS https://kipnerter.com >/dev/null; then
+               curl -fsS https://kipnerter.com >/dev/null && \
+               curl -fsS https://kipnerter.com/chat | grep -q 'PRIVATE AI WORKSPACE'; then
               break
             fi
             sleep 10
