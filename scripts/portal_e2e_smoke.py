@@ -207,6 +207,33 @@ def run(real_observer):
                 ):
                     raise AssertionError("SSE did not include live private observer data")
                 print("authenticated SSE: unified snapshot returned")
+            # Open 8 simultaneous streams, verify the ninth is rejected,
+            # disconnect all clients and check the slots are reclaimed.
+            opened = []
+            try:
+                for idx in range(8):
+                    stream_req = urllib.request.Request(
+                        base + "/api/portal/live",
+                        headers={"Cookie":cookie, "Accept":"text/event-stream"},
+                    )
+                    stream = urllib.request.urlopen(stream_req, timeout=15)
+                    if stream.status != 200:
+                        raise AssertionError(f"Stream quota occupied early at slot {idx}")
+                    opened.append(stream)
+                limit_code, _, _ = request(base + "/api/portal/live", cookie, timeout=5)
+                if limit_code != 429:
+                    raise AssertionError(f"Open-stream cap did not reject 9th stream: {limit_code}")
+                print("SSE capacity: ninth connection denied with 429")
+            finally:
+                for stream in opened:
+                    stream.close()
+            time.sleep(1)
+            probe = urllib.request.Request(base + "/api/portal/live",
+                       headers={"Cookie":cookie, "Accept":"text/event-stream"})
+            with urllib.request.urlopen(probe, timeout=15) as stream:
+                if stream.status != 200:
+                    raise AssertionError("Stream slot not recovered after disconnect")
+            print("SSE disconnected-client capacity reclaimed")
     print("PASS: isolated end-to-end portal smoke; no deployment or agent execution")
 
 

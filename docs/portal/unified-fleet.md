@@ -355,3 +355,36 @@ provider discovery, OIDC authorization-code callback exchange, browser
 reachability of `tsidp`, user-triggered logout, real-time revocation, or
 deployment rollback. These require independently witnessed operator staging
 acceptance before a public production rollout.
+
+## October 18: strict public release and stream-capacity gates
+
+The earlier deployment workflow could exhaust its public-health retry loop and
+**fall through as successful even when /chat still returned 404**. Production
+now calls `scripts/verify_portal_release.py`, which fails nonzero after all
+attempts unless **all** checked public routes meet exact expected responses:
+
+- Public `/chat`: HTTP 200, expected workspace marker, and a configured
+  Tailscale sign-in link (not the setup-warning state).
+- Public NextAuth `/api/auth/providers`: HTTP 200, valid JSON with the
+  configured `tailscale` provider.
+- Anonymous browser `/api/portal/live` and `/api/portal/traces`: HTTP 401
+  (not 200 or identity-not-configured 503).
+- Public API health, liveness, readiness: HTTP 200.
+- Anonymous control-plane overview and traces: HTTP 401.
+- Unexpected redirects, oversized responses, wrong status and unavailable
+  endpoints all fail the release. Only fixed HTTPS origins are accepted.
+  The check sends no operator cookie or private API credentials.
+
+The preflight is deliberately distinct from the signed-in, remote production
+API-to-observer checks and from human OIDC acceptance. It cannot validate an
+OIDC authorization-code exchange or emergency rollback by itself.
+
+`tests/test_verify_portal_release.py` reproduces a missing /chat route,
+an unconfigured Tailscale provider, accidental anonymous telemetry exposure
+and exhausted retries. The current live site correctly **fails** this gate.
+
+The isolated `scripts/portal_e2e_smoke.py` also tests SSE resource behavior:
+eight authorized browser streams connect simultaneously, a ninth must receive
+HTTP 429, and a new connection must work after the clients close. This limit
+is per Node server worker, not a globally coordinated cross-replica quota;
+production concurrency/replica policy still requires staging validation.
