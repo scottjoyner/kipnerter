@@ -27,6 +27,11 @@ jobs:
     env:
       PINNED_API_SHA: c6a42e0edaeedda06d3702f2f07c82cc8bcd4d59
     steps:
+      - name: Check out trusted portal CI smoke fixture
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
       - name: Checkout immutable gateway candidate
         uses: actions/checkout@v4
         with:
