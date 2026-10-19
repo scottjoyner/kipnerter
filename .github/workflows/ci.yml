@@ -78,7 +78,7 @@ jobs:
       - run: docker compose -f docker-compose.yml -f compose.spatial.yml -f compose.staging.yml --profile edge config --quiet
       - run: python3 -m py_compile scripts/spatial-smoke.py
       - run: python3 -m unittest discover -s tests -v
-      - run: python3 -m py_compile scripts/portal_oidc_preflight.py scripts/verify_portal_release.py scripts/portal_release_backup.py scripts/portal_deploy_target.py
+      - run: python3 -m py_compile scripts/portal_oidc_preflight.py scripts/verify_portal_release.py scripts/portal_release_backup.py scripts/portal_release_bundle.py scripts/portal_deploy_target.py
       - run: sh -n scripts/spatial-worker-proof.sh
       - run: bash -n scripts/install-telemetry-observer.sh
       - run: python3 -m py_compile apps/api/app/tailnet_observer.py apps/api/app/agent_sessions_observer.py apps/api/app/trace_snapshot_observer.py scripts/refresh_assistx_trace_snapshot.py apps/api/app/assistx_fleet_observer.py apps/api/app/runtime_catalog_observer.py apps/api/app/fleet_runtime_observer.py scripts/refresh_fleet_runtime_snapshot.py scripts/refresh_assistx_fleet_snapshot.py

@@ -718,3 +718,45 @@ Postgres/MinIO volume recovery plan. Verify browser login with a real
 allowlisted Tailscale user and separately rehearse database/storage rollback
 before considering a production promotion. The current `kipnerter.com/chat`
 404 remains a HOLD, not an invitation to bypass SSH or identity gates.
+
+## October 19: source-pinned deploy archive contract
+
+A release packaging audit identified another production risk: a broad directory
+`tar` over `apps/` and `spatial-api/` would include untracked build output,
+local artifacts, caches, and potentially other files beyond the reviewed
+commit. A `.env` exclusion alone was not an adequate release inventory.
+
+`python3 scripts/portal_release_bundle.py build` now produces a deterministic
+mode-0600 tar.gz **solely from Git blob objects** at the exact checked-out
+40-hex platform and spatial-backend commit SHAs. Its allowlist includes the
+platform's tracked `apps/`, `infra/`, `scripts/`, and explicit Compose files,
+plus tracked files from the separately pinned spatial-API checkout under
+`spatial-api/`. It does not traverse live checkout directories when assembling
+files and cannot include `.git`, `.env*`, `node_modules`, `.next`, untracked
+files, or worktree changes. Unsupported symlinks/submodules, invalid paths,
+missing required build inputs, oversized content or mismatched checkout heads
+cause a release HOLD.
+
+An embedded `release-provenance.json` lists each actual tar entry's relative
+path, mode, length and SHA-256 digest, as well as both commit SHAs. The bundle
+is independently verified after assembly, and the workflow **only then**
+transmits it to the approved deployment node. The deterministic archive can
+be byte-for-byte compared across builds of identical Git objects. Source
+integrity is **not** identity authorization, cryptographic publisher signing,
+a guarantee of safe in-place extraction, or rollback of Postgres/MinIO data.
+Additional server-side archive verification should be independently witnessed
+before production promotion; a passing local archive check alone does not
+meet that release gate.
+
+The workflow also validates spatial-API input as an immutable 40-digit SHA
+passed through a step environment variable rather than embedding manual
+workflow input directly into executable shell syntax. Offline fixture tests
+cover source-only composition, deterministic binary output, rejected
+uncommitted secrets and caches, tampering, invalid revision, duplicate or
+unlisted tar entries, and refusal to package tracked symlinks.
+
+**Deployment remains HOLD:** the production Tailscale SSH additional identity
+challenge is unresolved, a separately tagged staging target is not verified,
+real tsidp/OIDC browser acceptance has not occurred, and application plus
+Postgres/MinIO-volume rollback has not been successfully rehearsed. None of
+these checks were bypassed by the new packaging contract.
