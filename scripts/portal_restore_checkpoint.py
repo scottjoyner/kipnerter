@@ -46,13 +46,16 @@ def _fingerprint(public, expected):
 
 
 def verify_checkpoint(checkpoint, checkpoint_trust, signed_receipt, role_trust,
-                      expected_sequence, expected_previous_sha256, now=None):
+                      expected_sequence, expected_previous_sha256,
+                      expected_release, expected_topology, now=None):
     now = now or datetime.now(timezone.utc)
     if (type(expected_sequence) is not int or not 2 <= expected_sequence <= 2**53 or
             type(expected_previous_sha256) is not str or
             not DIGEST.fullmatch(expected_previous_sha256)):
         raise ValueError("external sequence and previous checkpoint SHA must be pinned")
-    receipt = verify(signed_receipt, role_trust, now=now)
+    receipt = verify(signed_receipt, role_trust, now=now,
+                     expected_release=expected_release,
+                     expected_topology=expected_topology)
     if (not isinstance(checkpoint, dict) or
             set(checkpoint) != {"payload", "observer_signature"}):
         raise ValueError("invalid checkpoint envelope")
@@ -124,13 +127,16 @@ def main():
     cli.add_argument("--external-observer-trust", required=True)
     cli.add_argument("--expected-sequence", type=int, required=True)
     cli.add_argument("--expected-prior-sha256", required=True)
+    cli.add_argument("--expected-release-sha", required=True)
+    cli.add_argument("--expected-topology-sha256", required=True)
     args = cli.parse_args()
     try:
         receipt, roles = _read_private_json(args.receipt), _read_private_json(args.external_role_trust)
         checkpoint = _read_private_json(args.checkpoint)
         witness = _read_private_json(args.external_observer_trust)
         result = verify_checkpoint(checkpoint, witness, receipt, roles,
-                                   args.expected_sequence, args.expected_prior_sha256)
+                                   args.expected_sequence, args.expected_prior_sha256,
+                                   args.expected_release_sha, args.expected_topology_sha256)
     except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
         raise SystemExit("RELEASE HOLD: checkpoint witness not verified: " + str(exc)) from None
     print(json.dumps(result, separators=(",", ":"), sort_keys=True))

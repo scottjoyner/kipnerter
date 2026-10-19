@@ -58,7 +58,7 @@ class SignedCheckpointTests(unittest.TestCase):
     def test_third_distinct_signature_binds_exact_receipt_and_prior_anchor(self):
         with tempfile.TemporaryDirectory() as temp:
             receipt, roles, checkpoint, witness = fixture(Path(temp))
-            result = verify_checkpoint(checkpoint, witness, receipt, roles, 12, PRIOR)
+            result = verify_checkpoint(checkpoint, witness, receipt, roles, 12, PRIOR, "a"*40, "d"*64)
             self.assertTrue(result["observer_signature_valid"])
             self.assertTrue(result["third_distinct_public_key"])
             self.assertTrue(result["external_anchor_matches"])
@@ -81,10 +81,10 @@ class SignedCheckpointTests(unittest.TestCase):
                 bad = copy.deepcopy(checkpoint)
                 bad["payload"][attr] = value
                 with self.subTest(attr=attr), self.assertRaises(ValueError):
-                    verify_checkpoint(bad, witness, receipt, roles, 12, PRIOR)
+                    verify_checkpoint(bad, witness, receipt, roles, 12, PRIOR, "a"*40, "d"*64)
             for sequence, prior in ((11, PRIOR), (12, "d"*64), (1, PRIOR)):
                 with self.subTest(sequence=sequence,prior=prior), self.assertRaises(ValueError):
-                    verify_checkpoint(checkpoint, witness, receipt, roles, sequence, prior)
+                    verify_checkpoint(checkpoint, witness, receipt, roles, sequence, prior, "a"*40, "d"*64)
 
     def test_reject_forged_signature_reused_key_and_stale_checkpoint(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -92,18 +92,33 @@ class SignedCheckpointTests(unittest.TestCase):
             fake = copy.deepcopy(checkpoint)
             fake["observer_signature"]["signature"] = "f" * 128
             with self.assertRaisesRegex(ValueError, "signature"):
-                verify_checkpoint(fake, witness, receipt, roles, 12, PRIOR)
+                verify_checkpoint(fake, witness, receipt, roles, 12, PRIOR, "a"*40, "d"*64)
             fake = copy.deepcopy(checkpoint)
             fake["payload"]["observed_at"] = (
                 datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
             with self.assertRaises(ValueError):
-                verify_checkpoint(fake, witness, receipt, roles, 12, PRIOR)
+                verify_checkpoint(fake, witness, receipt, roles, 12, PRIOR, "a"*40, "d"*64)
             same_key = copy.deepcopy(witness)
             same_key["observer"] = copy.deepcopy(roles["roles"]["executor"])
             fake = copy.deepcopy(checkpoint)
             fake["observer_signature"]["key_id"] = same_key["observer"]["key_id"]
             with self.assertRaisesRegex(ValueError, "distinct"):
-                verify_checkpoint(fake, same_key, receipt, roles, 12, PRIOR)
+                verify_checkpoint(fake, same_key, receipt, roles, 12, PRIOR, "a"*40, "d"*64)
+
+    def test_external_release_and_topology_must_match_and_replay_is_not_proved(self):
+        with tempfile.TemporaryDirectory() as temp:
+            receipt, roles, checkpoint, witness = fixture(Path(temp))
+            for release, topology in (("f"*40, "d"*64),
+                                      ("a"*40, "e"*64)):
+                with self.assertRaises(ValueError):
+                    verify_checkpoint(checkpoint, witness, receipt, roles, 12,
+                                      PRIOR, release, topology)
+            first = verify_checkpoint(checkpoint, witness, receipt, roles, 12,
+                                      PRIOR, "a"*40, "d"*64)
+            repeated = verify_checkpoint(checkpoint, witness, receipt, roles, 12,
+                                         PRIOR, "a"*40, "d"*64)
+            self.assertEqual(first["checkpoint_sha256"], repeated["checkpoint_sha256"])
+            self.assertFalse(repeated["durable_external_high_water_verified"])
 
     def test_reject_valid_signature_for_different_signed_receipt(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -111,7 +126,7 @@ class SignedCheckpointTests(unittest.TestCase):
             other = copy.deepcopy(receipt)
             other["fixture_nonce"] = "f"*32
             with self.assertRaises(ValueError):
-                verify_checkpoint(checkpoint, witness, other, roles, 12, PRIOR)
+                verify_checkpoint(checkpoint, witness, other, roles, 12, PRIOR, "a"*40, "d"*64)
 
     def test_cli_requires_private_external_role_and_observer_custody_files(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -129,7 +144,9 @@ class SignedCheckpointTests(unittest.TestCase):
                     "--external-role-trust", str(folder/"roles.json"),
                     "--checkpoint", str(folder/"checkpoint.json"),
                     "--external-observer-trust", str(folder/"observer.json"),
-                    "--expected-sequence", "12", "--expected-prior-sha256", PRIOR]
+                    "--expected-sequence", "12", "--expected-prior-sha256", PRIOR,
+                    "--expected-release-sha", "a"*40,
+                    "--expected-topology-sha256", "d"*64]
             executed = subprocess.run(argv, capture_output=True, text=True, timeout=9)
             self.assertEqual(executed.returncode, 0, executed.stderr)
             self.assertFalse(json.loads(executed.stdout)["production_recovery_approved"])

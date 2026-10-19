@@ -12,7 +12,9 @@ the original executor-and-reviewer-signed synthetic receipt, its separately
 pinned two-role public-key trust root, a signed observer checkpoint, and the
 observer's *separately supplied* public-key trust root.
 
-The observer signs canonical JSON containing the exact 40-hex release SHA,
+The verifier requires independently supplied expected release SHA and topology
+SHA-256, not merely two self-consistent signed documents. The observer signs
+canonical JSON containing the exact 40-hex release SHA,
 topology fingerprint, fixture nonce, existing signed-claim SHA-256, a
 timezone-aware timestamp, a positive **sequence >= 2**, and a 64-hex previous
 checkpoint digest. The supplied expected sequence and prior checkpoint digest
@@ -31,7 +33,9 @@ files and an external checkpoint reference):
       --checkpoint /private/checkpoint.json \
       --external-observer-trust /private/observer-trust.json \
       --expected-sequence 12 \
-      --expected-prior-sha256 <64-lowercase-hex>
+      --expected-prior-sha256 <64-lowercase-hex> \
+      --expected-release-sha <40-lowercase-hex> \
+      --expected-topology-sha256 <64-lowercase-hex>
 
 A passing result means that **three distinct pinned public keys signed matching
 synthetic statements**, and the supplied checkpoint extends the
