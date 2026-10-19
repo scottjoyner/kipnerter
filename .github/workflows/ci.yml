@@ -74,6 +74,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker compose config --quiet
+      - name: Verify stateless fleet preview cannot bind public ports or stateful volumes
+        env:
+          KIPNERTER_ENV: staging
+          NEXTAUTH_URL: https://staging.kipnerter.com
+        run: |
+          set -o pipefail
+          docker compose -p kipnerter-fleet-preview -f docker-compose.yml -f compose.fleet-preview.yml config --format json | python3 scripts/portal_fleet_preview_preflight.py
       - run: docker compose -f docker-compose.yml -f compose.dev.yml config --quiet
       - run: docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge config --quiet
       - run: docker compose -f docker-compose.yml -f compose.spatial.yml -f compose.staging.yml --profile edge config --quiet
