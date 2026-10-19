@@ -1,0 +1,67 @@
+name: Kipnerter portal deployment readiness (no writes)
+
+on:
+  push:
+    branches:
+      - ci/portal-deploy-readiness-deny-only-20261019
+    paths:
+      - .github/workflows/portal-deploy-readiness.yml
+      - scripts/portal_deployment_readiness.py
+      - scripts/tests/test_portal_deployment_readiness.py
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Deployment environment to inspect, not deploy
+        required: true
+        type: choice
+        options: [staging, production]
+        default: staging
+      planned_portal_sha:
+        description: Exact current portal release SHA to check witnesses against
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    if: ${{ github.repository == 'scottjoyner/kipnerter' && github.actor == github.repository_owner }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'staging' }}
+    timeout-minutes: 7
+    env:
+      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+      TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+      KIPNERTER_API_REPO_TOKEN: ${{ secrets.KIPNERTER_API_REPO_TOKEN }}
+      KIPNERTER_SPATIAL_API_KEY: ${{ secrets.KIPNERTER_SPATIAL_API_KEY }}
+      KIPNERTER_SPATIAL_DB_PASSWORD: ${{ secrets.KIPNERTER_SPATIAL_DB_PASSWORD }}
+      KIPNERTER_SPATIAL_S3_ACCESS_KEY_ID: ${{ secrets.KIPNERTER_SPATIAL_S3_ACCESS_KEY_ID }}
+      KIPNERTER_SPATIAL_S3_SECRET_ACCESS_KEY: ${{ secrets.KIPNERTER_SPATIAL_S3_SECRET_ACCESS_KEY }}
+      NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+      TSIDP_ISSUER: ${{ secrets.TSIDP_ISSUER }}
+      TSIDP_CLIENT_ID: ${{ secrets.TSIDP_CLIENT_ID }}
+      TSIDP_CLIENT_SECRET: ${{ secrets.TSIDP_CLIENT_SECRET }}
+      KIPNERTER_ALLOWED_EMAILS: ${{ secrets.KIPNERTER_ALLOWED_EMAILS }}
+      KIPNERTER_ALLOWED_TSIDP_SUBJECTS: ${{ secrets.KIPNERTER_ALLOWED_TSIDP_SUBJECTS }}
+      FLEET_MONITOR_BASE_URL: ${{ secrets.FLEET_MONITOR_BASE_URL }}
+      FLEET_MONITOR_TOKEN: ${{ secrets.FLEET_MONITOR_TOKEN }}
+      KIPNERTER_GATEWAY_TOKEN: ${{ secrets.KIPNERTER_GATEWAY_TOKEN }}
+      KIPNERTER_CUTOVER_APPROVED_SHA: ${{ secrets.KIPNERTER_CUTOVER_APPROVED_SHA }}
+      KIPNERTER_DATA_RECOVERY_WITNESS_SHA: ${{ secrets.KIPNERTER_DATA_RECOVERY_WITNESS_SHA }}
+      KIPNERTER_DEPLOY_HOST: ${{ secrets.KIPNERTER_DEPLOY_HOST }}
+      KIPNERTER_DEPLOY_USER: ${{ secrets.KIPNERTER_DEPLOY_USER }}
+      PLANNED_PORTAL_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.planned_portal_sha || 'cb4a75acc1724306cd5d4f0682c0a199f64414e7' }}
+      TARGET_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'staging' }}
+    steps:
+      - name: Check out first-party preflight only
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run deny-only negative tests
+        run: python3 -m unittest scripts.tests.test_portal_deployment_readiness -v
+      - name: Report environment readiness without contacting production
+        run: |
+          python3 scripts/portal_deployment_readiness.py \
+            --environment "$TARGET_ENVIRONMENT" \
+            --planned-sha "$PLANNED_PORTAL_SHA"
