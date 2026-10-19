@@ -1,0 +1,64 @@
+name: Kipnerter 1.7 Legacy Compose Migration Baseline — Read Only
+
+on:
+  push:
+    branches: [release/17-legacy-baseline-pinned-bytes-20261019]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-17-legacy-baseline-readonly
+  cancel-in-progress: false
+
+jobs:
+  witness:
+    if: >-
+      ${{ github.repository == 'scottjoyner/kipnerter' &&
+          github.actor == github.repository_owner &&
+          contains(github.event.head_commit.message, '[ios17-legacy-baseline-readonly]') }}
+    name: Record live Compose image/volume fingerprint before any managed migration
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout reviewed metadata-only witness
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Run ten fail-closed negative control tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest scripts.tests.test_portal_legacy_baseline_readonly -v
+          python3 -m py_compile scripts/portal_legacy_baseline_readonly.py
+      - name: Join authorized first-party production Tailnet identity
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+      - name: Select uniquely tagged host and capture read-only baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="$(tailscale status --json |
+            python3 scripts/portal_deploy_target.py --environment production)"
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]]
+          tailscale ping --timeout=8s "$TARGET" >/dev/null
+          cat scripts/portal_legacy_baseline_readonly.py |
+            timeout 75 tailscale ssh "kipnerter@$TARGET" 'python3 -'
+      - name: Preserve cutover HOLD, no production mutation
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "### Live legacy Compose source/image and volume baseline"
+            echo "- Immutable image identities, Compose source hashes, live volume binding: VERIFIED"
+            echo "- Live production or database files modified: NONE"
+            echo "- Previous running Git revision: NOT independently identified"
+            echo "- Admin-independent off-host backup custody: NOT PROVEN"
+            echo "- Approved legacy migration, OIDC login and real chat: NOT PROVEN"
+            echo "- Production release cutover: NO GO"
+          } >> "$GITHUB_STEP_SUMMARY"
