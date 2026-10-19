@@ -718,3 +718,87 @@ Postgres/MinIO volume recovery plan. Verify browser login with a real
 allowlisted Tailscale user and separately rehearse database/storage rollback
 before considering a production promotion. The current `kipnerter.com/chat`
 404 remains a HOLD, not an invitation to bypass SSH or identity gates.
+
+## October 19: source-pinned deploy archive contract
+
+A release packaging audit identified another production risk: a broad directory
+`tar` over `apps/` and `spatial-api/` would include untracked build output,
+local artifacts, caches, and potentially other files beyond the reviewed
+commit. A `.env` exclusion alone was not an adequate release inventory.
+
+`python3 scripts/portal_release_bundle.py build` now produces a deterministic
+mode-0600 tar.gz **solely from Git blob objects** at the exact checked-out
+40-hex platform and spatial-backend commit SHAs. Its allowlist includes the
+platform's tracked `apps/`, `infra/`, `scripts/`, and explicit Compose files,
+plus tracked files from the separately pinned spatial-API checkout under
+`spatial-api/`. It does not traverse live checkout directories when assembling
+files and cannot include `.git`, `.env*`, `node_modules`, `.next`, untracked
+files, or worktree changes. Unsupported symlinks/submodules, invalid paths,
+missing required build inputs, oversized content or mismatched checkout heads
+cause a release HOLD.
+
+An embedded `release-provenance.json` lists each actual tar entry's relative
+path, mode, length and SHA-256 digest, as well as both commit SHAs. The bundle
+is independently verified after assembly, and the workflow **only then**
+transmits it to the approved deployment node. The deterministic archive can
+be byte-for-byte compared across builds of identical Git objects. Source
+integrity is **not** identity authorization, cryptographic publisher signing,
+a guarantee of safe in-place extraction, or rollback of Postgres/MinIO data.
+Additional server-side archive verification should be independently witnessed
+before production promotion; a passing local archive check alone does not
+meet that release gate.
+
+The workflow also validates spatial-API input as an immutable 40-digit SHA
+passed through a step environment variable rather than embedding manual
+workflow input directly into executable shell syntax. Offline fixture tests
+cover source-only composition, deterministic binary output, rejected
+uncommitted secrets and caches, tampering, invalid revision, duplicate or
+unlisted tar entries, and refusal to package tracked symlinks.
+
+**Deployment remains HOLD:** the production Tailscale SSH additional identity
+challenge is unresolved, a separately tagged staging target is not verified,
+real tsidp/OIDC browser acceptance has not occurred, and application plus
+Postgres/MinIO-volume rollback has not been successfully rehearsed. None of
+these checks were bypassed by the new packaging contract.
+
+## October 19: destination-side source integrity and private revision staging
+
+The runner-only source bundle check is no longer the sole integrity gate.
+Before touching `/opt/kipnerter`, the release workflow now:
+
+1. Builds and verifies the exact two-commit bundle **before joining the
+   tailnet**, preserving its full SHA-256 in a GitHub step output.
+2. Authenticates to the already-approved, exclusively tagged destination host
+   and uploads that bundle under its deploy user's private
+   `~/.local/state/kipnerter-release/incoming/` directory. Shell noclobber
+   refuses an existing incoming revision rather than replacing it.
+3. Sends the source-pinned Python receiver **over that authenticated SSH
+   session**. It verifies the received SHA-256 against the runner's digest,
+   checks both expected Git revisions and every manifest file, then extracts
+   each member into a new, private `.unverified-*` directory with size and
+   digest checked again during extraction. It refuses world-readable, linked,
+   unowned and repeat artifacts.
+4. Renames the complete private directory into the SHA-named `verified/`
+   revision only after all checks pass, so an incomplete extraction never
+   becomes a candidate release.
+5. For production, also requires the separate pre-upload application snapshot
+   of the currently deployed Compose files. Only after both checks does the
+   existing deployment step copy from the **verified source directory** into
+   the prepared, writable application directory. It no longer extracts an
+   unverified stdin tar stream or recursively changes ownership of `/opt`.
+
+New isolated tests exercise the precise `python3 - stage` stdin entry point,
+stream-transfer hash mismatches, private store requirements, tamper, repeat
+revision denial and workflow step-order assertions. The earlier source-only
+bundle build, deterministic manifest and failure-closed OIDC/fleet access
+checks are retained.
+
+**Known release limitation:** copying verified files into the existing Compose
+root is **not an atomic, reversible service cutover**. Old application files
+may remain, running containers/volumes are not captured by Git archive
+integrity, and a staging host must be provisioned and separately tested. This
+milestone proves a receiver-side **application file integrity gate**, not
+production rollback, signed artifacts, an authorized real OIDC login, or
+model/agent execution permission. Do not promote this draft release until
+staging, database/MinIO rollback, and production Tailscale SSH acceptance are
+all independently satisfied.
