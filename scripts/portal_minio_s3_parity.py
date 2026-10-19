@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -18,6 +20,11 @@ import time
 SOURCE="ad4cffe6e1fe6c659d97e48a96d220f2f0543c55"
 BUCKET="kipnerter-artifacts"
 IMAGE=re.compile(r"^sha256:[a-f0-9]{64}$")
+MAX_ARCHIVE = 3 * 1024 ** 3  # same bound as snapshot writer
+MAX_EXTRACT_BYTES = 3 * 1024 ** 3
+MAX_ENTRIES = 300_000
+MAX_PATH = 512
+MIN_SPARE_BYTES = 128 * 1024 ** 2
 ALIAS='MC_HOST_release="http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@127.0.0.1:9000" '
 
 def run(argv, *, env=None, timeout=25, capture=False):
@@ -67,36 +74,80 @@ def inventory(container):
     return summarize(roots,body)
 
 def backup_checked(folder):
-    r=json.loads((folder/"snapshot-receipt.json").read_text("utf-8"))
-    if r.get("schema")!=1 or r.get("source_staging_sha")!=SOURCE:
+    # This local restore rehearsal must use exactly the private one-shot
+    # archive the operator already verified, not a linked or public copy.
+    receipt = folder / "snapshot-receipt.json"
+    if (receipt.is_symlink() or not receipt.is_file() or
+            receipt.stat().st_uid != os.getuid() or receipt.stat().st_mode & 0o077
+            or receipt.stat().st_size > 65536):
+        raise ValueError("untrusted private snapshot receipt")
+    r = json.loads(receipt.read_text("utf-8"))
+    if (not isinstance(r, dict) or type(r.get("schema")) is not int or
+            r.get("schema") != 1 or r.get("source_staging_sha") != SOURCE
+            or r.get("safe_to_cutover") is not False
+            or r.get("minio_s3_level_restore_rehearsed") is not False):
         raise ValueError("wrong snapshot identity")
-    dest=folder/"minio-raw-live.tar"
-    if dest.is_symlink():
-        raise ValueError("symlinked snapshot")
-    h=hashlib.sha256()
+    dest = folder / "minio-raw-live.tar"
+    if (dest.is_symlink() or not dest.is_file() or
+            dest.stat().st_uid != os.getuid() or dest.stat().st_mode & 0o077
+            or not 0 < dest.stat().st_size <= MAX_ARCHIVE):
+        raise ValueError("untrusted private snapshot archive")
+    expected = r.get("minio_live_raw_copy_sha256")
+    if not isinstance(expected, str) or not re.fullmatch(r"[a-f0-9]{64}", expected):
+        raise ValueError("invalid snapshot digest")
+    h = hashlib.sha256()
+    size = 0
     with dest.open("rb") as stream:
-        for block in iter(lambda:stream.read(1024*1024),b""):
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            size += len(block)
+            if size > MAX_ARCHIVE:
+                raise ValueError("snapshot archive exceeds bounded size")
             h.update(block)
-    if h.hexdigest()!=r.get("minio_live_raw_copy_sha256"):
-        raise ValueError("snapshot digest drift")
+    if type(r.get("minio_copy_bytes")) is not int or size != r["minio_copy_bytes"] or h.hexdigest() != expected:
+        raise ValueError("snapshot digest or length drift")
     return dest
 
-def extract(archive,root):
-    with tarfile.open(archive,"r:") as src:
-        count=0
+
+def extract(archive, root):
+    # The private raw copy is not a trusted tar archive merely because the
+    # receipt's SHA matches it. Bound expansion before any filesystem writes.
+    if (root.is_symlink() or not root.is_dir() or any(root.iterdir())
+            or archive.is_symlink() or not archive.is_file()
+            or archive.stat().st_size > MAX_ARCHIVE):
+        raise ValueError("unsafe or nonempty scratch restore root")
+    count = 0
+    total = 0
+    names = set()
+    with tarfile.open(archive, "r:") as src:
         for member in src:
-            if (member.name.startswith("/") or "\\" in member.name or
-                ".." in member.name.split("/") or member.issym() or member.islnk()
-                or not (member.isfile() or member.isdir())):
+            name = member.name
+            parts = name.split("/")
+            if (not isinstance(name, str) or len(name) > MAX_PATH
+                    or name.startswith("/") or "\\" in name
+                    or any(part in ("", ".", "..") for part in parts)
+                    or (name != "data" and not name.startswith("data/"))
+                    or name in names or member.issym() or member.islnk()
+                    or not (member.isfile() or member.isdir())
+                    or member.size < 0):
                 raise ValueError("unsafe scratch archive")
-            count+=1
-        if count<2 or count>300000:
-            raise ValueError("invalid scratch archive length")
-        src.extractall(root,filter="data")
-    result=root/"data"
+            names.add(name)
+            count += 1
+            if count > MAX_ENTRIES:
+                raise ValueError("too many raw snapshot entries")
+            if member.isfile():
+                total += member.size
+                if total > MAX_EXTRACT_BYTES:
+                    raise ValueError("snapshot expansion exceeds bound")
+        if count < 2 or total == 0:
+            raise ValueError("invalid scratch archive contents")
+        if total + MIN_SPARE_BYTES > shutil.disk_usage(root).free:
+            raise ValueError("insufficient private scratch restore capacity")
+        src.extractall(root, filter="data")
+    result = root / "data"
     if result.is_symlink() or not result.is_dir():
         raise ValueError("missing scratch volume")
     return result
+
 
 def restored_inventory(archive,folder):
     image=run(["docker","inspect","--format","{{.Image}}",
