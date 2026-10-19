@@ -1,0 +1,63 @@
+name: Kipnerter 1.7 Prior Web and Gateway OCI Source Classification
+
+on:
+  push:
+    branches: [release/17-old-web-api-image-source-20261019]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-17-old-app-images-readonly
+  cancel-in-progress: false
+
+jobs:
+  witness:
+    if: >-
+      ${{ github.repository == 'scottjoyner/kipnerter' &&
+          github.actor == github.repository_owner &&
+          contains(github.event.head_commit.message, '[ios17-old-image-source-readonly]') }}
+    name: Identify image ref kinds and legacy Dockerfile hashes without layer access
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout reviewed no-write source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Prove seven negative controls and code syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest scripts.tests.test_portal_legacy_app_image_sources -q
+          python3 -m py_compile scripts/portal_legacy_app_image_sources.py
+      - name: Join authorized production Tailscale CI principal
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+      - name: Classify two old live containers and Dockerfile source hash only
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="$(tailscale status --json |
+            python3 scripts/portal_deploy_target.py --environment production)"
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]]
+          tailscale ping --timeout=8s "$TARGET" >/dev/null
+          cat scripts/portal_legacy_app_image_sources.py |
+            timeout 75 tailscale ssh "kipnerter@$TARGET" 'python3 -'
+      - name: Keep production release hold
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "### Existing web/API rollback source class"
+            echo "- Running OCI container image references classified without names or credentials"
+            echo "- Legacy Dockerfile hashes checked but NOT attested as running image layers"
+            echo "- Registry pull/build/commit/save/daemon or container changes: NONE"
+            echo "- Verified restorable prior executable web/API artifact: NOT PROVEN"
+            echo "- Production release: HOLD"
+          } >> "$GITHUB_STEP_SUMMARY"
