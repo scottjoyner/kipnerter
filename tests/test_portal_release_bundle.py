@@ -180,12 +180,25 @@ class SourcePinnedReleaseTests(unittest.TestCase):
             'Preserve and verify production application rollback snapshot',
             'Upload revision after verified rollback snapshot',
             'Require independent cutover and data-recovery approval',
+            'Validate and prebuild candidate before active cutover',
             'Atomically select the prepared revision and deploy',
+            'Verify deployment health',
+            'Confirm release after public and private health checks',
         )]
         self.assertEqual(events, sorted(events))
         self.assertIn('python3 - stage --platform-sha', workflow)
         self.assertIn('python3 - prepare --root /opt/kipnerter', workflow)
-        self.assertIn('python3 - switch --root /opt/kipnerter', workflow)
+        self.assertIn('python3 - promote --root /opt/kipnerter', workflow)
+        self.assertIn('python3 - confirm --root /opt/kipnerter', workflow)
+        self.assertIn('python3 - status --root /opt/kipnerter', workflow)
+        self.assertIn('if: success()', workflow)
+        self.assertIn('cd /opt/kipnerter/releases/$GITHUB_SHA && docker compose', workflow)
+        self.assertIn('up -d --no-build --remove-orphans', workflow)
+        prebuild = workflow.split('      - name: Validate and prebuild candidate before active cutover')[1].split('      - name: Atomically select the prepared revision and deploy')[0]
+        self.assertIn('build --pull', prebuild)
+        self.assertNotIn(' up -d', prebuild)
+        after_switch = workflow.split('      - name: Atomically select the prepared revision and deploy')[1].split('      - name: Verify deployment health')[0]
+        self.assertNotIn('build --pull', after_switch)
         self.assertIn('KIPNERTER_CUTOVER_APPROVED_SHA', workflow)
         self.assertIn('KIPNERTER_DATA_RECOVERY_WITNESS_SHA', workflow)
         self.assertIn('docker compose -p $PROJECT', workflow)
