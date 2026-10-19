@@ -3,7 +3,7 @@ name: Gateway 0.3.1 pinned hosted verification
 on:
   push:
     branches:
-      - ci/hosted-api-031-release-validation-20261019
+      - ci/gateway-031-clean-hosted-validation-20261019
     paths:
       - .github/workflows/api-recovery-hosted-validation.yml
   workflow_dispatch:
