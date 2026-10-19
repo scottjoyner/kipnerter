@@ -60,6 +60,7 @@ jobs:
             sleep 1
           done
           grep -q 'PRIVATE AI WORKSPACE' /tmp/kipnerter-chat.html
+          [[ $(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3012/api/auth/providers) = 503 ]]
           [[ $(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3012/api/portal/live) = 503 ]]
           [[ $(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3012/api/portal/traces) = 503 ]]
           [[ $(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3012/api/release) = 503 ]]
