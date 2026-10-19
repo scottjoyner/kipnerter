@@ -33,6 +33,8 @@ jobs:
           set -euo pipefail
           python3 -m py_compile scripts/portal_prod_restore_preflight.py
           python3 -m unittest scripts.tests.test_portal_prod_restore_preflight -v
+          python3 -m unittest scripts.tests.test_portal_prod_volume_size_probe -v
+          python3 -m py_compile scripts/portal_prod_volume_size_probe.py
       - name: Join intended authorized tagged Tailscale identity
         uses: tailscale/github-action@v4
         with:
@@ -51,6 +53,15 @@ jobs:
           # It does not read SQL rows, object keys/content, Docker env, or files.
           cat scripts/portal_prod_restore_preflight.py |
             timeout 65 tailscale ssh "kipnerter@$TARGET" 'python3 -'
+      - name: Bound read-only data-volume sizes without exporting contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="$(tailscale status --json |
+            python3 scripts/portal_deploy_target.py --environment production)"
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]]
+          cat scripts/portal_prod_volume_size_probe.py |
+            timeout 115 tailscale ssh "kipnerter@$TARGET" 'python3 -'
       - name: Record that no backup or restore has been proven
         if: success()
         shell: bash
