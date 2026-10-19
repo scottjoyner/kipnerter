@@ -20,6 +20,7 @@ jobs:
           contains(github.event.head_commit.message, '[portal-prod-ssh-readonly]') }}
     name: Qualify the intended deployment principal without changing prod
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 12
     steps:
       - name: Checkout approved deployment target selector
