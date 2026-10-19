@@ -17,6 +17,20 @@ def test_health():
     assert response.json()['status'] == 'ok'
 
 
+def test_release_requires_exact_build_identity(monkeypatch):
+    monkeypatch.delenv("KIPNERTER_RELEASE_SHA", raising=False)
+    response = client.get("/api/v1/release")
+    assert response.status_code == 503
+    sha = "b" * 40
+    monkeypatch.setenv("KIPNERTER_RELEASE_SHA", sha)
+    response = client.get("/api/v1/release")
+    assert response.status_code == 200
+    assert response.json() == {"source": "kipnerter-api", "revision": sha}
+    assert response.headers["cache-control"].startswith("no-store")
+    monkeypatch.setenv("KIPNERTER_RELEASE_SHA", "main")
+    assert client.get("/api/v1/release").status_code == 503
+
+
 def test_ready():
     response = client.get('/ready')
     assert response.status_code == 200

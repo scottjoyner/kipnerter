@@ -7,6 +7,7 @@ and production-private telemetry remain independent release gates.
 """
 import argparse
 import json
+import re
 import sys
 import time
 import urllib.error
@@ -30,16 +31,18 @@ def _fetch(url):
         return exc.code, exc.read(MAX_BYTES + 1), exc.geturl()
 
 
-def check(public_url, api_url, fetch=None):
+def check(public_url, api_url, expected_sha, fetch=None):
     """Return failure descriptions without exposing any response-body secrets."""
     fetch = fetch or _fetch
     failures = []
     expected = (
         (public_url + "/chat", 200),
         (public_url + "/api/auth/providers", 200),
+        (public_url + "/api/release", 200),
         (public_url + "/api/portal/live", 401),
         (public_url + "/api/portal/traces", 401),
         (api_url + "/health", 200),
+        (api_url + "/api/v1/release", 200),
         (api_url + "/health/live", 200),
         (api_url + "/health/ready", 200),
         (api_url + "/api/v1/control-plane/overview", 401),
@@ -55,6 +58,14 @@ def check(public_url, api_url, fetch=None):
             if code != required:
                 failures.append(f"{label}: HTTP {code}, expected {required}")
                 continue
+            if label in ("/api/release", "/api/v1/release"):
+                release = json.loads(body)
+                source = "kipnerter-web" if label == "/api/release" else "kipnerter-api"
+                if (not isinstance(release, dict) or
+                        set(release) != {"source", "revision"} or
+                        release.get("source") != source or
+                        release.get("revision") != expected_sha):
+                    failures.append(f"{label}: incorrect deployed source revision")
             if label == "/chat":
                 html = body.decode("utf-8")
                 if ("PRIVATE AI WORKSPACE" not in html or
@@ -70,7 +81,9 @@ def check(public_url, api_url, fetch=None):
     return failures
 
 
-def verify(public_url, api_url, attempts=1, interval=0, fetch=None, sleep=None):
+def verify(public_url, api_url, expected_sha, attempts=1, interval=0, fetch=None, sleep=None):
+    if not isinstance(expected_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", expected_sha):
+        raise ValueError("release attestation requires exact 40-character Git SHA")
     if attempts < 1 or interval < 0:
         raise ValueError("invalid release verification window")
     if not (public_url.startswith("https://") and api_url.startswith("https://")):
@@ -78,7 +91,7 @@ def verify(public_url, api_url, attempts=1, interval=0, fetch=None, sleep=None):
     sleep = sleep or time.sleep
     problems = ["not started"]
     for attempt in range(attempts):
-        problems = check(public_url.rstrip("/"), api_url.rstrip("/"), fetch)
+        problems = check(public_url.rstrip("/"), api_url.rstrip("/"), expected_sha, fetch)
         if not problems:
             return attempt + 1
         if attempt < attempts - 1:
@@ -90,11 +103,12 @@ if __name__ == "__main__":
     cli = argparse.ArgumentParser()
     cli.add_argument("--public-url", default="https://kipnerter.com")
     cli.add_argument("--api-url", default="https://api.kipnerter.com")
+    cli.add_argument("--expected-sha", required=True)
     cli.add_argument("--attempts", type=int, default=30)
     cli.add_argument("--interval", type=int, default=10)
     arg = cli.parse_args()
     try:
-        retries = verify(arg.public_url, arg.api_url, arg.attempts, arg.interval)
+        retries = verify(arg.public_url, arg.api_url, arg.expected_sha, arg.attempts, arg.interval)
     except (RuntimeError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)

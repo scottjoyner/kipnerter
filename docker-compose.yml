@@ -2,6 +2,8 @@ services:
   web:
     build:
       context: ./apps/web
+      args:
+        KIPNERTER_RELEASE_SHA: ${KIPNERTER_RELEASE_SHA:-}
     environment:
       KIPNERTER_ENV: ${KIPNERTER_ENV:-production}
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://api.kipnerter.com}
@@ -25,6 +27,8 @@ services:
   api:
     build:
       context: ./apps/api
+      args:
+        KIPNERTER_RELEASE_SHA: ${KIPNERTER_RELEASE_SHA:-}
     environment:
       KIPNERTER_ENV: ${KIPNERTER_ENV:-production}
       CORS_ORIGINS: ${CORS_ORIGINS:-https://kipnerter.com,https://www.kipnerter.com,https://scottjoyner.dev}
