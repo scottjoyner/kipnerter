@@ -1,0 +1,66 @@
+name: Kipnerter 1.7 Postgres MinIO Restore Readiness — GET/Metadata Only
+
+on:
+  push:
+    branches: [release/17-data-restore-inventory-readonly-20261019]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-17-production-data-readonly
+  cancel-in-progress: false
+
+jobs:
+  witness:
+    if: >-
+      ${{ github.repository == 'scottjoyner/kipnerter' &&
+          github.actor == github.repository_owner &&
+          contains(github.event.head_commit.message, '[ios17-readonly-restore-witness]') }}
+    name: Inspect existing production data mounts and backup utilities, no writes
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 12
+    steps:
+      - name: Checkout first-party metadata-only witness
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Test negative controls and source syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/portal_prod_restore_preflight.py
+          python3 -m unittest scripts.tests.test_portal_prod_restore_preflight -v
+      - name: Join intended authorized tagged Tailscale identity
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+      - name: Select unique production-tagged host and inspect metadata only
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="$(tailscale status --json |
+            python3 scripts/portal_deploy_target.py --environment production)"
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]]
+          tailscale ping --timeout=8s "$TARGET" >/dev/null
+          # The remote interpreter receives only the audited Python source.
+          # It does not read SQL rows, object keys/content, Docker env, or files.
+          cat scripts/portal_prod_restore_preflight.py |
+            timeout 65 tailscale ssh "kipnerter@$TARGET" 'python3 -'
+      - name: Record that no backup or restore has been proven
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "### Kipnerter live data restore readiness — metadata only"
+            echo ""
+            echo "- Stateful container/volume identity and backup binary support: inspected"
+            echo "- Any Postgres/MinIO backup or restore: **not executed**"
+            echo "- Independent restore evidence: **not proven**"
+            echo "- Stateful or production files and containers changed: **none**"
+            echo "- Permission for portal/API cutover: **NO GO**"
+          } >> "$GITHUB_STEP_SUMMARY"
