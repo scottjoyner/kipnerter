@@ -24,9 +24,6 @@ jobs:
           github.actor == github.repository_owner }}
     runs-on: ubuntu-latest
     timeout-minutes: 22
-    env:
-      PINNED_SOURCE_HALF_A: c6a42e0edaeedda06d37
-      PINNED_SOURCE_HALF_B: 02f2f07c82cc8bcd4d59
     steps:
       - name: Check out trusted portal CI smoke fixture
         uses: actions/checkout@v4
@@ -37,7 +34,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: scottjoyner/kipnerter-api
-          ref: ${{ format('{0}{1}', 'c6a42e0edaeedda06d37', '02f2f07c82cc8bcd4d59') }}
+          ref: c6a42e0edaeedda06d3702f2f07c82cc8bcd4d59
           path: recovery-api
           token: ${{ secrets.KIPNERTER_API_REPO_TOKEN }}
           persist-credentials: false
@@ -46,7 +43,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git -C recovery-api rev-parse HEAD)" = "$PINNED_SOURCE_HALF_A$PINNED_SOURCE_HALF_B"
+          test "$(git -C recovery-api rev-parse HEAD)" = "c6a42e0edaeedda06d3702f2f07c82cc8bcd4d59"
           test ! -e recovery-api/.git-credentials
           test ! -e recovery-api/.env
           echo "API HEAD pinned and production secrets not supplied"
