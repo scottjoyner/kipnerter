@@ -99,3 +99,20 @@ h1 { font-size: clamp(3rem, 8vw, 6.8rem); line-height: .94; letter-spacing: -.05
 .portal-warning { color:#a5b6d0; font-size:12px; margin-top:25px; }
 @media(max-width:850px) { .portal-sidebar{width:72px;padding:20px 8px;} .portal-logo{padding:0 14px 26px;} .portal-logo-text,.sidebar-caption,.nav-entry:not(.selected),.sidebar-bottom{display:none;} .nav-entry{font-size:0;justify-content:center;padding:12px;} .nav-symbol{font-size:22px;} .portal-header{padding:20px;} .portal-content{padding:34px 18px;} .header-tools .read-only{display:none;} }
 @media(max-width:560px) { .portal-sidebar{width:57px;} .stat-grid{grid-template-columns:1fr;} .integration-grid{grid-template-columns:1fr;} .panel-heading{align-items:start;flex-direction:column;} .portal-header{min-height:60px;} .portal-content{padding-top:28px;} .page-intro h1{font-size:2.5rem;} }
+
+
+/* User-owned draft composer: this is intentionally not an execution surface. */
+.chat-compose-shell { width: min(100%, 820px); margin: 0 auto; }
+.chat-compose-form { display: flex; flex-direction: column; gap: 10px; border: 1px solid #3a4965; border-radius: 16px; padding: 16px; background: #121d30; }
+.chat-compose-label { font-size: 13px; font-weight: 750; color: #d8e5ff; }
+.chat-compose-input { display: block; width: 100%; min-height: 112px; max-height: 320px; resize: vertical; background: #0b1423; color: #ecf3ff; border: 1px solid #374760; border-radius: 11px; padding: 13px; font: inherit; line-height: 1.5; }
+.chat-compose-input:focus-visible { outline: 2px solid #97b8ff; outline-offset: 2px; }
+.chat-compose-input::placeholder { color: #94a6c1; }
+.chat-compose-actions { display: flex; gap: 12px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+.chat-compose-actions button { border-radius: 9px; padding: 11px 14px; font: inherit; font-size: 13px; font-weight: 750; }
+.chat-compose-reset { margin-right: auto; color: #d6e5ff; background: #1c2a40; border: 1px solid #425471; cursor: pointer; }
+.chat-compose-reset:hover { background: #293b58; }
+.chat-compose-count { color: #a9b9d0; font-size: 12px; white-space: nowrap; }
+.chat-compose-send:disabled { border: 1px solid #344153; background: #243147; color: #aebad0; cursor: not-allowed; }
+.chat-compose-custody { color: #a5b4cd; font-size: 12px; line-height: 1.5; margin: 12px 4px 0; }
+@media (max-width: 600px) { .chat-compose-form { padding: 12px; } .chat-compose-actions { gap: 8px; } }
