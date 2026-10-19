@@ -2,22 +2,21 @@
 
 const MAX_DRAFT_CHARS = 4000;
 
-/**
- * Visible, accessible, client-only chat composition surface.
- *
- * Deliberately no transport: authenticated user-bound model admission,
- * execution receipts, and cancel/replay semantics have not been approved.
- * A draft is kept only in the parent React component's memory.
- */
-export default function ChatComposer({ draft, onDraftChange }) {
+/** No transport. Only the parent-local deterministic telemetry summarizer receives text. */
+export default function ChatComposer({ draft, onDraftChange, onSend }) {
   function discardDraft() {
     if (draft.trim() && !window.confirm("Discard this unsent message draft?")) return;
     onDraftChange("");
   }
+  function submit(event) {
+    event.preventDefault();
+    if (!draft.trim()) return;
+    onSend(draft);
+  }
 
   return <div className="chat-compose-shell">
-    <form className="chat-compose-form" onSubmit={event => event.preventDefault()}>
-      <label htmlFor="kipnerter-message-draft" className="chat-compose-label">Your message</label>
+    <form className="chat-compose-form" onSubmit={submit}>
+      <label htmlFor="kipnerter-message-draft" className="chat-compose-label">Ask about your fleet</label>
       <textarea
         id="kipnerter-message-draft"
         className="chat-compose-input"
@@ -25,24 +24,20 @@ export default function ChatComposer({ draft, onDraftChange }) {
         onChange={event => onDraftChange(event.target.value)}
         maxLength={MAX_DRAFT_CHARS}
         rows={4}
-        spellCheck
-        placeholder="Compose a message… (not sent until fleet admission is enabled)"
+        spellCheck={false}
+        placeholder="Which nodes are online? What models are reported?"
         aria-describedby="kipnerter-draft-custody"
       />
       <div className="chat-compose-actions">
-        <button type="button" className="chat-compose-reset" onClick={discardDraft}>
-          New draft
-        </button>
+        <button type="button" className="chat-compose-reset" onClick={discardDraft}>Clear draft</button>
         <span className="chat-compose-count">{draft.length} / {MAX_DRAFT_CHARS}</span>
-        <button type="submit" className="chat-compose-send" disabled
-          title="Authenticated execution and per-user model receipts are not yet approved">
-          Send unavailable
-        </button>
+        <button type="submit" className="chat-compose-send" disabled={!draft.trim()}>Ask fleet →</button>
       </div>
     </form>
     <p id="kipnerter-draft-custody" className="chat-compose-custody" role="status">
-      Draft only — never transmitted, saved to disk, or counted as a conversation.
-      Switching workspace tabs preserves this draft; closing or reloading the page clears it.
+      Questions are answered from already received authenticated read-only snapshots, not a language model.
+      Messages remain in this browser tab's memory and are not transmitted or archived.
+      Commands, execution, model routing and mutations are unavailable.
     </p>
   </div>;
 }

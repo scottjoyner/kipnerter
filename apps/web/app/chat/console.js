@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import ChatComposer from "./ChatComposer";
+import { answerFleetQuestion } from "../../lib/fleet-chat.mjs";
 import { snapshotExpired, canApplyPoll } from "../../lib/telemetry-freshness.mjs";
 
 const SECTIONS = [
@@ -27,6 +28,7 @@ function Empty({ title, detail }) {
 export default function FleetConsole({ email }) {
   const [tab, setTab] = useState("chat");
   const [chatDraft, setChatDraft] = useState("");
+  const [chatHistory, setChatHistory] = useState([]);
   const [data, setData] = useState({});
   const [errors, setErrors] = useState({});
   const [updated, setUpdated] = useState(null);
@@ -103,6 +105,15 @@ export default function FleetConsole({ email }) {
   const traces = data.traces?.traces || [];
   const sessions = data.sessions?.sessions || [];
   const healthy = integrations.filter(s => s.status === "healthy").length;
+  function askFleet(question) {
+    const reply = answerFleetQuestion(question, data, {
+      fresh: Boolean(updated) && !["stale", "unavailable", "reconnecting"].includes(connection),
+      observedAt: updated || "",
+    });
+    setChatHistory(previous => [...previous, { role: "question", text: question },
+      { role: "answer", text: reply }].slice(-16));
+    setChatDraft("");
+  }
   // These are observations from distinct systems, not a cryptographic trace join.
   const timeline = [
     ...traces.map(trace => ({
@@ -142,16 +153,22 @@ export default function FleetConsole({ email }) {
         {tab === "chat" && <>
           <div className="page-intro"><p className="section-kicker">YOUR AI WORKSPACE</p>
             <h1>One fleet. One interface<span className="accent">.</span></h1>
-            <p>Route conversations and inspect agents across your private compute infrastructure.</p></div>
+            <p>Ask read-only questions about your private fleet. Model routing and command execution require separate approval.</p></div>
           <div className="stat-grid">
             <div className="stat-card"><span>Service probes</span><strong>{healthy}<small> / {integrations.length || 6}</small></strong><p>Healthy integrations</p></div>
             <div className="stat-card"><span>Reported models</span><strong>{models.length}</strong><p>Catalog entries; admission unverified</p></div>
             <div className="stat-card"><span>Fleet inventory</span><strong>{nodes.length}</strong><p>Tailscale presence verified only by the private observer</p></div>
           </div>
           <section className="workspace-panel chat-workspace">
-            <div className="panel-heading"><div><h2>New conversation</h2><p>Model routing is held until authenticated admission and receipt validation are connected.</p></div><Badge status="not_configured" /></div>
-            <div className="chat-welcome"><div className="chat-mark">✳</div><h3>What should we work on?</h3><p>Auto-AssistX, Sophia, Hermes, and OpenCode will share one conversation history and trace lineage.</p></div>
-            <ChatComposer draft={chatDraft} onDraftChange={setChatDraft} />
+            <div className="panel-heading"><div><h2>Read-only fleet chat</h2><p>Ask about authenticated telemetry. Model routing and execution remain disabled.</p></div><Badge status="read_only" /></div>
+            <div className="chat-welcome"><div className="chat-mark">✳</div><h3>Ask your fleet</h3><p>Try: Which nodes are online? What models are reported? Show Hermes sessions or historical AssistX traces.</p></div>
+            <div className="fleet-chat-history" role="log" aria-label="Read-only fleet questions" aria-live="polite">
+              {chatHistory.map((item, index) => <div className={"fleet-chat-message " + item.role} key={index}>
+                <strong>{item.role === "question" ? "You" : "Fleet telemetry"}</strong>
+                <p>{item.text}</p>
+              </div>)}
+            </div>
+            <ChatComposer draft={chatDraft} onDraftChange={setChatDraft} onSend={askFleet} />
           </section>
         </>}
         {tab === "agents" && <>
