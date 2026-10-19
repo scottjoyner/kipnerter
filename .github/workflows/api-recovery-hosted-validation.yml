@@ -1,0 +1,91 @@
+name: Gateway 0.3.1 pinned hosted verification
+
+on:
+  push:
+    branches:
+      - ci/gateway031-scan-clean-final-20261019
+    paths:
+      - .github/workflows/api-recovery-hosted-validation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pinned-kipnerter-gateway-recovery-031
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    # Exact first-party owner-scoped source. This workflow deliberately has no
+    # deployment environment, Tailnet credentials, gateway tokens or prod SSH.
+    if: >-
+      ${{ github.repository == 'scottjoyner/kipnerter' &&
+          github.actor == github.repository_owner }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    steps:
+      # Both workflow and smoke fixture exist at this full branch head.
+      - name: Check out trusted portal CI smoke fixture
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Checkout immutable gateway candidate
+        uses: actions/checkout@v4
+        with:
+          repository: scottjoyner/kipnerter-api
+          ref: c6a42e0edaeedda06d3702f2f07c82cc8bcd4d59
+          path: recovery-api
+          token: ${{ secrets.KIPNERTER_API_REPO_TOKEN }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Prove exact recovery revision and no credential persistence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C recovery-api rev-parse HEAD)" = "c6a42e0edaeedda06d3702f2f07c82cc8bcd4d59"
+          test ! -e recovery-api/.git-credentials
+          test ! -e recovery-api/.env
+          echo "API HEAD pinned and production secrets not supplied"
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: recovery-api/pyproject.toml
+      - name: Source compilation and isolated test suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/recovery-031-env"
+          source "$RUNNER_TEMP/recovery-031-env/bin/activate"
+          python -m pip install -e './recovery-api[test]'
+          cd recovery-api
+          python -m compileall -q app tests scripts
+          python -m pytest -q tests
+          python -m pip check
+      - name: Read-only live public gateway method/path compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          source "$RUNNER_TEMP/recovery-031-env/bin/activate"
+          cd recovery-api
+          python scripts/verify_gateway_release_surface.py
+      - name: Build isolated release candidate image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull=false --tag kipnerter-api:verified-031 recovery-api
+      - name: Isolated API ASGI/image contract (no network or production credentials)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network none --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+            --tmpfs /data:rw,noexec,nosuid,size=16m \
+            --mount type=bind,src="$PWD/scripts/portal_api_container_smoke.py",dst=/opt/container-smoke.py,readonly \
+            -e KIPNERTER_LOCATION_HMAC_SECRET="$(python3 -c 'import secrets; print(secrets.token_hex(32))')" \
+            -e KIPNERTER_GATEWAY_BEARER_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')" \
+            -e KIPNERTER_ENVIRONMENT=staging \
+            kipnerter-api:verified-031 python3 /opt/container-smoke.py
