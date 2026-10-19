@@ -40,8 +40,8 @@ jobs:
           set -euo pipefail
           TARGET="$(tailscale status --json |
             python3 scripts/portal_deploy_target.py --environment production)"
-          [[ "$TARGET" =~ ^100\\.[0-9]+\\.[0-9]+\\.[0-9]+$ ]]
-          printf '%s\\n' "$TARGET" > "$RUNNER_TEMP/qualified-production-target"
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]]
+          printf '%s' "$TARGET" > "$RUNNER_TEMP/qualified-production-target"
           chmod 600 "$RUNNER_TEMP/qualified-production-target"
           echo "unique-production-tagged-target=yes"
       - name: Prove CI principal read-only SSH to managed server
