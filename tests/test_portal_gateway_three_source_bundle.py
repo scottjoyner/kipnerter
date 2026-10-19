@@ -79,7 +79,7 @@ class ThreeSourceBundleTests(unittest.TestCase):
             older=subprocess.check_output(["git","-C",str(a),"rev-parse","HEAD^"],text=True).strip()
             subprocess.run(["git","-C",str(a),"checkout","--detach",older],check=True,
                            capture_output=True)
-            with self.assertRaisesRegex(ValueError,"compose.gateway-031.yml"):
+            with self.assertRaisesRegex(ValueError,"missing required tracked release input"):
                 build(a,b,older,s,root/"missing.tar.gz",g,h)
 
     def test_gateway_revision_drift_refused_before_bundle(self):
