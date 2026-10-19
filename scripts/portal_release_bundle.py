@@ -272,6 +272,17 @@ def stage_verified(archive, platform_sha, spatial_sha, archive_sha256, revisions
                 path.chmod(record['mode'])
         if file_digest() != archive_sha256:
             raise ValueError("incoming archive changed during preparation")
+        # Receipt remains inside the private, verified source directory.
+        # A later cutover script can independently rehash the staged files,
+        # instead of trusting a bare directory name or unsourced checkout.
+        receipt = {"platform_sha": platform_sha, "spatial_api_sha": spatial_sha,
+                   "archive_sha256": archive_sha256, "files": manifest["files"]}
+        receipt_path = scratch / ".portal-staged.json"
+        with receipt_path.open("x", encoding="utf-8") as stream:
+            stream.write(json.dumps(receipt, separators=(",", ":"), sort_keys=True) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        receipt_path.chmod(0o600)
         # A complete, immutable-named directory becomes visible only after
         # every tracked file matches the provenance manifest.
         os.rename(scratch, dest)
