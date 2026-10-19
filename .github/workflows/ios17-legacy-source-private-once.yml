@@ -1,0 +1,80 @@
+name: Kipnerter 1.7 Private Legacy Web API Source Preservation
+
+on:
+  push:
+    branches: [release/17-old-app-source-private-preserve-20261019]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-17-private-legacy-source-backup-once
+  cancel-in-progress: false
+
+jobs:
+  preserve:
+    if: >-
+      ${{ github.repository == 'scottjoyner/kipnerter' &&
+          github.actor == github.repository_owner &&
+          contains(github.event.head_commit.message, '[ios17-legacy-source-copy-once]') }}
+    name: Preserve old app build source privately without accessing secret env
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - name: Checkout bounded source-preservation script
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Run six no-write and confidentiality regression controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest scripts.tests.test_portal_legacy_source_preserve_once -q
+          python3 -m py_compile scripts/portal_legacy_source_preserve_once.py
+      - name: Join restricted production Tailscale CI principal
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+      - name: Select unique production-tagged source custodian
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="$(tailscale status --json |
+            python3 scripts/portal_deploy_target.py --environment production)"
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]]
+          tailscale ping --timeout=8s "$TARGET" >/dev/null
+          tailscale ssh "kipnerter@$TARGET" \
+            'set -eu; test "$(id -un)" = kipnerter;
+             test -d /opt/kipnerter/apps/api;
+             test -d /opt/kipnerter/apps/web;
+             test -d /home/kipnerter/.local/state/kipnerter-release/state-backups'
+          echo "address=$TARGET" >> "$GITHUB_OUTPUT"
+      - name: Create one private non-overwriting source-only rollback archive
+        env:
+          TARGET: ${{ steps.target.outputs.address }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]]
+          # The only write is a new source tar and receipt in the owner's
+          # private existing backups directory. NO Docker, service or DB writes.
+          cat scripts/portal_legacy_source_preserve_once.py |
+            timeout 200 tailscale ssh "kipnerter@$TARGET" 'python3 -'
+      - name: Keep OCI equivalence and production cutover on HOLD
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "### Existing web/API source preservation"
+            echo "- Source-only private tar and digest receipt: saved"
+            echo "- Production .env, keys, DB records and MinIO payloads: excluded"
+            echo "- Docker images built, saved, committed or containers restarted: NONE"
+            echo "- Exact old image layer equivalence: NOT PROVEN"
+            echo "- Independent backup custodian: NOT PROVEN"
+            echo "- Public portal/API cutover: HOLD"
+          } >> "$GITHUB_STEP_SUMMARY"
