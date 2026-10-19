@@ -760,3 +760,45 @@ challenge is unresolved, a separately tagged staging target is not verified,
 real tsidp/OIDC browser acceptance has not occurred, and application plus
 Postgres/MinIO-volume rollback has not been successfully rehearsed. None of
 these checks were bypassed by the new packaging contract.
+
+## October 19: destination-side source integrity and private revision staging
+
+The runner-only source bundle check is no longer the sole integrity gate.
+Before touching `/opt/kipnerter`, the release workflow now:
+
+1. Builds and verifies the exact two-commit bundle **before joining the
+   tailnet**, preserving its full SHA-256 in a GitHub step output.
+2. Authenticates to the already-approved, exclusively tagged destination host
+   and uploads that bundle under its deploy user's private
+   `~/.local/state/kipnerter-release/incoming/` directory. Shell noclobber
+   refuses an existing incoming revision rather than replacing it.
+3. Sends the source-pinned Python receiver **over that authenticated SSH
+   session**. It verifies the received SHA-256 against the runner's digest,
+   checks both expected Git revisions and every manifest file, then extracts
+   each member into a new, private `.unverified-*` directory with size and
+   digest checked again during extraction. It refuses world-readable, linked,
+   unowned and repeat artifacts.
+4. Renames the complete private directory into the SHA-named `verified/`
+   revision only after all checks pass, so an incomplete extraction never
+   becomes a candidate release.
+5. For production, also requires the separate pre-upload application snapshot
+   of the currently deployed Compose files. Only after both checks does the
+   existing deployment step copy from the **verified source directory** into
+   the prepared, writable application directory. It no longer extracts an
+   unverified stdin tar stream or recursively changes ownership of `/opt`.
+
+New isolated tests exercise the precise `python3 - stage` stdin entry point,
+stream-transfer hash mismatches, private store requirements, tamper, repeat
+revision denial and workflow step-order assertions. The earlier source-only
+bundle build, deterministic manifest and failure-closed OIDC/fleet access
+checks are retained.
+
+**Known release limitation:** copying verified files into the existing Compose
+root is **not an atomic, reversible service cutover**. Old application files
+may remain, running containers/volumes are not captured by Git archive
+integrity, and a staging host must be provisioned and separately tested. This
+milestone proves a receiver-side **application file integrity gate**, not
+production rollback, signed artifacts, an authorized real OIDC login, or
+model/agent execution permission. Do not promote this draft release until
+staging, database/MinIO rollback, and production Tailscale SSH acceptance are
+all independently satisfied.

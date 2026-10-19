@@ -14,6 +14,8 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -211,20 +213,97 @@ def verify(archive, platform_sha, spatial_sha):
     return provenance
 
 
+def stage_verified(archive, platform_sha, spatial_sha, archive_sha256, revisions_root):
+    """Verify the transferred bytes and materialize a *new* private release.
+
+    No current-release symlinks, live Compose directory, database or service
+    files are modified here. Staging cannot promote a release by itself.
+    """
+    if not SHA64.fullmatch(archive_sha256):
+        raise ValueError("transferred bundle hash must be a full SHA-256")
+    archive = Path(archive)
+    if archive.is_symlink() or not archive.is_file():
+        raise ValueError("incoming archive is not a regular file")
+    if archive.stat().st_uid != os.getuid() or archive.stat().st_mode & 0o077:
+        raise ValueError("incoming bundle must be owned privately")
+    def file_digest():
+        h = hashlib.sha256()
+        with archive.open('rb') as fd:
+            for part in iter(lambda: fd.read(1024 * 1024), b''):
+                h.update(part)
+        return h.hexdigest()
+    if file_digest() != archive_sha256:
+        raise ValueError("transferred bundle checksum differs from approved CI artifact")
+    manifest = verify(archive, platform_sha, spatial_sha)
+    root = Path(revisions_root).absolute()
+    if root.is_symlink() or (root.exists() and not root.is_dir()):
+        raise ValueError("untrusted revision store")
+    root.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if (root.resolve() != root or root.stat().st_uid != os.getuid() or
+            root.stat().st_mode & 0o077):
+        raise ValueError("revision directory not privately owned")
+    dest = root / platform_sha
+    if dest.exists() or dest.is_symlink():
+        raise ValueError("release revision already exists; cannot overwrite")
+    scratch = Path(tempfile.mkdtemp(prefix='.unverified-', dir=root))
+    try:
+        expected = {row['path']: row for row in manifest['files']}
+        with tarfile.open(archive, 'r:gz') as source:
+            for member in source:
+                if member.name == MANIFEST:
+                    continue
+                record = expected[member.name]  # verified schema
+                path = scratch.joinpath(*PurePosixPath(member.name).parts)
+                path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                with path.open('xb') as destfile, source.extractfile(member) as blob:
+                    hasher = hashlib.sha256()
+                    size = 0
+                    for part in iter(lambda: blob.read(1024 * 1024), b''):
+                        size += len(part)
+                        if size > MAX_FILE:
+                            raise ValueError("decompressed file exceeds bound")
+                        hasher.update(part)
+                        destfile.write(part)
+                    destfile.flush()
+                    os.fsync(destfile.fileno())
+                if (size != record['bytes'] or
+                        hasher.hexdigest() != record['sha256']):
+                    raise ValueError("bundle changed during extraction")
+                path.chmod(record['mode'])
+        if file_digest() != archive_sha256:
+            raise ValueError("incoming archive changed during preparation")
+        # A complete, immutable-named directory becomes visible only after
+        # every tracked file matches the provenance manifest.
+        os.rename(scratch, dest)
+        return dest
+    finally:
+        if scratch.exists():
+            shutil.rmtree(scratch)
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('operation', choices=['build', 'verify'])
+    parser.add_argument('operation', choices=['build', 'verify', 'stage'])
     parser.add_argument('--platform-root', default='.')
     parser.add_argument('--spatial-root', default='spatial-api')
     parser.add_argument('--platform-sha', required=True)
     parser.add_argument('--spatial-sha', required=True)
     parser.add_argument('--archive', required=True)
+    parser.add_argument('--archive-sha256', default='')
+    parser.add_argument('--revisions-root', default='')
     args = parser.parse_args()
     try:
         if args.operation == 'build':
             value = build(args.platform_root, args.spatial_root, args.platform_sha, args.spatial_sha, args.archive)
-        else:
+        elif args.operation == 'verify':
             value = verify(args.archive, args.platform_sha, args.spatial_sha)
+        else:
+            if not args.revisions_root:
+                raise ValueError("private revision store required")
+            prepared = stage_verified(args.archive, args.platform_sha, args.spatial_sha,
+                                      args.archive_sha256, args.revisions_root)
+            print("Transferred release independently verified and prepared: " + prepared.name)
+            return
         print('Release bundle verified: file_count=' + str(len(value['files'])))
     except (OSError, ValueError, subprocess.SubprocessError, UnicodeError, tarfile.TarError, KeyError, TypeError) as exc:
         raise SystemExit('RELEASE HOLD: source-pinned bundle rejected: ' + str(exc)) from None

@@ -8,7 +8,7 @@ import tarfile
 import tempfile
 import unittest
 
-from scripts.portal_release_bundle import build, verify
+from scripts.portal_release_bundle import build, verify, stage_verified
 
 
 def run_git(repo, *args):
@@ -92,6 +92,97 @@ class SourcePinnedReleaseTests(unittest.TestCase):
                 stream.write(b'corrupted archive bytes')
             with self.assertRaisesRegex(ValueError, 'trailing gzip'):
                 verify(output, p, s)
+
+    def test_receiving_host_checks_exact_archive_before_staging(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            platform, spatial, p, s = self.make_fixture(root)
+            bundle = root / 'approved.tgz'
+            build(platform, spatial, p, s, bundle)
+            digest = hashlib.sha256(bundle.read_bytes()).hexdigest()
+            revision_store = root / 'private-verified'
+            prepared = stage_verified(bundle, p, s, digest, revision_store)
+            self.assertEqual(prepared.name, p)
+            self.assertEqual((prepared/'apps/web/app/page.js').read_text(),
+                             'export default function Page() {}\n')
+            self.assertTrue((prepared/'spatial-api/Dockerfile').exists())
+            self.assertEqual(revision_store.stat().st_mode & 0o077, 0)
+            with self.assertRaisesRegex(ValueError, 'already exists'):
+                stage_verified(bundle, p, s, digest, revision_store)
+            self.assertEqual(len(list(revision_store.iterdir())), 1)
+
+    def test_receiving_host_rejects_wrong_hash_and_tampering_without_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            platform, spatial, p, s = self.make_fixture(root)
+            bundle = root / 'approved.tgz'
+            build(platform, spatial, p, s, bundle)
+            digest = hashlib.sha256(bundle.read_bytes()).hexdigest()
+            prepared = root / 'private-verified'
+            with self.assertRaisesRegex(ValueError, 'checksum differs'):
+                stage_verified(bundle, p, s, 'f'*64, prepared)
+            self.assertFalse(prepared.exists())
+            with bundle.open('ab') as fd: fd.write(b'unreviewed bytes')
+            with self.assertRaisesRegex(ValueError, 'checksum differs'):
+                stage_verified(bundle, p, s, digest, prepared)
+            self.assertFalse(prepared.exists())
+
+    def test_receiving_host_rejects_world_readable_and_symlinked_store(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            platform, spatial, p, s = self.make_fixture(root)
+            bundle = root / 'approved.tgz'
+            build(platform, spatial, p, s, bundle)
+            digest = hashlib.sha256(bundle.read_bytes()).hexdigest()
+            bundle.chmod(0o644)
+            with self.assertRaisesRegex(ValueError, 'owned privately'):
+                stage_verified(bundle, p, s, digest, root/'private')
+            bundle.chmod(0o600)
+            outsider = root/'untrusted'
+            outsider.mkdir()
+            (root/'alias').symlink_to(outsider, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, 'untrusted revision store'):
+                stage_verified(bundle, p, s, digest, root/'alias')
+
+    def test_remote_stdin_verifier_stages_only_exact_bytes(self):
+        import sys
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            platform, spatial, platform_sha, spatial_sha = self.make_fixture(root)
+            incoming = root/'incoming.tgz'
+            build(platform, spatial, platform_sha, spatial_sha, incoming)
+            digest = hashlib.sha256(incoming.read_bytes()).hexdigest()
+            source = (Path(__file__).resolve().parents[1] /
+                      'scripts/portal_release_bundle.py').read_text()
+            arguments = [sys.executable, '-', 'stage', '--platform-sha', platform_sha,
+                         '--spatial-sha', spatial_sha, '--archive', str(incoming),
+                         '--archive-sha256', digest, '--revisions-root', str(root/'verified')]
+            result = subprocess.run(arguments, input=source, capture_output=True,
+                                    text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('independently verified', result.stdout)
+            self.assertTrue((root/'verified'/platform_sha/'spatial-api/Dockerfile').is_file())
+            second = subprocess.run(arguments, input=source, capture_output=True,
+                                    text=True, timeout=10)
+            self.assertNotEqual(second.returncode, 0)
+            self.assertIn('cannot overwrite', second.stderr)
+
+    def test_deploy_workflow_gates_promotion_after_receiver_verification(self):
+        workflow = (Path(__file__).resolve().parents[1] /
+                    '.github/workflows/deploy.yml').read_text()
+        events = [workflow.index(text) for text in (
+            'Build immutable source bundle before tailnet access',
+            'Resolve deployment target',
+            'Receive and verify bundle on the actual destination',
+            'Preserve and verify production application rollback snapshot',
+            'Upload revision after verified rollback snapshot',
+            'Build and deploy',
+        )]
+        self.assertEqual(events, sorted(events))
+        self.assertIn('python3 - stage --platform-sha', workflow)
+        self.assertIn('cp -a $VERIFIED/. /opt/kipnerter/', workflow)
+        self.assertNotIn('tar -xzf - -C /opt/kipnerter', workflow)
+        self.assertNotIn('sudo chown -R', workflow)
 
     def test_tracked_symlinks_and_submodules_denied(self):
         with tempfile.TemporaryDirectory() as tmp:

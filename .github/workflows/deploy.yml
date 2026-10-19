@@ -50,6 +50,22 @@ jobs:
           ACTUAL="$(git -C spatial-api rev-parse HEAD)"
           [[ "$ACTUAL" == "$SPATIAL_SHA" ]] || { echo "::error::Spatial checkout does not match exact selected SHA"; exit 1; }
 
+      - name: Build immutable source bundle before tailnet access
+        id: bundle
+        env:
+          SPATIAL_SHA: ${{ inputs.spatial_api_ref }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ && "$SPATIAL_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          python3 scripts/portal_release_bundle.py build \
+            --platform-root . --spatial-root spatial-api \
+            --platform-sha "$GITHUB_SHA" --spatial-sha "$SPATIAL_SHA" \
+            --archive /tmp/kipnerter.tgz
+          python3 scripts/portal_release_bundle.py verify \
+            --platform-sha "$GITHUB_SHA" --spatial-sha "$SPATIAL_SHA" \
+            --archive /tmp/kipnerter.tgz
+          printf 'sha256=%s\n' "$(sha256sum /tmp/kipnerter.tgz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
       - name: Join tailnet
         uses: tailscale/github-action@v4
         with:
@@ -130,6 +146,28 @@ jobs:
           [[ "$DB_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ ]] || { echo "::error::KIPNERTER_SPATIAL_DB_PASSWORD must use URL-safe characters"; exit 1; }
           [[ ${#S3_SECRET} -ge 32 ]] || { echo "::error::KIPNERTER_SPATIAL_S3_SECRET_ACCESS_KEY must be at least 32 characters"; exit 1; }
 
+      - name: Receive and verify bundle on the actual destination
+        env:
+          TARGET: ${{ steps.target.outputs.host }}
+          DEPLOY_USER: ${{ steps.target.outputs.user }}
+          SPATIAL_SHA: ${{ inputs.spatial_api_ref }}
+          EXPECTED_SHA256: ${{ steps.bundle.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ && "$SPATIAL_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          [[ "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]] || exit 1
+          [[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ && "$DEPLOY_USER" != root ]] || exit 1
+          # Incoming bytes and staged files stay in a private per-user store,
+          # separate from /opt/kipnerter, existing volumes and live services.
+          STORE="/home/$DEPLOY_USER/.local/state/kipnerter-release"
+          BUNDLE="$STORE/incoming/$GITHUB_SHA.tgz"
+          tailscale ssh "$DEPLOY_USER@$TARGET" \
+            "umask 077; set -C; mkdir -p $STORE/incoming; cat > $BUNDLE" < /tmp/kipnerter.tgz
+          # Stream the exact reviewed verifier source over authenticated SSH.
+          # No Python dependency or Git checkout is required on the target.
+          cat scripts/portal_release_bundle.py | tailscale ssh "$DEPLOY_USER@$TARGET" \
+            "python3 - stage --platform-sha $GITHUB_SHA --spatial-sha $SPATIAL_SHA --archive $BUNDLE --archive-sha256 $EXPECTED_SHA256 --revisions-root $STORE/verified"
+
       - name: Preserve and verify production application rollback snapshot
         if: inputs.environment == 'production'
         env:
@@ -173,22 +211,19 @@ jobs:
           SPATIAL_S3_SECRET_ACCESS_KEY: ${{ secrets.KIPNERTER_SPATIAL_S3_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
-          # Exclude private local env files; GitHub environment secrets are
-          # assembled separately on the approved target, never archived.
+          # This mutation is reachable ONLY after the receiving host has
+          # independently verified and staged the exact source bundle.
+          # It still requires external Compose/data rollback authorization.
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          [[ "$USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ && "$USER" != root ]] || exit 1
+          VERIFIED="/home/$USER/.local/state/kipnerter-release/verified/$GITHUB_SHA"
           trap 'rm -f /tmp/kipnerter.env /tmp/kipnerter.tgz' EXIT
-          # Package only build inputs; neither Git history, local secrets,
-          # browser caches, untrusted files nor CI runner artifacts are shipped.
-          # Exactly the reviewed blobs from each checked-out commit; do not
-          # archive dirty worktrees, ignored packages or runner caches.
-          python3 scripts/portal_release_bundle.py build \
-            --platform-root . --spatial-root spatial-api \
-            --platform-sha "$GITHUB_SHA" --spatial-sha "$SPATIAL_SHA" \
-            --archive /tmp/kipnerter.tgz
-          python3 scripts/portal_release_bundle.py verify \
-            --platform-sha "$GITHUB_SHA" --spatial-sha "$SPATIAL_SHA" \
-            --archive /tmp/kipnerter.tgz
-          tailscale ssh "$USER@$TARGET" 'sudo mkdir -p /opt/kipnerter && sudo chown -R '"$USER:$USER"' /opt/kipnerter'
-          cat /tmp/kipnerter.tgz | tailscale ssh "$USER@$TARGET" 'tar -xzf - -C /opt/kipnerter'
+          # Refuse unknown, symlinked, or operator-unowned release roots.
+          # Do not recursively chown the running application on deployment.
+          tailscale ssh "$USER@$TARGET" \
+            "test -d /opt/kipnerter && test ! -L /opt/kipnerter && test -w /opt/kipnerter && test -f $VERIFIED/docker-compose.yml && test -f $VERIFIED/apps/web/Dockerfile"
+          tailscale ssh "$USER@$TARGET" \
+            "cp -a $VERIFIED/. /opt/kipnerter/"
           if [ "$ENVIRONMENT" = production ]; then
             AUTH_ORIGIN=https://kipnerter.com
             API_ORIGIN=https://api.kipnerter.com
