@@ -109,5 +109,45 @@ class ThreeSourceBundleTests(unittest.TestCase):
                 stage_verified(bundle,p,s,digest,target,gateway_sha=h)
 
 
+    def test_managed_prepare_accepts_exact_gateway_runtime_sha_only(self):
+        from scripts.portal_atomic_release import prepare, inspect
+        from tests.test_portal_atomic_release import managed, OLD
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            a,b,g,p,spatial_sha,gateway_sha=self.fixture(root)
+            archive=root/"v2.tgz"
+            build(a,b,p,spatial_sha,archive,g,gateway_sha)
+            extracted=stage_verified(archive,p,spatial_sha,
+                                     hashlib.sha256(archive.read_bytes()).hexdigest(),
+                                     root/"verified",gateway_sha=gateway_sha)
+            layout=managed(root/"managed")
+            env=root/"candidate.env"
+            env.write_text("KIPNERTER_GATEWAY_SOURCE_SHA="+gateway_sha+"\\n")
+            env.chmod(0o600)
+            ready=prepare(layout,extracted,env,p)
+            self.assertTrue((ready/"gateway-api/Dockerfile").is_file())
+            self.assertEqual(inspect(layout),OLD)
+
+    def test_managed_prepare_rejects_runtime_sha_mismatch_without_changes(self):
+        from scripts.portal_atomic_release import prepare, inspect
+        from tests.test_portal_atomic_release import managed, OLD
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            a,b,g,p,spatial_sha,gateway_sha=self.fixture(root)
+            archive=root/"v2.tgz"
+            build(a,b,p,spatial_sha,archive,g,gateway_sha)
+            extracted=stage_verified(archive,p,spatial_sha,
+                                     hashlib.sha256(archive.read_bytes()).hexdigest(),
+                                     root/"verified",gateway_sha=gateway_sha)
+            layout=managed(root/"managed")
+            env=root/"candidate.env"
+            env.write_text("KIPNERTER_GATEWAY_SOURCE_SHA="+("c"*40)+"\\n")
+            env.chmod(0o600)
+            with self.assertRaisesRegex(ValueError,"gateway runtime Git SHA"):
+                prepare(layout,extracted,env,p)
+            self.assertFalse((layout/"releases"/p).exists())
+            self.assertEqual(inspect(layout),OLD)
+
+
 if __name__=="__main__":
     unittest.main()
