@@ -73,31 +73,15 @@ jobs:
         run: |
           set -euo pipefail
           docker build --pull=false --tag kipnerter-api:verified-031 recovery-api
-      - name: Check container boot, auth denial and readiness without network
+      - name: Isolated API ASGI/image contract (no network or production credentials)
         shell: bash
         run: |
           set -euo pipefail
           docker run --rm --network none --read-only \
             --tmpfs /tmp:rw,noexec,nosuid,size=16m \
             --tmpfs /data:rw,noexec,nosuid,size=16m \
+            --mount type=bind,src="$PWD/scripts/portal_api_container_smoke.py",dst=/opt/container-smoke.py,readonly \
             -e KIPNERTER_LOCATION_HMAC_SECRET=SYNTHETIC_GATEWAY_TEST_HMAC_KEY_123456789012345678 \
             -e KIPNERTER_GATEWAY_BEARER_TOKEN=SYNTHETIC_GATEWAY_TEST_BEARER_123456789012345678 \
             -e KIPNERTER_ENVIRONMENT=staging \
-            kipnerter-api:verified-031 \
-            sh -c 'set -eu; uvicorn app.main:app --host 127.0.0.1 --port 8080 --no-access-log >/tmp/api.log 2>&1 & pid=$!; trap "kill $pid 2>/dev/null || true" EXIT; python3 - <<\x27PY\x27
-import time,urllib.request,urllib.error,json
-base="http://127.0.0.1:8080"
-for _ in range(60):
- try:
-  urllib.request.urlopen(base+"/ready",timeout=1)
-  break
- except Exception:
-  time.sleep(.2)
-checks=[("/health",200),("/ready",200),("/version",200),("/api/v1",200),("/api/v1/models",200),("/metrics",401),("/api/v1/gateway/lmstudio/v1/models",401)]
-for path,expected in checks:
- try:
-  with urllib.request.urlopen(base+path,timeout=3) as response: actual=response.status
- except urllib.error.HTTPError as err: actual=err.code
- assert actual==expected,(path,actual,expected)
-print("isolated_container_preflight=7/7; production_not_mutated=true")
-PY'
+            kipnerter-api:verified-031 python3 /opt/container-smoke.py
