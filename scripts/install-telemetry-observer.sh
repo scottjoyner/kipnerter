@@ -22,6 +22,8 @@ install -m 0600 "$ROOT/apps/api/app/tailnet_observer.py" "$DEST/app/"
 install -m 0600 "$ROOT/apps/api/app/trace_snapshot_observer.py" "$DEST/app/"
 install -m 0600 "$ROOT/apps/api/app/assistx_fleet_observer.py" "$DEST/app/"
 install -m 0600 "$ROOT/apps/api/app/runtime_catalog_observer.py" "$DEST/app/"
+install -m 0600 "$ROOT/apps/api/app/fleet_runtime_observer.py" "$DEST/app/"
+install -m 0700 "$ROOT/scripts/refresh_fleet_runtime_snapshot.py" "$DEST/"
 install -m 0700 "$ROOT/scripts/refresh_assistx_fleet_snapshot.py" "$DEST/"
 install -m 0700 "$ROOT/scripts/refresh_assistx_trace_snapshot.py" "$DEST/"
 [[ ! -L "$DEST/app/__init__.py" ]] || { echo "symlinked package initializer denied"; exit 1; }
@@ -44,6 +46,8 @@ install -m 0644 "$ROOT/infra/systemd/kipnerter-trace-publisher.service" "$UNIT_D
 install -m 0644 "$ROOT/infra/systemd/kipnerter-trace-publisher.timer" "$UNIT_DIR/"
 install -m 0644 "$ROOT/infra/systemd/kipnerter-fleet-publisher.service" "$UNIT_DIR/"
 install -m 0644 "$ROOT/infra/systemd/kipnerter-fleet-publisher.timer" "$UNIT_DIR/"
+install -m 0644 "$ROOT/infra/systemd/kipnerter-runtime-publisher.service" "$UNIT_DIR/"
+install -m 0644 "$ROOT/infra/systemd/kipnerter-runtime-publisher.timer" "$UNIT_DIR/"
 systemctl --user daemon-reload
 systemctl --user enable --now "$SERVICE"
 # One-shot snapshot publisher runs separately and is NEVER callable over HTTP.
@@ -53,6 +57,8 @@ systemctl --user enable --now kipnerter-trace-publisher.timer
 systemctl --user start kipnerter-trace-publisher.service
 systemctl --user enable --now kipnerter-fleet-publisher.timer
 systemctl --user start kipnerter-fleet-publisher.service
+systemctl --user enable --now kipnerter-runtime-publisher.timer
+systemctl --user start kipnerter-runtime-publisher.service
 systemctl --user restart "$SERVICE"
 active=0
 for attempt in {1..15}; do

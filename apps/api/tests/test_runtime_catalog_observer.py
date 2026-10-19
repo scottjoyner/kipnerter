@@ -42,6 +42,7 @@ def test_api_labels_assistx_empty_vs_runtime_catalog(monkeypatch):
         if path=="/v1/assistx-fleet":
             return {"source":"assistx_local_inventory", "observed_at":stamp,
                     "models":[],"nodes":[]}
+        if path=="/v1/fleet-runtime": return None
         assert path=="/v1/runtime-catalog"
         return {"source":"lmstudio_native_catalog","observed_at":stamp,
                 "models":[{"id":"lmstudio-0123456789abcdef0123","name":"Model A 3B Q4",
@@ -73,6 +74,7 @@ def test_api_filters_invalid_runtime_metadata(monkeypatch):
     async def remote(path="/v1/nodes"):
         if path=="/v1/assistx-fleet":
             return {"source":"assistx_local_inventory","observed_at":stamp,"models":[],"nodes":[]}
+        if path=="/v1/fleet-runtime": return None
         assert path=="/v1/runtime-catalog"
         return {"source":"lmstudio_native_catalog","observed_at":stamp,"models":[
             {"id":"lmstudio-0123456789abcdef0123","name":"/private/model", "loaded_instances":0},

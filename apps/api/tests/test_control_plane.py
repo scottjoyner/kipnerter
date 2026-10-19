@@ -80,6 +80,7 @@ def test_inventory_empty_is_reported_empty_not_offline(monkeypatch):
         if path == "/v1/assistx-fleet":
             return {"source":"assistx_local_inventory", "observed_at":stamp,
                     "nodes":[],"models":[]}
+        if path == "/v1/fleet-runtime": return None
         assert path == "/v1/runtime-catalog"
         return None
     monkeypatch.setattr(control_plane,"_tailscale_read",observe)

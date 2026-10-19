@@ -1,0 +1,11 @@
+[Unit]
+Description=Kipnerter six-host read-only runtime-inventory publisher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/.local/share/kipnerter-observer
+ExecStart=/usr/bin/python3 %h/.local/share/kipnerter-observer/refresh_fleet_runtime_snapshot.py
+UMask=0077
+TimeoutStartSec=45s

@@ -27,6 +27,7 @@ def _observer_is_fresh(payload, path, now=None):
         "/v1/traces": "assistx_trace_index",
         "/v1/assistx-fleet": "assistx_local_inventory",
         "/v1/runtime-catalog": "lmstudio_native_catalog",
+        "/v1/fleet-runtime": "fleet_runtime_inventory",
     }
     if path not in expected or not isinstance(payload, dict) or payload.get("source") != expected[path]:
         return False
@@ -194,9 +195,10 @@ async def nodes(request: Request, response: Response):
 @router.get("/models")
 async def model_inventory(request: Request, response: Response):
     _authorize(request, response)
-    assistx, runtime = await asyncio.gather(
+    assistx, runtime, offhost = await asyncio.gather(
         _tailscale_read("/v1/assistx-fleet"),
         _tailscale_read("/v1/runtime-catalog"),
+        _tailscale_read("/v1/fleet-runtime"),
     )
     assistx_valid = isinstance(assistx, dict) and isinstance(assistx.get("models"), list)
     runtime_valid = isinstance(runtime, dict) and isinstance(runtime.get("models"), list)
@@ -244,6 +246,9 @@ async def model_inventory(request: Request, response: Response):
             "lmstudio": runtime.get("observed_at") if runtime_valid else None,
         },
         "models": result[:100],
+        "fleet_runtime_status": "reported" if isinstance(offhost, dict) and isinstance(offhost.get("nodes"),list) else "unavailable",
+        "fleet_runtime_observed_at": offhost.get("observed_at") if isinstance(offhost, dict) else None,
+        "fleet_runtime_nodes": offhost["nodes"][:6] if isinstance(offhost,dict) and isinstance(offhost.get("nodes"),list) else [],
     }
 
 

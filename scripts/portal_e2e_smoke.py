@@ -186,6 +186,9 @@ def run(real_observer):
                     assert value.get("assistx_status") in ("reported", "reported_empty")
                     assert value.get("runtime_status") in ("reported", "reported_empty")
                     assert any(m.get("source") == "lmstudio_native_catalog" for m in value.get("models", []))
+                    assert value.get("fleet_runtime_status") == "reported"
+                    assert len(value.get("fleet_runtime_nodes",[])) == 6
+                    assert any(r.get("node") == "beelink" for r in value["fleet_runtime_nodes"])
                     assert value.get("status") in ("reported", "reported_empty")
                 if real_observer and path == "/api/portal/nodes":
                     assert value.get("assistx_status") in ("reported", "reported_empty")
@@ -213,6 +216,7 @@ def run(real_observer):
                     event["traces"].get("source") != "assistx_trace_index"
                     or event["nodes"].get("tailscale_status") != "live"
                     or event["models"].get("source") != "multiple_read_only_sources"
+                    or event["models"].get("fleet_runtime_status") != "reported"
                 ):
                     raise AssertionError("SSE did not include live private observer data")
                 print("authenticated SSE: unified snapshot returned")

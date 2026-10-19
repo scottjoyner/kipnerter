@@ -178,6 +178,14 @@ export default function FleetConsole({ email }) {
                 detail={data.models?.status === "reported_empty" ?
                 "The private AssistX inventory endpoint returned an empty catalog. Tailscale presence does not prove model loading; provider discovery needs separate validation." :
                 "The fresh private AssistX inventory feed is unavailable. Credentials are never exposed to this portal."}/>}</section>
+          <section className="workspace-panel" style={{marginTop:20}}>
+            <div className="panel-heading"><div><h2>Fleet runtime witnesses</h2><p>Six fixed, SSH-authenticated localhost probes · counts only · neither residency attestation nor model admission.
+            {data.models?.fleet_runtime_observed_at ? " · Observed " + new Date(data.models.fleet_runtime_observed_at).toLocaleTimeString() : ""}</p></div><Badge status={data.models?.fleet_runtime_status || "unavailable"}/></div>
+            {data.models?.fleet_runtime_nodes?.length ? <div className="data-list">{data.models.fleet_runtime_nodes.map(row => <div className="data-row" key={row.node}>
+              <div><span className="row-main">{row.node}</span><small>SSH {row.ssh} · Native {row.native?.status || "unavailable"} · OpenAI-compatible {row.openai?.status || "unavailable"}</small></div>
+              <div><small>{row.native?.catalog_entries ?? "—"} native entries · {row.native?.loaded_instances ?? "—"} runtime-reported loaded · {row.openai?.advertised_entries ?? "—"} OpenAI-listed</small></div>
+            </div>)}</div> : <Empty title="No fresh off-host runtime evidence" detail="Missing endpoints are unavailable, never counted as zero loaded models."/>}
+          </section>
         </>}
         {tab === "nodes" && <>
           <div className="page-intro"><p className="section-kicker">TAILNET & COMPUTE</p><h1>Fleet nodes<span className="accent">.</span></h1><p>AssistX node inventory is shown separately from Tailscale connectivity verification.</p></div>

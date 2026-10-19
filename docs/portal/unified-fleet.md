@@ -550,3 +550,50 @@ The real-observer full-stack smoke test now requires the native model source.
 These observations are not a production release: `kipnerter.com/chat` still
 returns 404; Tailscale production SSH demands interactive identity approval;
 real tsidp login and DB/volume rollback remain unproven.
+
+## October 18 late: fixed-host fleet-runtime reconciliation
+
+The private x1-370 host has six previously approved SSH aliases with
+pinned host keys: `xwing`, `destroyer`, `lenovo`, `beelink`,
+`deathstar`, and `optiplex`. The new metadata publisher probes **only**
+these aliases, using noninteractive, host-key-verifying SSH with bounded
+remote execution and an exact Python stdin program. It calls only fixed
+`127.0.0.1` LM Studio native `GET /api/v1/models` and OpenAI-compatible
+`GET /v1/models` endpoints, with redirects and inherited HTTP proxies
+disabled. No credentials, process inventories, paths, model IDs, scripts
+persisted on remote hosts, forced scans, model loads, or writes are involved.
+
+`kipnerter-runtime-publisher.timer` periodically writes an atomic 0600
+six-host count-only snapshot, which the existing token-protected Tailscale
+observer exposes as **`GET /v1/fleet-runtime`**, without a new port or
+Funnel. Missing endpoints are `unavailable` rather than `0 models`.
+The snapshot independently enforces strict node allowlisting, schema, size,
+Unix ownership/permissions, and 90-second freshness. It is not a secure
+independently administered scientific witness or owner-bound execution proof.
+
+Actual remote observations (October 18, 2026):
+
+| Node | Native LM Studio catalog | OpenAI-listed models | Native-reported loaded instances |
+| --- | ---: | ---: | ---: |
+| Beelink | 11 | 11 | 1 |
+| Optiplex | 25 | 25 | 0 |
+| Lenovo | API 404 | 1 | Unavailable |
+| Xwing | Unavailable | Unavailable | Unavailable |
+| Destroyer | Unavailable | Unavailable | Unavailable |
+| Deathstar | Unavailable | Unavailable | Unavailable |
+
+These are *endpoint-reported state* observations at the sampling time, not
+benchmark or executable admission. Beelink's one native-reported instance
+requires separate process/residency and owner-bound evidence; Lenovo's one
+OpenAI-compatible model row does not prove an active model. AssistX's central
+registered model count remains 0 and must not be silently backfilled from
+these independent sources. No worker is auto-loaded or promoted.
+
+The FastAPI Models projection includes `fleet_runtime_status`, an observed
+UTC timestamp and six count-only node rows. The Models screen renders a
+separate fleet runtime table next to the independent x1-370 catalog and
+AssistX entries. The authenticated full-stack smoke test checks the actual
+private route and signed-in SSE projection, and rejects absent remote evidence.
+Production release verification only checks the six-host telemetry receipt,
+not that every host must have a runtime. Production SSH and tsidp login
+remain independent release-blocking gates.

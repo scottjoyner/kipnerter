@@ -1,0 +1,11 @@
+[Unit]
+Description=Update allowlisted six-host model runtime counts
+
+[Timer]
+OnBootSec=60s
+OnUnitInactiveSec=60s
+AccuracySec=5s
+Unit=kipnerter-runtime-publisher.service
+
+[Install]
+WantedBy=timers.target
