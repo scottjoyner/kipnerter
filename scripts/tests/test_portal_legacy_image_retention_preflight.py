@@ -1,6 +1,11 @@
 import unittest
+import contextlib
+import io
+import json
+import subprocess
+from unittest.mock import patch
 from scripts.portal_legacy_image_retention_preflight import (
-    EXPECTED,MAX_IMAGE_BYTES,MIN_REMAINING_BYTES,validate
+    EXPECTED,MAX_IMAGE_BYTES,MIN_REMAINING_BYTES,validate,main
 )
 
 
@@ -79,6 +84,38 @@ class ImageRetentionTests(unittest.TestCase):
         i.pop(old)
         x=validate(c,i,68*1024**3)
         self.assertEqual(x["unique_images_present"],6)
+
+
+    def test_uncached_live_image_does_not_trigger_pull_or_export(self):
+        calls=[]
+        def fake_command(args, *, timeout=10):
+            calls.append(args)
+            if args[1]=="inspect":
+                position=EXPECTED.index(args[-1])+1
+                return ("true|sha256:"+format(position,"064x")+
+                        "|kipnerter|/opt/kipnerter|worker")
+            if args[1:3]==["image","inspect"]:
+                if args[-1]=="sha256:"+format(1,"064x"):
+                    raise subprocess.CalledProcessError(1,args)
+                return args[-1]+"|125000000"
+            raise AssertionError("unexpected Docker action")
+        storage=type("Disk",(),{"free":68*1024**3})()
+        with patch("scripts.portal_legacy_image_retention_preflight.command",
+                   side_effect=fake_command), patch(
+                   "scripts.portal_legacy_image_retention_preflight.shutil.disk_usage",
+                   return_value=storage):
+            out=io.StringIO()
+            with contextlib.redirect_stdout(out):
+                result=main()
+        self.assertEqual(result,3)
+        report=json.loads(out.getvalue())
+        self.assertEqual(report["uncached_image_role_positions"],[1])
+        self.assertEqual(report["unique_cached_image_ids"],6)
+        self.assertFalse(report["image_archive_created"])
+        self.assertFalse(report["safe_to_cutover"])
+        self.assertNotIn("sha256:",out.getvalue())
+        self.assertTrue(all(a[1:3] in (["image","inspect"],
+                                       ["inspect","--format"]) for a in calls))
 
 if __name__=="__main__":
     unittest.main()
