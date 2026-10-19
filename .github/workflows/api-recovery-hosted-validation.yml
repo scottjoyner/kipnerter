@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 22
     env:
-      PINNED_API_SHA: c6a42e0edaeedda06d3702f2f07c82cc8bcd4d59
+      PINNED_SOURCE_COMMIT: c6a42e0edaeedda06d3702f2f07c82cc8bcd4d59
     steps:
       - name: Check out trusted portal CI smoke fixture
         uses: actions/checkout@v4
@@ -45,7 +45,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git -C recovery-api rev-parse HEAD)" = "$PINNED_API_SHA"
+          test "$(git -C recovery-api rev-parse HEAD)" = "$PINNED_SOURCE_COMMIT"
           test ! -e recovery-api/.git-credentials
           test ! -e recovery-api/.env
           echo "API HEAD pinned and production secrets not supplied"
