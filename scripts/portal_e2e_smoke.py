@@ -113,6 +113,7 @@ def run(real_observer, staging=False):
     key, secret = secrets.token_urlsafe(48), secrets.token_urlsafe(48)
     api_env = os.environ.copy()
     api_env.update({
+        "KIPNERTER_RELEASE_SHA": "a" * 40,
         "KIPNERTER_GATEWAY_TOKEN": key,
         "ASSISTX_BASE_URL": "", "ASSISTX_MONITOR_USER": "", "ASSISTX_MONITOR_PASSWORD": "",
         "SOPHIA_BASE_URL": "", "HERMES_BASE_URL": "", "OPENCODE_BASE_URL": "",
@@ -128,6 +129,7 @@ def run(real_observer, staging=False):
         api_env["FLEET_MONITOR_BASE_URL"] = "https://x1-370.tailcb8954.ts.net:8448"
     web_env = os.environ.copy()
     web_env.update({
+        "KIPNERTER_RELEASE_SHA": "a" * 40,
         "NEXTAUTH_URL": "https://staging.kipnerter.com" if staging else "https://kipnerter.com",
         "KIPNERTER_ENV": "staging" if staging else "production",
         "NEXTAUTH_SECRET": secret,
@@ -155,6 +157,21 @@ def run(real_observer, staging=False):
             code, page, _ = request(base + "/chat")
             if code != 200 or b"Sign in with Tailscale identity" not in page or b"Fleet login is not yet configured" in page:
                 raise AssertionError("Deployment-scoped NextAuth provider is not available")
+            for url, source in (
+                (base + "/api/release", "kipnerter-web"),
+                (f"http://127.0.0.1:{api_port}/api/v1/release", "kipnerter-api"),
+            ):
+                code, raw, headers = request(url)
+                if code != 200:
+                    raise AssertionError(f"Source-pinned revision endpoint unavailable: {source}")
+                evidence = json.loads(raw)
+                if evidence != {"source": source, "revision": "a" * 40}:
+                    raise AssertionError(f"Wrong release image identity: {source}")
+                cache_control = next((v for k, v in headers.items()
+                                      if k.lower() == "cache-control"), "")
+                if "no-store" not in cache_control.lower():
+                    raise AssertionError(f"Cacheable release identity: {source}")
+            print("exact web/API synthetic release SHA verified")
             cookie = make_cookie(web_env)
             for path in ("/api/portal/nodes", "/api/portal/traces", "/api/portal/live"):
                 code, _, _ = request(base + path)

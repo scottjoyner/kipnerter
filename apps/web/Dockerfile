@@ -11,6 +11,8 @@ RUN npm run build
 
 FROM node:22-alpine AS runner
 WORKDIR /app
+ARG KIPNERTER_RELEASE_SHA
+ENV KIPNERTER_RELEASE_SHA=${KIPNERTER_RELEASE_SHA}
 ENV NODE_ENV=production
 COPY --from=build /app .
 EXPOSE 3000

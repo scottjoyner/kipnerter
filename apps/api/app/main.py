@@ -1,9 +1,11 @@
 import asyncio
 import os
+import re
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .gateway import proxy_request, public_routes, service_health
 from .control_plane import router as control_plane_router
@@ -35,6 +37,17 @@ def health() -> dict:
         "environment": os.getenv("KIPNERTER_ENV", "development"),
         "time": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@app.get("/api/v1/release", tags=["system"])
+def release_revision():
+    revision = os.getenv("KIPNERTER_RELEASE_SHA", "")
+    if not re.fullmatch(r"[a-f0-9]{40}", revision):
+        return JSONResponse(status_code=503, content={"status": "unavailable"})
+    return JSONResponse(
+        content={"source": "kipnerter-api", "revision": revision},
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
 
 
 @app.get("/ready", tags=["system"])
