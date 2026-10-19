@@ -7,3 +7,7 @@ This **read-only physical witness** records immutable Docker image/service ident
 The owner-approved workflow uses the production-scoped authorized Tailscale CI principal but executes no Docker mutation, database statement, backup, migration, file write, or deployment. Every report sets `safe_to_cutover=false`. An independently administered encrypted off-host backup and write-consistent source snapshot remain unproven; the production identity provider, allowlists, gateway credentials and approval attestations also remain unresolved.
 
 The off-host candidate survey reached Lenovo (~35 GiB free), Destroyer (~74 GiB), and Xwing (~81 GiB). Each was accessible under the same `scott` fleet user; administrative independence and custody separation therefore **cannot** be inferred from the machines' physical separation. No production data was copied to those hosts.
+
+## CI migration baseline repeatability
+
+This clean-history branch retains the exact legacy identity binding without any credential-shaped source literal, and reexecutes the same owner-scoped no-write physical witness. Source-based tests cannot substitute for the live host result; verify the *current* seven image identities and ensure the original source fingerprint is unchanged. Any changed image/Compose digest requires renewed review and a fresh recovery receipt. 
