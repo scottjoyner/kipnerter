@@ -18,6 +18,14 @@ class OidcPreflightTests(unittest.TestCase):
     def test_valid_tailnet_provider(self):
         self.assertTrue(validate(ORIGIN, "https://kipnerter.com", sample)["validated"])
 
+    def test_staging_is_distinct_and_requires_its_own_callback(self):
+        stage = validate(ORIGIN, "https://staging.kipnerter.com", sample, "staging")
+        self.assertEqual(stage["callback"], "https://staging.kipnerter.com/api/auth/callback/tailscale")
+        with self.assertRaises(ValueError):
+            validate(ORIGIN, "https://kipnerter.com", sample, "staging")
+        with self.assertRaises(ValueError):
+            validate(ORIGIN, "https://staging.kipnerter.com", sample, "production")
+
     def test_bad_issuer_and_callback_denied(self):
         for issuer in ("https://evil.com", "http://idp.tailcb8954.ts.net",
                        "https://idp.tailcb8954.ts.net.evil.org",

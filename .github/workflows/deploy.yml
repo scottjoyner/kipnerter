@@ -54,11 +54,11 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:kipnerter-ci
 
-      - name: Validate OIDC provider over Tailscale
-        if: inputs.environment == 'production'
+      - name: Validate deployment-scoped OIDC over Tailscale
         env:
           TSIDP_ISSUER: ${{ secrets.TSIDP_ISSUER }}
-          NEXTAUTH_URL: https://kipnerter.com
+          KIPNERTER_ENV: ${{ inputs.environment }}
+          NEXTAUTH_URL: ${{ inputs.environment == 'production' && 'https://kipnerter.com' || 'https://staging.kipnerter.com' }}
         run: python3 scripts/portal_oidc_preflight.py
 
       - name: Resolve deployment target
@@ -69,27 +69,22 @@ jobs:
           FALLBACK_USER: ${{ secrets.KIPNERTER_DEPLOY_USER }}
         run: |
           set -euo pipefail
+          # The deployment target is a single *online and exclusively role-tagged*
+          # tailnet peer. Never let a staging fallback silently select prod.
+          # Read status from stdin only; no peer/session data is persisted.
           if [ "$ENVIRONMENT" = production ]; then
-            tailscale status --json > /tmp/ts.json
-            TARGET=$(python3 - <<'PY'
-          import json
-          d=json.load(open('/tmp/ts.json'))
-          candidates=[]
-          for p in d.get('Peer',{}).values():
-              host=p.get('HostName') or ''
-              tags=set(p.get('Tags') or [])
-              if p.get('Online') and 'tag:kipnerter-prod' in tags and host.startswith('kipnerter-prod-01'):
-                  ip=next((x for x in (p.get('TailscaleIPs') or []) if ':' not in x), None)
-                  if ip: candidates.append((host,ip))
-          if not candidates: raise SystemExit('No online tagged production node found')
-          candidates.sort()
-          print(candidates[-1][1])
-          PY
-            )
+            TARGET=$(tailscale status --json | python3 scripts/portal_deploy_target.py \
+              --environment production)
             USER=kipnerter
           else
-            test -n "$FALLBACK_HOST" && test -n "$FALLBACK_USER"
-            TARGET="$FALLBACK_HOST"
+            [[ -n "$FALLBACK_HOST" && -n "$FALLBACK_USER" ]] || {
+              echo "::error::Staging deployment needs a dedicated tagged host and user"; exit 1;
+            }
+            [[ "$FALLBACK_USER" != root ]] || {
+              echo "::error::Staging cannot deploy as root"; exit 1;
+            }
+            TARGET=$(tailscale status --json | python3 scripts/portal_deploy_target.py \
+              --environment staging --preferred-host "$FALLBACK_HOST")
             USER="$FALLBACK_USER"
           fi
           echo "host=$TARGET" >> "$GITHUB_OUTPUT"
@@ -97,8 +92,7 @@ jobs:
           tailscale ping --timeout=10s "$TARGET"
           tailscale ssh "$USER@$TARGET" 'hostname; docker --version; docker compose version'
 
-      - name: Validate required spatial secrets
-        if: inputs.environment == 'production'
+      - name: Validate deployment-scoped secrets
         env:
           API_KEY: ${{ secrets.KIPNERTER_SPATIAL_API_KEY }}
           DB_PASSWORD: ${{ secrets.KIPNERTER_SPATIAL_DB_PASSWORD }}
@@ -175,10 +169,29 @@ jobs:
           SPATIAL_S3_SECRET_ACCESS_KEY: ${{ secrets.KIPNERTER_SPATIAL_S3_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
-          tar --exclude=.git --exclude='*/.git' -czf /tmp/kipnerter.tgz .
+          # Exclude private local env files; GitHub environment secrets are
+          # assembled separately on the approved target, never archived.
+          trap 'rm -f /tmp/kipnerter.env /tmp/kipnerter.tgz' EXIT
+          # Package only build inputs; neither Git history, local secrets,
+          # browser caches, untrusted files nor CI runner artifacts are shipped.
+          tar --exclude=.git --exclude='*/.git' --exclude='.env*' --exclude='*/.env*' \
+            -czf /tmp/kipnerter.tgz apps infra scripts spatial-api \
+            docker-compose.yml compose.spatial.yml compose.staging.yml
           tailscale ssh "$USER@$TARGET" 'sudo mkdir -p /opt/kipnerter && sudo chown -R '"$USER:$USER"' /opt/kipnerter'
           cat /tmp/kipnerter.tgz | tailscale ssh "$USER@$TARGET" 'tar -xzf - -C /opt/kipnerter'
           if [ "$ENVIRONMENT" = production ]; then
+            AUTH_ORIGIN=https://kipnerter.com
+            API_ORIGIN=https://api.kipnerter.com
+            CORS_ALLOWED=https://kipnerter.com,https://www.kipnerter.com,https://scottjoyner.dev,https://admin.scottjoyner.dev,https://preview.kipnerter.com
+          elif [ "$ENVIRONMENT" = staging ]; then
+            AUTH_ORIGIN=https://staging.kipnerter.com
+            API_ORIGIN=https://staging-api.kipnerter.com
+            CORS_ALLOWED=https://staging.kipnerter.com
+          else
+            echo "::error::Invalid deployment environment"; exit 1
+          fi
+          # Both environments have their own GitHub-environment-scoped secrets;
+          # a staging host is not allowed to reuse a production env file.
             # Do not manufacture private-service URLs. Each configured upstream
             # must have an independently verified, permitted tailnet route.
             ASSISTX_BASE_URL="${ASSISTX_BASE_URL:-}"
@@ -196,8 +209,8 @@ jobs:
               )
             fi
             {
-              printf 'KIPNERTER_ENV=production\n'
-              printf 'NEXTAUTH_URL=https://kipnerter.com\n'
+              printf 'KIPNERTER_ENV=%s\n' "$ENVIRONMENT"
+              printf 'NEXTAUTH_URL=%s\n' "$AUTH_ORIGIN"
               printf 'NEXTAUTH_SECRET=%s\n' "$NEXTAUTH_SECRET"
               printf 'TSIDP_ISSUER=%s\n' "$TSIDP_ISSUER"
               printf 'TSIDP_CLIENT_ID=%s\n' "$TSIDP_CLIENT_ID"
@@ -208,8 +221,9 @@ jobs:
               printf 'OPENCODE_BASE_URL=%s\n' "$OPENCODE_BASE_URL"
               printf 'FLEET_MONITOR_BASE_URL=%s\n' "$FLEET_MONITOR_BASE_URL"
               printf 'FLEET_MONITOR_TOKEN=%s\n' "$FLEET_MONITOR_TOKEN"
-              printf 'NEXT_PUBLIC_API_URL=https://api.kipnerter.com\n'
-              printf 'CORS_ORIGINS=https://kipnerter.com,https://www.kipnerter.com,https://scottjoyner.dev,https://admin.scottjoyner.dev,https://preview.kipnerter.com\n'
+              printf 'NEXT_PUBLIC_API_URL=%s\n' "$API_ORIGIN"
+              printf 'KIPNERTER_SPATIAL_S3_PUBLIC_ENDPOINT_URL=%s\n' "$API_ORIGIN"
+              printf 'CORS_ORIGINS=%s\n' "$CORS_ALLOWED"
               printf 'ASSISTX_BASE_URL=%s\n' "$ASSISTX_BASE_URL"
               printf 'SOPHIA_BASE_URL=%s\n' "$SOPHIA_BASE_URL"
               printf 'LMSTUDIO_BASE_URL=%s\n' "$LMSTUDIO_BASE_URL"
@@ -224,28 +238,46 @@ jobs:
             chmod 600 /tmp/kipnerter.env
             cat /tmp/kipnerter.env | tailscale ssh "$USER@$TARGET" 'cat > /opt/kipnerter/.env && chmod 600 /opt/kipnerter/.env'
             rm -f /tmp/kipnerter.env
-          fi
 
       - name: Build and deploy
         env:
           TARGET: ${{ steps.target.outputs.host }}
           USER: ${{ steps.target.outputs.user }}
+          ENVIRONMENT: ${{ inputs.environment }}
         run: |
           set -euo pipefail
-          tailscale ssh "$USER@$TARGET" 'cd /opt/kipnerter && docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge config >/tmp/kipnerter-compose.yml && docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge build --pull && docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge up -d --remove-orphans && docker compose -f docker-compose.yml -f compose.spatial.yml ps'
+          COMPOSE="docker compose -f docker-compose.yml -f compose.spatial.yml"
+          if [[ "$ENVIRONMENT" = staging ]]; then
+            COMPOSE="$COMPOSE -f compose.staging.yml"
+          elif [[ "$ENVIRONMENT" != production ]]; then
+            echo "::error::Invalid deployment environment"; exit 1
+          fi
+          # A dedicated staging host uses only the staging Caddyfile and
+          # staging API domain. The prod deploy never adds staging routes.
+          tailscale ssh "$USER@$TARGET" "cd /opt/kipnerter && $COMPOSE --profile edge config >/dev/null && $COMPOSE --profile edge build --pull && $COMPOSE --profile edge up -d --remove-orphans && $COMPOSE --profile edge ps"
 
-      - name: Verify production health
-        if: inputs.environment == 'production'
+      - name: Verify deployment health
         env:
           TARGET: ${{ steps.target.outputs.host }}
           USER: ${{ steps.target.outputs.user }}
+          ENVIRONMENT: ${{ inputs.environment }}
         run: |
           set -euo pipefail
           # A failed public route must fail the release: never fall through
           # after retries and accidentally mark a missing /chat as healthy.
-          python3 scripts/verify_portal_release.py --attempts 30 --interval 10
+          if [[ "$ENVIRONMENT" = production ]]; then
+            PUBLIC_ORIGIN=https://kipnerter.com
+            API_ORIGIN=https://api.kipnerter.com
+          elif [[ "$ENVIRONMENT" = staging ]]; then
+            PUBLIC_ORIGIN=https://staging.kipnerter.com
+            API_ORIGIN=https://staging-api.kipnerter.com
+          else
+            echo "::error::Invalid deployment environment"; exit 1
+          fi
+          python3 scripts/verify_portal_release.py --public-url "$PUBLIC_ORIGIN" --api-url "$API_ORIGIN" --attempts 30 --interval 10
           # Read env as data, not as shell code. Never print the bearer secret.
-          tailscale ssh "$USER@$TARGET" /bin/bash -se <<'REMOTE'
+          # This variable has exactly two values chosen in this workflow.
+          tailscale ssh "$USER@$TARGET" "KIPNERTER_ENV=$ENVIRONMENT /bin/bash -se" <<'REMOTE'
           python3 - <<'PY'
           import json
           import urllib.request
@@ -257,7 +289,12 @@ jobs:
           if len(token) < 32:
               raise SystemExit('Invalid server-side gateway token')
           headers = {'Authorization': 'Bearer ' + token, 'Accept': 'application/json'}
-          base = 'https://api.kipnerter.com/api/v1/control-plane/'
+          import os
+          environment = os.environ.get('KIPNERTER_ENV')
+          if environment not in ('production', 'staging'):
+              raise SystemExit('Unknown deployment environment')
+          base = ('https://api.kipnerter.com' if environment == 'production'
+                  else 'https://staging-api.kipnerter.com') + '/api/v1/control-plane/'
           for name, expected in [('overview', 'reported'), ('nodes', 'live'),
                                  ('models', None), ('sessions', 'reported'), ('traces', None)]:
               with urllib.request.urlopen(
@@ -293,4 +330,4 @@ jobs:
         env:
           TARGET: ${{ steps.target.outputs.host }}
           USER: ${{ steps.target.outputs.user }}
-        run: tailscale ssh "$USER@$TARGET" 'cd /opt/kipnerter && docker compose -f docker-compose.yml -f compose.spatial.yml ps && docker compose -f docker-compose.yml -f compose.spatial.yml logs --tail=150 api web caddy spatial-api spatial-worker spatial-postgres spatial-minio' || true
+        run: tailscale ssh "$USER@$TARGET" 'cd /opt/kipnerter && docker compose -f docker-compose.yml -f compose.spatial.yml ps' || true

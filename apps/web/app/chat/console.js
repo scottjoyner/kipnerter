@@ -171,7 +171,8 @@ export default function FleetConsole({ email }) {
         </>}
         {tab === "models" && <>
           <div className="page-intro"><p className="section-kicker">INFERENCE REGISTRY</p><h1>Models<span className="accent">.</span></h1><p>Independent LM Studio catalog and AssistX registry. A reported loaded instance is not an independent residency or admission attestation.</p></div>
-          <section className="workspace-panel"><div className="panel-heading"><h2>Reported inventory</h2><Badge status={data.models?.status || "unavailable"}/></div>
+          <section className="workspace-panel"><div className="panel-heading"><h2>Reported inventory</h2><Badge status={data.models?.runtime_status === "unavailable" ? "partial" : (data.models?.status || "unavailable")}/></div>
+            {data.models?.runtime_status === "unavailable" && <p role="status" className="portal-warning">The x1-370 LM Studio catalog is currently unavailable. Off-host runtime evidence is displayed separately; no local model residency is inferred.</p>}
             {models.length ? <div className="data-list">{models.map(model => <div className="data-row" key={model.id}><div><span className="row-main">{model.name || model.id}</span><small>{model.source === "lmstudio_native_catalog" ? "LM Studio local catalog" : "AssistX registry"} · {model.independently_verified ? "verified" : "not independently verified"}</small></div><span>{model.source === "lmstudio_native_catalog" ? (model.loaded_instances ?? 0) + " runtime-reported instances" : model.nodes + " AssistX reported nodes"}</span></div>)}</div> :
               <Empty title={data.models?.status === "reported_empty" ?
                 "AssistX reports no registered models" : "No verified model inventory"}

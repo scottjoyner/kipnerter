@@ -1,4 +1,5 @@
 import { admittedIdentity, approvedTsidpProfile, parseAllowlist } from "./identity.mjs";
+import { isConfiguredOrigin } from "./portal-origin.mjs";
 
 const issuer = process.env.TSIDP_ISSUER || "";
 const clientId = process.env.TSIDP_CLIENT_ID || "";
@@ -9,7 +10,7 @@ const allowedSubjects = parseAllowlist(process.env.KIPNERTER_ALLOWED_TSIDP_SUBJE
 export const authReady = Boolean(
   issuer.startsWith("https://") && clientId && clientSecret && secret.length >= 32 &&
   allowedEmails.length && allowedSubjects.length &&
-  process.env.NEXTAUTH_URL === "https://kipnerter.com"
+  isConfiguredOrigin(process.env.KIPNERTER_ENV || "production", process.env.NEXTAUTH_URL)
 );
 export function isAllowed(email, subject) {
   return admittedIdentity(email, subject, allowedEmails, allowedSubjects);

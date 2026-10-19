@@ -106,7 +106,7 @@ def assert_no_private_data(payload):
         raise AssertionError("Response exceeded bounded-read limit")
 
 
-def run(real_observer):
+def run(real_observer, staging=False):
     api_port, web_port = free_port(), free_port()
     while web_port == api_port:
         web_port = free_port()
@@ -128,7 +128,8 @@ def run(real_observer):
         api_env["FLEET_MONITOR_BASE_URL"] = "https://x1-370.tailcb8954.ts.net:8448"
     web_env = os.environ.copy()
     web_env.update({
-        "NEXTAUTH_URL": "https://kipnerter.com",
+        "NEXTAUTH_URL": "https://staging.kipnerter.com" if staging else "https://kipnerter.com",
+        "KIPNERTER_ENV": "staging" if staging else "production",
         "NEXTAUTH_SECRET": secret,
         "TSIDP_ISSUER": "https://idp.synthetic-tailnet.ts.net",
         "TSIDP_CLIENT_ID": "portal-smoke-only",
@@ -151,6 +152,9 @@ def run(real_observer):
         ) as web:
             base = f"http://127.0.0.1:{web_port}"
             wait_for(base + "/chat", web)
+            code, page, _ = request(base + "/chat")
+            if code != 200 or b"Sign in with Tailscale identity" not in page or b"Fleet login is not yet configured" in page:
+                raise AssertionError("Deployment-scoped NextAuth provider is not available")
             cookie = make_cookie(web_env)
             for path in ("/api/portal/nodes", "/api/portal/traces", "/api/portal/live"):
                 code, _, _ = request(base + path)
@@ -184,8 +188,18 @@ def run(real_observer):
                 if real_observer and path == "/api/portal/models":
                     assert value.get("source") == "multiple_read_only_sources"
                     assert value.get("assistx_status") in ("reported", "reported_empty")
-                    assert value.get("runtime_status") in ("reported", "reported_empty")
-                    assert any(m.get("source") == "lmstudio_native_catalog" for m in value.get("models", []))
+                    # Production's strict release gate requires a fresh
+                    # runtime catalog, but a live observer smoke must also
+                    # verify correct degraded behavior when LM Studio is down.
+                    runtime_status = value.get("runtime_status")
+                    assert runtime_status in ("reported", "reported_empty", "unavailable"), runtime_status
+                    runtime_rows = [m for m in value.get("models", [])
+                                    if m.get("source") == "lmstudio_native_catalog"]
+                    if runtime_status == "reported":
+                        assert runtime_rows, "reported runtime with no catalog evidence"
+                    elif runtime_status in ("unavailable", "reported_empty"):
+                        assert not runtime_rows, "fabricated runtime catalog from unavailable source"
+                        print("LM Studio source:", runtime_status, "(no inferred model residency)")
                     assert value.get("fleet_runtime_status") == "reported"
                     assert len(value.get("fleet_runtime_nodes",[])) == 6
                     assert any(r.get("node") == "beelink" for r in value["fleet_runtime_nodes"])
@@ -253,9 +267,10 @@ def run(real_observer):
 if __name__ == "__main__":
     arg = argparse.ArgumentParser()
     arg.add_argument("--real-observer", action="store_true")
+    arg.add_argument("--staging", action="store_true")
     options = arg.parse_args()
     try:
-        run(options.real_observer)
+        run(options.real_observer, options.staging)
     except Exception as exc:
         print(f"FAIL: portal end-to-end smoke: {type(exc).__name__}: {exc}", file=sys.stderr)
         sys.exit(1)

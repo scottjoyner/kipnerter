@@ -3,6 +3,7 @@ services:
     build:
       context: ./apps/web
     environment:
+      KIPNERTER_ENV: ${KIPNERTER_ENV:-production}
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://api.kipnerter.com}
       KIPNERTER_INTERNAL_API_URL: http://api:8000
       NEXTAUTH_URL: ${NEXTAUTH_URL:-https://kipnerter.com}

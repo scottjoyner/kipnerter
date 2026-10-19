@@ -9,6 +9,10 @@ import urllib.request
 from urllib.parse import urlsplit
 
 MAX_METADATA_BYTES = 65536
+EXPECTED_ORIGINS = {
+    "production": "https://kipnerter.com",
+    "staging": "https://staging.kipnerter.com",
+}
 
 
 def _origin(value: str) -> str:
@@ -38,10 +42,11 @@ def _check_endpoint(value, origin: str):
     return True
 
 
-def validate(issuer: str, callback_base: str, fetch=None):
+def validate(issuer: str, callback_base: str, fetch=None, environment="production"):
     origin = _origin(issuer)
-    if callback_base.rstrip("/") != "https://kipnerter.com":
-        raise ValueError("unexpected public callback origin")
+    expected = EXPECTED_ORIGINS.get(environment)
+    if expected is None or callback_base != expected:
+        raise ValueError("unexpected deployment-scoped OIDC callback origin")
     discovery_url = origin + "/.well-known/openid-configuration"
     if fetch is None:
         def fetch(url):
@@ -60,7 +65,7 @@ def validate(issuer: str, callback_base: str, fetch=None):
     for item in ("authorization_endpoint", "token_endpoint", "jwks_uri"):
         _check_endpoint(metadata.get(item), origin)
     return {"validated": True, "issuer_kind": "Tailscale tsidp",
-            "callback": "https://kipnerter.com/api/auth/callback/tailscale"}
+            "callback": expected + "/api/auth/callback/tailscale"}
 
 
 if __name__ == "__main__":
@@ -68,6 +73,7 @@ if __name__ == "__main__":
         result = validate(
             os.getenv("TSIDP_ISSUER", ""),
             os.getenv("NEXTAUTH_URL", ""),
+            environment=os.getenv("KIPNERTER_ENV", "production"),
         )
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
         raise SystemExit("OIDC preflight failed: " + str(exc)) from None

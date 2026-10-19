@@ -669,3 +669,52 @@ still ephemeral (90-second validity) and the portal never uses these counts
 for router admission or dispatch. Remaining work for a strong binding would
 require a documented, signed provider instance-to-process identity contract
 and independent attestation, not filename resemblance or process ancestry.
+
+## October 19: production/staging destination and OIDC isolation
+
+An audit found that the staging deployment path previously accepted an
+unverified fallback host. It could therefore target production in error,
+and its unconfigured NextAuth application origin was effectively pinned to
+the production callback. **These are release safety defects**, not an
+indication that staging was already operational.
+
+The release workflow now uses `scripts/portal_deploy_target.py` for **both**
+environments. It accepts only a single online, explicitly and exclusively
+role-tagged Tailscale peer, with a unique Tailscale CGNAT IPv4 address:
+production requires `tag:kipnerter-prod` and the expected production host
+prefix; staging requires **its own** `tag:kipnerter-staging` and the exact
+staging hostname configured through the staging GitHub environment. A
+mixed-role, untagged, duplicated, offline, unknown or unrecognized target
+fails before any SSH, tar upload or Docker change. Production still requires
+Tailscale's existing interactive identity approval to allow remote access.
+
+The currently available tailnet evidence includes a suitable online
+production-tagged machine, **but no verified staging-tagged machine**.
+Staging consequently remains **HOLD** rather than falling back to production.
+
+NextAuth/OIDC callback URLs and Caddy configuration are now deliberately
+separated:
+
+| Environment | Required portal origin | Required API origin | Caddy deployment |
+| --- | --- | --- | --- |
+| production | `https://kipnerter.com` | `https://api.kipnerter.com` | `infra/caddy/Caddyfile` |
+| staging | `https://staging.kipnerter.com` | `https://staging-api.kipnerter.com` | `infra/caddy/Caddyfile.staging` via `compose.staging.yml` |
+
+Staging receives only its own GitHub environment-scoped credentials. OIDC
+preflight and post-deployment HTTP and bearer-control-plane checks now apply
+to both environments, with the exact correct hostnames; an unexpected or
+missing callback/identity provider fails the release. The spatial backend's
+public S3 endpoint and `KIPNERTER_ENVIRONMENT` follow the staging deployment
+instead of defaulting to production. The separate Compose overlay must never
+be included when deploying production; production-only domain routing stays
+unchanged. Private local `.env` files are excluded from uploaded source
+archives and temporary runner files are removed on exit.
+
+These changes only establish an **isolated deployment contract**, not a
+running staging installation. Before a real rehearsal, provision a separate
+staging-tagged tailnet host, stage-specific DNS and TLS, a stage-specific
+tsidp client/redirect URI, protected GitHub staging secrets and a separate
+Postgres/MinIO volume recovery plan. Verify browser login with a real
+allowlisted Tailscale user and separately rehearse database/storage rollback
+before considering a production promotion. The current `kipnerter.com/chat`
+404 remains a HOLD, not an invitation to bypass SSH or identity gates.
