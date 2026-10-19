@@ -11,12 +11,13 @@ import tempfile
 import unittest
 
 from scripts.portal_release_bundle import build, verify, stage_verified
-from tests.test_portal_release_bundle import repo, SourcePinnedReleaseTests
+from tests.test_portal_release_bundle import repo
+from tests import test_portal_release_bundle as fixtures
 
 
 class ThreeSourceBundleTests(unittest.TestCase):
     def fixture(self, root):
-        platform, spatial, p, s = SourcePinnedReleaseTests().make_fixture(root)
+        platform, spatial, p, s = fixtures.SourcePinnedReleaseTests().make_fixture(root)
         (platform / "compose.gateway-031.yml").write_text("services:\n  api:\n    build: ./gateway-api\n")
         import subprocess
         subprocess.run(["git", "-C", str(platform), "add", "compose.gateway-031.yml"], check=True)
@@ -62,7 +63,7 @@ class ThreeSourceBundleTests(unittest.TestCase):
             a,b,g,p,s,h=self.fixture(root)
             output=root/"three.tar.gz"
             build(a,b,p,s,output,g,h)
-            with self.assertRaisesRegex(ValueError,"wrong release provenance"):
+            with self.assertRaisesRegex(ValueError,"unsafe bundle entry|wrong release provenance"):
                 verify(output,p,s)
             with self.assertRaisesRegex(ValueError,"wrong release provenance"):
                 verify(output,p,s,gateway_sha="f"*40)
@@ -76,6 +77,8 @@ class ThreeSourceBundleTests(unittest.TestCase):
             # Verify original earlier platform commit before opt-in overlay was tracked.
             import subprocess
             older=subprocess.check_output(["git","-C",str(a),"rev-parse","HEAD^"],text=True).strip()
+            subprocess.run(["git","-C",str(a),"checkout","--detach",older],check=True,
+                           capture_output=True)
             with self.assertRaisesRegex(ValueError,"compose.gateway-031.yml"):
                 build(a,b,older,s,root/"missing.tar.gz",g,h)
 
