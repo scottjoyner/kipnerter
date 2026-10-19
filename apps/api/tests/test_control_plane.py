@@ -77,16 +77,20 @@ def test_inventory_empty_is_reported_empty_not_offline(monkeypatch):
     monkeypatch.setenv("KIPNERTER_GATEWAY_TOKEN","valid-only")
     stamp=datetime.now(timezone.utc).isoformat()
     async def observe(path="/v1/nodes"):
-        assert path=="/v1/assistx-fleet"
-        return {"source":"assistx_local_inventory", "observed_at":stamp,
-                "nodes":[],"models":[]}
+        if path == "/v1/assistx-fleet":
+            return {"source":"assistx_local_inventory", "observed_at":stamp,
+                    "nodes":[],"models":[]}
+        assert path == "/v1/runtime-catalog"
+        return None
     monkeypatch.setattr(control_plane,"_tailscale_read",observe)
     response=client.get("/api/v1/control-plane/models",headers={
         "Authorization":"Bearer valid-only"})
     assert response.status_code==200
     assert response.json()["status"]=="reported_empty"
+    assert response.json()["assistx_status"]=="reported_empty"
+    assert response.json()["runtime_status"]=="unavailable"
     assert response.json()["models"]==[]
-    assert response.json()["source"]=="assistx_local_inventory"
+    assert response.json()["source"]=="multiple_read_only_sources"
 
 
 def test_privileged_assistx_monitor_credentials_have_no_effect(monkeypatch):

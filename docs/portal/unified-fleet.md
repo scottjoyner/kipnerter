@@ -512,3 +512,41 @@ systemctl --user status kipnerter-fleet-publisher.service
 curl -i https://x1-370.tailcb8954.ts.net:8448/v1/assistx-fleet
 # Expected without token: HTTP 401
 ```
+
+## October 18 evening: LM Studio native catalog reconciliation
+
+Live read-only probes on x1-370 establish three distinct facts:
+
+1. AssistX's currently registered fleet catalog reports **0 nodes and 0 models**.
+2. LM Studio's standard OpenAI-compatible `GET /v1/models` responds 200 but
+   reports **0 entries** at the same observation point.
+3. LM Studio's native, fixed loopback `GET /api/v1/models` responds 200 and
+   reports **10 locally available catalog items** (9 LLM, 1 embedding), each
+   with an empty `loaded_instances` list at the observed time (**0
+   runtime-reported instances**).
+
+The portal now queries the native catalog **only inside x1-370** through the
+already-running authenticated tailnet observer on HTTPS port 8448. New fixed
+`GET /v1/runtime-catalog` forwards neither raw model paths nor the native
+response body. It emits a tightly bounded summary: opaque SHA-256-derived
+model ID, validated display name (or synthetic display ID), kind, count of
+runtime-reported loaded instances and `independently_verified=false`.
+There is no token, general-purpose native API proxy, model loading, tailnet
+scanner, or new Serve/Funnel route. Anonymous requests still return 401.
+
+The FastAPI `/api/v1/control-plane/models` projection now independently
+reports `assistx_status` and `runtime_status`, and combines rows with a
+source and specific state: `assistx_reported`, `catalog_available`, or
+`runtime_reported_loaded`. No entry is called *admitted* or independently
+verified. The frontend labels LM Studio entries as a **local catalog**, not
+router admission. A native model with `loaded_instances>0` still requires
+separate physical/process and user-bound execution witness checks.
+
+Production release validation requires **both** authorized model sources to
+return fresh metadata; a genuinely empty AssistX registry is accepted as
+`reported_empty`, never silently substituted with runtime discovery.
+The real-observer full-stack smoke test now requires the native model source.
+
+These observations are not a production release: `kipnerter.com/chat` still
+returns 404; Tailscale production SSH demands interactive identity approval;
+real tsidp login and DB/volume rollback remain unproven.

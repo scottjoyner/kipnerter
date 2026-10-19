@@ -79,7 +79,7 @@ jobs:
       - run: python3 -m py_compile scripts/portal_oidc_preflight.py scripts/verify_portal_release.py scripts/portal_release_backup.py
       - run: sh -n scripts/spatial-worker-proof.sh
       - run: bash -n scripts/install-telemetry-observer.sh
-      - run: python3 -m py_compile apps/api/app/tailnet_observer.py apps/api/app/agent_sessions_observer.py apps/api/app/trace_snapshot_observer.py scripts/refresh_assistx_trace_snapshot.py apps/api/app/assistx_fleet_observer.py scripts/refresh_assistx_fleet_snapshot.py
+      - run: python3 -m py_compile apps/api/app/tailnet_observer.py apps/api/app/agent_sessions_observer.py apps/api/app/trace_snapshot_observer.py scripts/refresh_assistx_trace_snapshot.py apps/api/app/assistx_fleet_observer.py apps/api/app/runtime_catalog_observer.py scripts/refresh_assistx_fleet_snapshot.py
       - run: docker run --rm -v "$PWD/infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2 caddy validate --config /etc/caddy/Caddyfile
       - run: docker compose build
 

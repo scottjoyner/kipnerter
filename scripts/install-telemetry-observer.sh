@@ -21,6 +21,7 @@ install -m 0600 "$ROOT/apps/api/app/agent_sessions_observer.py" "$DEST/app/"
 install -m 0600 "$ROOT/apps/api/app/tailnet_observer.py" "$DEST/app/"
 install -m 0600 "$ROOT/apps/api/app/trace_snapshot_observer.py" "$DEST/app/"
 install -m 0600 "$ROOT/apps/api/app/assistx_fleet_observer.py" "$DEST/app/"
+install -m 0600 "$ROOT/apps/api/app/runtime_catalog_observer.py" "$DEST/app/"
 install -m 0700 "$ROOT/scripts/refresh_assistx_fleet_snapshot.py" "$DEST/"
 install -m 0700 "$ROOT/scripts/refresh_assistx_trace_snapshot.py" "$DEST/"
 [[ ! -L "$DEST/app/__init__.py" ]] || { echo "symlinked package initializer denied"; exit 1; }

@@ -143,7 +143,7 @@ export default function FleetConsole({ email }) {
             <p>Route conversations and inspect agents across your private compute infrastructure.</p></div>
           <div className="stat-grid">
             <div className="stat-card"><span>Service probes</span><strong>{healthy}<small> / {integrations.length || 6}</small></strong><p>Healthy integrations</p></div>
-            <div className="stat-card"><span>Reported models</span><strong>{models.length}</strong><p>Not necessarily loaded or admitted</p></div>
+            <div className="stat-card"><span>Reported models</span><strong>{models.length}</strong><p>Catalog entries; admission unverified</p></div>
             <div className="stat-card"><span>Fleet inventory</span><strong>{nodes.length}</strong><p>Tailscale presence verified only by the private observer</p></div>
           </div>
           <section className="workspace-panel chat-workspace">
@@ -170,9 +170,9 @@ export default function FleetConsole({ email }) {
           </section>
         </>}
         {tab === "models" && <>
-          <div className="page-intro"><p className="section-kicker">INFERENCE REGISTRY</p><h1>Models<span className="accent">.</span></h1><p>Read-only reported inventory. Discovery is not proof of loaded or admitted state.</p></div>
+          <div className="page-intro"><p className="section-kicker">INFERENCE REGISTRY</p><h1>Models<span className="accent">.</span></h1><p>Independent LM Studio catalog and AssistX registry. A reported loaded instance is not an independent residency or admission attestation.</p></div>
           <section className="workspace-panel"><div className="panel-heading"><h2>Reported inventory</h2><Badge status={data.models?.status || "unavailable"}/></div>
-            {models.length ? <div className="data-list">{models.map(model => <div className="data-row" key={model.id}><span className="row-main">{model.id}</span><span>{model.nodes} reported nodes</span></div>)}</div> :
+            {models.length ? <div className="data-list">{models.map(model => <div className="data-row" key={model.id}><div><span className="row-main">{model.name || model.id}</span><small>{model.source === "lmstudio_native_catalog" ? "LM Studio local catalog" : "AssistX registry"} · {model.independently_verified ? "verified" : "not independently verified"}</small></div><span>{model.source === "lmstudio_native_catalog" ? (model.loaded_instances ?? 0) + " runtime-reported instances" : model.nodes + " AssistX reported nodes"}</span></div>)}</div> :
               <Empty title={data.models?.status === "reported_empty" ?
                 "AssistX reports no registered models" : "No verified model inventory"}
                 detail={data.models?.status === "reported_empty" ?

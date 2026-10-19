@@ -26,6 +26,7 @@ def _observer_is_fresh(payload, path, now=None):
         "/v1/integrations": "x1-370",
         "/v1/traces": "assistx_trace_index",
         "/v1/assistx-fleet": "assistx_local_inventory",
+        "/v1/runtime-catalog": "lmstudio_native_catalog",
     }
     if path not in expected or not isinstance(payload, dict) or payload.get("source") != expected[path]:
         return False
@@ -193,19 +194,57 @@ async def nodes(request: Request, response: Response):
 @router.get("/models")
 async def model_inventory(request: Request, response: Response):
     _authorize(request, response)
-    payload = await _tailscale_read("/v1/assistx-fleet")
-    if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
-        return {"status": "unavailable", "models": []}
-    raw = payload["models"]
-    result = [
-        {"id": model["id"], "nodes": model["nodes"]}
-        for model in raw[:50] if isinstance(model, dict)
-        and isinstance(model.get("id"), str) and type(model.get("nodes")) is int
-    ]
-    return {"status": "reported" if result else "reported_empty",
-            "source": "assistx_local_inventory",
-            "observer_observed_at": payload.get("observed_at"),
-            "models": result}
+    assistx, runtime = await asyncio.gather(
+        _tailscale_read("/v1/assistx-fleet"),
+        _tailscale_read("/v1/runtime-catalog"),
+    )
+    assistx_valid = isinstance(assistx, dict) and isinstance(assistx.get("models"), list)
+    runtime_valid = isinstance(runtime, dict) and isinstance(runtime.get("models"), list)
+    result = []
+    if assistx_valid:
+        for row in assistx["models"][:50]:
+            if (not isinstance(row, dict) or not isinstance(row.get("id"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@+ -]{0,119}", row["id"])
+                    or type(row.get("nodes")) is not int or not 0 <= row["nodes"] <= 100):
+                continue
+            result.append({
+                "id": row["id"], "name": row["id"], "nodes": row["nodes"],
+                "source": "assistx_local_inventory", "status": "assistx_reported",
+                "loaded_instances": None, "independently_verified": False,
+            })
+    if runtime_valid:
+        for row in runtime["models"][:50]:
+            if (not isinstance(row, dict)
+                    or not isinstance(row.get("id"), str)
+                    or not re.fullmatch(r"lmstudio-[a-f0-9]{20}", row["id"])
+                    or not isinstance(row.get("name"), str)
+                    or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._+():-]{0,89}", row["name"])
+                    or ".." in row["name"]
+                    or type(row.get("loaded_instances")) is not int
+                    or not 0 <= row["loaded_instances"] <= 64):
+                continue
+            result.append({
+                "id": row["id"], "name": row["name"], "nodes": 0,
+                "source": "lmstudio_native_catalog",
+                "status": "runtime_reported_loaded" if row["loaded_instances"] else "catalog_available",
+                "loaded_instances": row["loaded_instances"],
+                "independently_verified": False,
+            })
+    status = ("reported" if result else "reported_empty") if (
+        assistx_valid or runtime_valid) else "unavailable"
+    return {
+        "status": status,
+        "source": "multiple_read_only_sources",
+        "assistx_status": ("reported" if assistx["models"] else "reported_empty")
+            if assistx_valid else "unavailable",
+        "runtime_status": ("reported" if runtime["models"] else "reported_empty")
+            if runtime_valid else "unavailable",
+        "observer_observed_at": {
+            "assistx": assistx.get("observed_at") if assistx_valid else None,
+            "lmstudio": runtime.get("observed_at") if runtime_valid else None,
+        },
+        "models": result[:100],
+    }
 
 
 @router.get("/sessions")

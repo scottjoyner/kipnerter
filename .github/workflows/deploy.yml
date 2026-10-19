@@ -268,8 +268,10 @@ jobs:
                   data.get('tailscale_status') if name == 'nodes' else data.get('status')
               )
               if name == 'models':
-                  if status not in ('reported','reported_empty') or data.get('source') != 'assistx_local_inventory':
-                      raise SystemExit('models: authenticated, sanitized AssistX inventory unavailable')
+                  if status not in ('reported','reported_empty') or data.get('source') != 'multiple_read_only_sources':
+                      raise SystemExit('models: authenticated multi-source inventory unavailable')
+                  if data.get('assistx_status') not in ('reported','reported_empty') or data.get('runtime_status') not in ('reported','reported_empty'):
+                      raise SystemExit('models: source-specific AssistX/native runtime witness unavailable')
               elif name == 'traces':
                   if status not in ('live', 'historical') or not data.get('traces'):
                       raise SystemExit('traces: authenticated metadata index unavailable')
