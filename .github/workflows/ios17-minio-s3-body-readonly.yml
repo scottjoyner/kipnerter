@@ -1,0 +1,85 @@
+name: Kipnerter 1.7 S3 Object Content Parity — Offline Restore
+
+on:
+  push:
+    branches: [release/17-minio-content-integrated-20261019]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-17-restored-s3-byte-parity-readonly
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    if: >-
+      ${{ github.repository == 'scottjoyner/kipnerter' &&
+          github.actor == github.repository_owner &&
+          contains(github.event.head_commit.message, '[ios17-s3-content-readonly]') }}
+    name: SHA-256 hash bounded S3 bodies in memory against network-none scratch restore
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 18
+    steps:
+      - name: Exact first-party verifier source checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify seven new and six existing deny-only tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest \
+            scripts.tests.test_portal_minio_s3_content \
+            scripts.tests.test_portal_minio_s3_parity -v
+          python3 -m py_compile scripts/portal_minio_s3_parity.py
+          grep -Fq -- '"--network","none"' scripts/portal_minio_s3_parity.py
+          grep -Fq 'MAX_SINGLE_OBJECT=32*1024*1024' scripts/portal_minio_s3_parity.py
+          grep -Fq 'SOURCE="ad4cffe6e1fe6c659d97e48a96d220f2f0543c55"' \
+            scripts/portal_minio_s3_parity.py
+      - name: Join intended authenticated Tailscale CI principal
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+      - name: Enforce unique tagged production host and private backup receipt
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="$(tailscale status --json |
+            python3 scripts/portal_deploy_target.py --environment production)"
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]]
+          tailscale ping --timeout=8s "$TARGET" >/dev/null
+          tailscale ssh "kipnerter@$TARGET" \
+            'set -eu; test "$(id -un)" = kipnerter;
+             test -f /home/kipnerter/.local/state/kipnerter-release/state-backups/ios17-precutover-ad4cffe6e1fe/snapshot-receipt.json;
+             docker compose version >/dev/null'
+          echo "address=$TARGET" >> "$GITHUB_OUTPUT"
+      - name: Compare live and offline-restored object bodies without printing content
+        shell: bash
+        env:
+          TARGET: ${{ steps.target.outputs.address }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]]
+          cat scripts/portal_minio_s3_parity.py |
+            timeout 600 tailscale ssh "kipnerter@$TARGET" \
+              'python3 - --content-verify'
+      - name: Explicitly retain live cutover and external custody HOLD
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "### Restored MinIO object-byte comparison"
+            echo "- S3 object body SHA-256 parity: **verified in memory**"
+            echo "- Object names/bodies/creds in logs: **none**"
+            echo "- Object size/count: bounded, no outbound object transfers"
+            echo "- Scratch MinIO: network none; prod MinIO volumes: untouched"
+            echo "- Independent off-host custody and write-fenced PIT consistency: **NOT VERIFIED**"
+            echo "- Production API and portal cutover: **NOT AUTHORIZED**"
+          } >> "$GITHUB_STEP_SUMMARY"
