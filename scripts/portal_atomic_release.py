@@ -153,8 +153,13 @@ def prepare(root_path, verified_source, environment_file, revision):
             receipt.stat().st_mode & 0o077 or receipt.stat().st_size > 1024 * 1024):
         raise ValueError("missing private source-receipt")
     record = json.loads(receipt.read_text())
+    expected_fields = {"platform_sha", "spatial_api_sha", "archive_sha256", "files"}
+    if isinstance(record, dict) and "gateway_api_sha" in record:
+        expected_fields.add("gateway_api_sha")
     if (not isinstance(record, dict) or
-            set(record) != {"platform_sha", "spatial_api_sha", "archive_sha256", "files"} or
+            set(record) != expected_fields or
+            ("gateway_api_sha" in record and
+             not re.fullmatch(r"[a-f0-9]{40}", str(record["gateway_api_sha"]))) or
             record["platform_sha"] != revision or
             not re.fullmatch(r"[a-f0-9]{40}", str(record["spatial_api_sha"])) or
             not re.fullmatch(r"[a-f0-9]{64}", str(record["archive_sha256"])) or
@@ -168,6 +173,18 @@ def prepare(root_path, verified_source, environment_file, revision):
         raise ValueError("candidate environment must be an external private regular file")
     if env.stat().st_size > 1024 * 1024:
         raise ValueError("candidate environment too large")
+    # Version-2 bundles contain an independent gateway checkout. Never let the
+    # prepared runtime advertise a different Git SHA than the verified source.
+    gateway_sha = record.get("gateway_api_sha")
+    if gateway_sha:
+        paths = {row.get("path") for row in record["files"] if isinstance(row, dict)}
+        if not {"gateway-api/Dockerfile", "compose.gateway-031.yml"}.issubset(paths):
+            raise ValueError("third-source gateway files not attested")
+        prefix = b"KIPNERTER_GATEWAY_SOURCE_SHA="
+        stamps = [line[len(prefix):] for line in env.read_bytes().splitlines()
+                  if line.startswith(prefix)]
+        if len(stamps) != 1 or stamps[0] != gateway_sha.encode("ascii"):
+            raise ValueError("gateway runtime Git SHA differs from approved source")
     seen = set()
     files = []
     total = 0
