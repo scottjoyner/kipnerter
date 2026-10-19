@@ -14,7 +14,7 @@ services:
       KIPNERTER_GATEWAY_BEARER_TOKEN: ${KIPNERTER_GATEWAY_TOKEN:?Explicit portal owner gateway token required}
       KIPNERTER_LOCATION_HMAC_SECRET: ${KIPNERTER_LOCATION_HMAC_SECRET:?Dedicated location HMAC secret required}
       KIPNERTER_DB_PATH: /data/kipnerter-api.sqlite3
-      KIPNERTER_RELEASE_SHA: ${KIPNERTER_RELEASE_SHA:?Pinned portal release SHA required}
+      KIPNERTER_RELEASE_SHA: ${KIPNERTER_GATEWAY_SOURCE_SHA:?Independently checked-out API 0.3.1 Git commit required}
     expose:
       - "8000"
     read_only: true

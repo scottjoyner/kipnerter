@@ -26,7 +26,7 @@ class Gateway031OverlayTests(unittest.TestCase):
 
     def test_require_explicit_secrets_fail_closed(self):
         for key in ("KIPNERTER_GATEWAY_TOKEN", "KIPNERTER_LOCATION_HMAC_SECRET",
-                    "KIPNERTER_RELEASE_SHA"):
+                    "KIPNERTER_GATEWAY_SOURCE_SHA"):
             self.assertIn("${"+key+":?", self.text)
 
     def test_location_state_is_independent_named_volume(self):

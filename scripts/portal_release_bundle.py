@@ -28,7 +28,7 @@ SHA40 = re.compile(r"[0-9a-f]{40}\Z")
 SHA64 = re.compile(r"[0-9a-f]{64}\Z")
 MANIFEST = "release-provenance.json"
 ALLOWED_PREFIXES = ("apps/", "infra/", "scripts/")
-ALLOWED_FILES = {"docker-compose.yml", "compose.spatial.yml", "compose.staging.yml"}
+ALLOWED_FILES = {"docker-compose.yml", "compose.spatial.yml", "compose.staging.yml", "compose.gateway-031.yml"}
 DENIED_PARTS = {".git", "node_modules", ".next", "__pycache__", ".venv", "venv", "dist", "coverage"}
 
 
@@ -83,17 +83,34 @@ def git_entries(repo, prefix, allowed):
         yield dest, int(mode[-3:], 8), data
 
 
+def _tracked_source_allowed(name):
+    # Git may legitimately track an .env.example template. It is never a
+    # deployable input: omit ALL dotenv variants and build caches before
+    # forming a manifest. safe_path still rejects a forged archive that has
+    # any of these names.
+    parts = name.split("/")
+    return bool(name) and all(part not in DENIED_PARTS and
+                              not part.startswith(".env") for part in parts)
+
+
 def platform_file(name):
-    return name in ALLOWED_FILES or name.startswith(ALLOWED_PREFIXES)
+    return _tracked_source_allowed(name) and (
+        name in ALLOWED_FILES or name.startswith(ALLOWED_PREFIXES)
+    )
 
 
 def spatial_file(name):
-    return bool(name)  # safe_path enforces component restrictions
+    return _tracked_source_allowed(name)
 
 
-def build(platform_repo, spatial_repo, platform_sha, spatial_sha, output):
+def build(platform_repo, spatial_repo, platform_sha, spatial_sha, output,
+          gateway_repo=None, gateway_sha=None):
+    if bool(gateway_repo) != bool(gateway_sha):
+        raise ValueError("gateway source and exact SHA must be supplied together")
     exact_sha(platform_repo, platform_sha)
     exact_sha(spatial_repo, spatial_sha)
+    if gateway_sha:
+        exact_sha(gateway_repo, gateway_sha)
     output = Path(output)
     if output.is_symlink():
         raise ValueError("cannot replace linked release artifact")
@@ -101,15 +118,20 @@ def build(platform_repo, spatial_repo, platform_sha, spatial_sha, output):
         raise ValueError("release bundle already exists; refusing overwrite")
     all_files = list(git_entries(platform_repo, '', platform_file))
     all_files.extend(git_entries(spatial_repo, 'spatial-api/', spatial_file))
+    if gateway_sha:
+        all_files.extend(git_entries(gateway_repo, 'gateway-api/', spatial_file))
     all_files.sort(key=lambda x: x[0])
     if not all_files or len(all_files) > MAX_ENTRIES:
         raise ValueError("empty or oversized release")
     paths = [x[0] for x in all_files]
     if len(set(paths)) != len(paths):
         raise ValueError("overlapping release paths")
-    for essential in ('docker-compose.yml', 'compose.spatial.yml',
-                      'apps/web/Dockerfile', 'apps/api/Dockerfile',
-                      'spatial-api/Dockerfile'):
+    essentials = ('docker-compose.yml', 'compose.spatial.yml',
+                  'apps/web/Dockerfile', 'apps/api/Dockerfile',
+                  'spatial-api/Dockerfile')
+    if gateway_sha:
+        essentials += ('compose.gateway-031.yml', 'gateway-api/Dockerfile')
+    for essential in essentials:
         if essential not in paths:
             raise ValueError("missing required tracked release input")
     total = sum(len(data) for _, _, data in all_files)
@@ -118,8 +140,11 @@ def build(platform_repo, spatial_repo, platform_sha, spatial_sha, output):
     digest_items = [{'path': name, 'mode': mode, 'bytes': len(data),
                      'sha256': hashlib.sha256(data).hexdigest()}
                     for name, mode, data in all_files]
-    manifest = {'version': 1, 'platform_sha': platform_sha,
+    manifest = {'version': 2 if gateway_sha else 1,
+                'platform_sha': platform_sha,
                 'spatial_api_sha': spatial_sha, 'files': digest_items}
+    if gateway_sha:
+        manifest['gateway_api_sha'] = gateway_sha
     manifest_bytes = (json.dumps(manifest, separators=(',', ':'), sort_keys=True) + '\n').encode()
     if len(manifest_bytes) > MAX_FILE:
         raise ValueError("release manifest is too large")
@@ -140,7 +165,7 @@ def build(platform_repo, spatial_repo, platform_sha, spatial_sha, output):
                         archive.addfile(member, io.BytesIO(data))
             stream.flush()
             os.fsync(stream.fileno())
-        verify(tmp, platform_sha, spatial_sha)
+        verify(tmp, platform_sha, spatial_sha, gateway_sha=gateway_sha)
         os.replace(tmp, output)
         return manifest
     finally:
@@ -148,7 +173,9 @@ def build(platform_repo, spatial_repo, platform_sha, spatial_sha, output):
             os.unlink(tmp)
 
 
-def verify(archive, platform_sha, spatial_sha):
+def verify(archive, platform_sha, spatial_sha, gateway_sha=None):
+    if gateway_sha is not None and not SHA40.fullmatch(gateway_sha):
+        raise ValueError("invalid gateway revision SHA")
     if not SHA40.fullmatch(platform_sha) or not SHA40.fullmatch(spatial_sha):
         raise ValueError("invalid pinned commit revision")
     archive = Path(archive)
@@ -178,7 +205,8 @@ def verify(archive, platform_sha, spatial_sha):
         for item in bundle:
             name = safe_path(item.name)
             if (not item.isfile() or name in members or
-                    (name != MANIFEST and not (platform_file(name) or name.startswith('spatial-api/'))) or
+                    (name != MANIFEST and not (platform_file(name) or name.startswith('spatial-api/')
+                                        or (gateway_sha and name.startswith('gateway-api/')))) or
                     item.mode not in (0o600, 0o644, 0o755) or
                     item.size > MAX_FILE or len(members) >= MAX_ENTRIES + 1):
                 raise ValueError("unsafe bundle entry")
@@ -192,11 +220,18 @@ def verify(archive, platform_sha, spatial_sha):
     if MANIFEST not in members:
         raise ValueError("missing provenance manifest")
     provenance = json.loads(members.pop(MANIFEST)[1])
-    if (not isinstance(provenance, dict) or set(provenance) !=
-            {'version', 'platform_sha', 'spatial_api_sha', 'files'} or
-            provenance['version'] != 1 or provenance['platform_sha'] != platform_sha or
-            provenance['spatial_api_sha'] != spatial_sha or not isinstance(provenance['files'], list)):
+    expected_fields = {'version', 'platform_sha', 'spatial_api_sha', 'files'}
+    if gateway_sha:
+        expected_fields.add('gateway_api_sha')
+    if (not isinstance(provenance, dict) or set(provenance) != expected_fields or
+            provenance['version'] != (2 if gateway_sha else 1) or
+            provenance['platform_sha'] != platform_sha or
+            provenance['spatial_api_sha'] != spatial_sha or
+            (gateway_sha and provenance.get('gateway_api_sha') != gateway_sha) or
+            not isinstance(provenance['files'], list)):
         raise ValueError("wrong release provenance")
+    if gateway_sha and not {'gateway-api/Dockerfile', 'compose.gateway-031.yml'}.issubset(members):
+        raise ValueError("gateway release missing exact checked-out source and overlay")
     listed = set()
     for row in provenance['files']:
         if not isinstance(row, dict) or set(row) != {'path','mode','bytes','sha256'}:
@@ -213,7 +248,8 @@ def verify(archive, platform_sha, spatial_sha):
     return provenance
 
 
-def stage_verified(archive, platform_sha, spatial_sha, archive_sha256, revisions_root):
+def stage_verified(archive, platform_sha, spatial_sha, archive_sha256, revisions_root,
+                   gateway_sha=None):
     """Verify the transferred bytes and materialize a *new* private release.
 
     No current-release symlinks, live Compose directory, database or service
@@ -234,7 +270,7 @@ def stage_verified(archive, platform_sha, spatial_sha, archive_sha256, revisions
         return h.hexdigest()
     if file_digest() != archive_sha256:
         raise ValueError("transferred bundle checksum differs from approved CI artifact")
-    manifest = verify(archive, platform_sha, spatial_sha)
+    manifest = verify(archive, platform_sha, spatial_sha, gateway_sha=gateway_sha)
     root = Path(revisions_root).absolute()
     if root.is_symlink() or (root.exists() and not root.is_dir()):
         raise ValueError("untrusted revision store")
@@ -277,6 +313,8 @@ def stage_verified(archive, platform_sha, spatial_sha, archive_sha256, revisions
         # instead of trusting a bare directory name or unsourced checkout.
         receipt = {"platform_sha": platform_sha, "spatial_api_sha": spatial_sha,
                    "archive_sha256": archive_sha256, "files": manifest["files"]}
+        if gateway_sha:
+            receipt["gateway_api_sha"] = gateway_sha
         receipt_path = scratch / ".portal-staged.json"
         with receipt_path.open("x", encoding="utf-8") as stream:
             stream.write(json.dumps(receipt, separators=(",", ":"), sort_keys=True) + "\n")
@@ -297,6 +335,8 @@ def main():
     parser.add_argument('operation', choices=['build', 'verify', 'stage'])
     parser.add_argument('--platform-root', default='.')
     parser.add_argument('--spatial-root', default='spatial-api')
+    parser.add_argument('--gateway-root', default='')
+    parser.add_argument('--gateway-sha', default='')
     parser.add_argument('--platform-sha', required=True)
     parser.add_argument('--spatial-sha', required=True)
     parser.add_argument('--archive', required=True)
@@ -305,14 +345,17 @@ def main():
     args = parser.parse_args()
     try:
         if args.operation == 'build':
-            value = build(args.platform_root, args.spatial_root, args.platform_sha, args.spatial_sha, args.archive)
+            value = build(args.platform_root, args.spatial_root, args.platform_sha, args.spatial_sha,
+                          args.archive, args.gateway_root or None, args.gateway_sha or None)
         elif args.operation == 'verify':
-            value = verify(args.archive, args.platform_sha, args.spatial_sha)
+            value = verify(args.archive, args.platform_sha, args.spatial_sha,
+                           gateway_sha=args.gateway_sha or None)
         else:
             if not args.revisions_root:
                 raise ValueError("private revision store required")
             prepared = stage_verified(args.archive, args.platform_sha, args.spatial_sha,
-                                      args.archive_sha256, args.revisions_root)
+                                      args.archive_sha256, args.revisions_root,
+                                      gateway_sha=args.gateway_sha or None)
             print("Transferred release independently verified and prepared: " + prepared.name)
             return
         print('Release bundle verified: file_count=' + str(len(value['files'])))
