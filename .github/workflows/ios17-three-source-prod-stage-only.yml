@@ -1,6 +1,8 @@
 name: Kipnerter 1.7 Stage Three-Source Release Without Cutover
 
 on:
+  push:
+    branches: [release/1-7-stage-three-source-prod-no-cutover-20261019]
   workflow_dispatch:
 
 permissions:
@@ -12,7 +14,11 @@ concurrency:
 
 jobs:
   stage-only:
-    if: ${{ github.repository == 'scottjoyner/kipnerter' && github.actor == github.repository_owner }}
+    if: >-
+      ${{ github.repository == 'scottjoyner/kipnerter' &&
+          github.actor == github.repository_owner &&
+          (github.event_name == 'workflow_dispatch' ||
+           contains(github.event.head_commit.message, '[ios17-source-stage-approved]')) }}
     name: Verify and stage exact platform/spatial/gateway bytes on production host
     runs-on: ubuntu-latest
     environment: production
