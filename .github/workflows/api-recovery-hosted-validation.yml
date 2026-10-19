@@ -25,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 22
     steps:
+      # Both workflow and smoke fixture exist at this full branch head.
       - name: Check out trusted portal CI smoke fixture
         uses: actions/checkout@v4
         with:
