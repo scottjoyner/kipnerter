@@ -1,0 +1,97 @@
+name: Stateless Fleet Chat Staging — Readiness Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      planned_portal_sha:
+        description: Exact portal candidate SHA (must be on the reviewed portal branch)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-stateless-preview-readiness
+  cancel-in-progress: false
+
+jobs:
+  read-only:
+    if: ${{ github.repository == 'scottjoyner/kipnerter' && github.actor == github.repository_owner }}
+    environment: staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      PLANNED_SHA: ${{ inputs.planned_portal_sha }}
+      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+      TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+      NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+      TSIDP_ISSUER: ${{ secrets.TSIDP_ISSUER }}
+      TSIDP_CLIENT_ID: ${{ secrets.TSIDP_CLIENT_ID }}
+      TSIDP_CLIENT_SECRET: ${{ secrets.TSIDP_CLIENT_SECRET }}
+      KIPNERTER_ALLOWED_EMAILS: ${{ secrets.KIPNERTER_ALLOWED_EMAILS }}
+      KIPNERTER_ALLOWED_TSIDP_SUBJECTS: ${{ secrets.KIPNERTER_ALLOWED_TSIDP_SUBJECTS }}
+      FLEET_MONITOR_BASE_URL: ${{ secrets.FLEET_MONITOR_BASE_URL }}
+      FLEET_MONITOR_TOKEN: ${{ secrets.FLEET_MONITOR_TOKEN }}
+      KIPNERTER_GATEWAY_TOKEN: ${{ secrets.KIPNERTER_GATEWAY_TOKEN }}
+      KIPNERTER_DEPLOY_HOST: ${{ secrets.KIPNERTER_DEPLOY_HOST }}
+      KIPNERTER_DEPLOY_USER: ${{ secrets.KIPNERTER_DEPLOY_USER }}
+      KIPNERTER_ENV: staging
+      NEXTAUTH_URL: https://staging.kipnerter.com
+    steps:
+      - name: Check out exact reviewed candidate (no saved credentials)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.planned_portal_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify candidate identity and ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$PLANNED_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 2
+          [[ "$(git rev-parse HEAD)" = "$PLANNED_SHA" ]] || exit 2
+          git merge-base --is-ancestor "$PLANNED_SHA"             refs/remotes/origin/feat/unified-fleet-portal-20261017
+
+      - name: Exercise deny-only stateless configuration tests
+        run: python3 -m unittest tests.test_portal_stateless_readiness -v
+
+      - name: Inspect only the stateless preview inputs
+        shell: bash
+        run: python3 scripts/portal_stateless_readiness.py --planned-sha "$PLANNED_SHA"
+
+      - name: Check exact service graph without creating containers
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose -p kipnerter-fleet-preview             -f docker-compose.yml -f compose.fleet-preview.yml config --format json |
+            python3 scripts/portal_fleet_preview_preflight.py
+
+      - name: Join authorized Tailscale CI identity
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+
+      - name: Verify real staging tag isolation, without SSH or writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$KIPNERTER_DEPLOY_HOST" ]] || exit 2
+          TARGET="$(tailscale status --json |
+            python3 scripts/portal_deploy_target.py               --environment staging --preferred-host "$KIPNERTER_DEPLOY_HOST")"
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 2
+          tailscale ping --timeout=8s "$TARGET" >/dev/null
+          echo "Qualified exclusively staging-tagged peer reachable; no SSH requested."
+
+      - name: Verify live tsidp discovery, without browser sign-in
+        shell: bash
+        run: python3 scripts/portal_oidc_preflight.py
+
+      - name: Preserve read-only release boundary
+        shell: bash
+        run: |
+          echo "PASS: staging configuration, Compose isolation, Tailnet role and OIDC discovery only."
+          echo "NO-GO: real browser sign-in, observer ACL, SSH operator approval, rollback and any cutover remain separately gated."
