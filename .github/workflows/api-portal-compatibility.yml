@@ -1,0 +1,50 @@
+name: API 0.3.1 portal-control-plane compatibility (read-only)
+
+on:
+  push:
+    branches:
+      - ci/api-recovery-preserve-control-plane-20261019
+    paths:
+      - .github/workflows/api-portal-compatibility.yml
+      - scripts/verify_api_recovery_portal_control_plane.py
+      - scripts/tests/test_api_recovery_portal_control_plane.py
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    if: ${{ github.repository == 'scottjoyner/kipnerter' && github.actor == github.repository_owner }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Exact portal source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Exact standalone API 0.3.1 recovery source
+        uses: actions/checkout@v4
+        with:
+          repository: scottjoyner/kipnerter-api
+          ref: c6a42e0edaeedda06d3702f2f07c82cc8bcd4d59
+          path: recovery-api
+          token: ${{ secrets.KIPNERTER_API_REPO_TOKEN }}
+          persist-credentials: false
+      - name: Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Source and negative tests
+        run: python3 -m unittest scripts.tests.test_api_recovery_portal_control_plane -q
+      - name: Generate exact FastAPI OpenAPI for both sources without network
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C recovery-api rev-parse HEAD)" =             'c6a42e0edaeedda06d3702f2f07c82cc8bcd4d59'
+          python3 -m pip install -r apps/api/requirements.txt
+          python3 -m pip install -e './recovery-api[test]'
+          (cd apps/api && PYTHONPATH=. python3 -c             'import json; from app.main import app; print(json.dumps(app.openapi()))')             > "$RUNNER_TEMP/portal-openapi.json"
+          (cd recovery-api && PYTHONPATH=. python3 -c             'import json; from app.main import app; print(json.dumps(app.openapi()))')             > "$RUNNER_TEMP/recovery-openapi.json"
+      - name: Require preservation of operator control-plane methods
+        run: |
+          python3 scripts/verify_api_recovery_portal_control_plane.py             --portal "$RUNNER_TEMP/portal-openapi.json"             --candidate "$RUNNER_TEMP/recovery-openapi.json"
