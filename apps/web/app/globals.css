@@ -116,3 +116,14 @@ h1 { font-size: clamp(3rem, 8vw, 6.8rem); line-height: .94; letter-spacing: -.05
 .chat-compose-send:disabled { border: 1px solid #344153; background: #243147; color: #aebad0; cursor: not-allowed; }
 .chat-compose-custody { color: #a5b4cd; font-size: 12px; line-height: 1.5; margin: 12px 4px 0; }
 @media (max-width: 600px) { .chat-compose-form { padding: 12px; } .chat-compose-actions { gap: 8px; } }
+
+/* Read-only fleet questions never leave the authenticated browser session. */
+.fleet-chat-history { width: min(100%, 820px); margin: 0 auto 16px; display: grid; gap: 12px; }
+.fleet-chat-message { border: 1px solid #374760; border-radius: 12px; padding: 12px 16px; background: #17253b; overflow-wrap: anywhere; }
+.fleet-chat-message.question { margin-left: 12%; background: #1d304c; }
+.fleet-chat-message.answer { margin-right: 8%; border-color: #476386; }
+.fleet-chat-message strong { display: block; color: #cadcfb; font-size: 12px; margin-bottom: 6px; }
+.fleet-chat-message p { white-space: pre-wrap; margin: 0; line-height: 1.55; color: #e6eefb; font-size: 14px; }
+.chat-compose-send:not(:disabled) { color: #0c1e32; border: 1px solid #9dc9fa; background: #9dc9fa; cursor: pointer; }
+.chat-compose-send:not(:disabled):hover { background: #c1ddff; }
+@media (max-width: 600px) { .fleet-chat-message.question, .fleet-chat-message.answer { margin: 0; } }
