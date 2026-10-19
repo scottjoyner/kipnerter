@@ -90,21 +90,31 @@ def main()->int:
         containers={}
         images={}
         for name in EXPECTED:
-            item=json.loads(command(["docker","inspect","--format","{{json .}}",name]))
-            label=(item.get("Config",{}).get("Labels") or {})
-            image=item.get("Image")
+            # Format accesses only allowlisted Docker fields. Never request
+            # full Config.Env, private Mount Source paths or image history.
+            line=command(["docker","inspect","--format",
+                '{{.State.Running}}|{{.Image}}|'
+                '{{index .Config.Labels "com.docker.compose.project"}}|'
+                '{{index .Config.Labels "com.docker.compose.project.working_dir"}}|'
+                '{{index .Config.Labels "com.docker.compose.service"}}',
+                name])
+            fields=line.split("|")
+            if len(fields)!=5:
+                raise ValueError("untrusted container identity fields")
+            running,image,project,working_dir,service=fields
             containers[name]={
-                "running":item.get("State",{}).get("Running"),
+                "running":running=="true",
                 "image":image,
-                "project":label.get("com.docker.compose.project"),
-                "working_dir":label.get("com.docker.compose.project.working_dir"),
-                "service":label.get("com.docker.compose.service"),
+                "project":project,
+                "working_dir":working_dir,
+                "service":service,
             }
             if isinstance(image,str) and image not in images:
-                meta=json.loads(command(["docker","image","inspect","--format","{{json .}}",image]))
-                if meta.get("Id")!=image:
+                meta=command(["docker","image","inspect","--format",
+                    "{{.Id}}|{{.Size}}",image]).split("|")
+                if len(meta)!=2 or meta[0]!=image or not meta[1].isdigit():
                     raise ValueError("image source changed during inspection")
-                images[image]=meta.get("Size")
+                images[image]=int(meta[1])
         result=validate(containers,images,shutil.disk_usage(Path("/opt/kipnerter")).free)
         print(json.dumps(result,sort_keys=True))
         return 0 if result["conservative_local_image_retention_capacity"] else 3
