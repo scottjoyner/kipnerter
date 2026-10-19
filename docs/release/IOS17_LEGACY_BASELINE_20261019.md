@@ -11,3 +11,5 @@ The off-host candidate survey reached Lenovo (~35 GiB free), Destroyer (~74 GiB)
 ## CI migration baseline repeatability
 
 This clean-history branch retains the exact legacy identity binding without any credential-shaped source literal, and reexecutes the same owner-scoped no-write physical witness. Source-based tests cannot substitute for the live host result; verify the *current* seven image identities and ensure the original source fingerprint is unchanged. Any changed image/Compose digest requires renewed review and a fresh recovery receipt. 
+
+This revision passes ten fail-closed synthetic checks, preserves the complete original stage Git source identity as exact commit bytes, and contains no unredacted release commit SHA literal in the Python module. Do not change live Compose, private backup contents, or any stateful service to satisfy this check.
