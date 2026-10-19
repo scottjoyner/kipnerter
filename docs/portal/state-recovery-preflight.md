@@ -84,3 +84,40 @@ Compose file.
 No image was downloaded, no container was run, and no volume, database, or
 MinIO object was read. The registry observation does not complete the
 required synthetic Postgres/MinIO backup and restore acceptance.
+
+## October 19: registry manifest-byte verification (no image pulls)
+
+The image-custody check now independently reads the formatted registry manifest
+**and** raw manifest bytes via two read-only `docker buildx imagetools inspect`
+requests. SHA-256 of the raw bytes must match the exact digest returned for
+the configured tag. If a tag changes between the two requests, the bytes are
+missing, the registry returns an error, or either document is malformed or
+oversized, image custody is **not** verified. The probe never downloads OCI
+image layers, calls Docker `pull/run`, or records registry credentials/errors.
+
+An OCI index that contains **exactly one** linux/amd64 descriptor may also
+supply an architecture-specific child manifest digest. A plain single-image
+manifest has no comparable explicit platform descriptor. In either case,
+`architecture_verified`, `restore_equivalence_verified` and
+`recovery_approved` **remain false** until a separate, controlled runtime and
+restore test is witnessed. Manifest bytes are not a signature or proof of
+safe binary behavior.
+
+Actual read-only observation on `x1-370` on October 19, 2026:
+
+| Configured service | Registry evidence | Recovery result |
+| --- | --- | --- |
+| `postgis/postgis:16-3.4` | Raw single-manifest SHA-256 equals registry digest `sha256:44126d872ac91993766c341e369c539e8196614321765d36a6f1bab0419a5fa5` | **HOLD**: architecture and restore equivalence unproven |
+| `minio/minio:latest` | Registry manifest unavailable from this host | **HOLD**: digest and platform unproven |
+| Dated MinIO `minio/minio:RELEASE.2025-09-07T16-13-09Z` (exploratory candidate only) | Registry manifest unavailable from this host | **Not qualified; not deployed** |
+
+Docker Hub labels the `minio/minio` repository archived and its public
+reference examples now favor `quay.io/minio/minio`. Treat changing registries
+or replacing MinIO with a different distribution as a **separate operator
+change** requiring license, version, architecture, S3 behavior and on-disk
+format verification. Do not silently replace the running image or assume
+that a familiar tag refers to identical contents.
+
+No stateful images were pulled, deployed, or started. No existing volumes were
+created, mounted or written. Current production and staging Compose files
+remain unchanged and the release authorization stays NO-GO.
