@@ -122,7 +122,7 @@ class ThreeSourceBundleTests(unittest.TestCase):
                                      root/"verified",gateway_sha=gateway_sha)
             layout=managed(root/"managed")
             env=root/"candidate.env"
-            env.write_text("KIPNERTER_GATEWAY_SOURCE_SHA="+gateway_sha+"\\n")
+            env.write_text("KIPNERTER_GATEWAY_SOURCE_SHA="+gateway_sha+"\n")
             env.chmod(0o600)
             ready=prepare(layout,extracted,env,p)
             self.assertTrue((ready/"gateway-api/Dockerfile").is_file())
@@ -141,7 +141,7 @@ class ThreeSourceBundleTests(unittest.TestCase):
                                      root/"verified",gateway_sha=gateway_sha)
             layout=managed(root/"managed")
             env=root/"candidate.env"
-            env.write_text("KIPNERTER_GATEWAY_SOURCE_SHA="+("c"*40)+"\\n")
+            env.write_text("KIPNERTER_GATEWAY_SOURCE_SHA="+("c"*40)+"\n")
             env.chmod(0o600)
             with self.assertRaisesRegex(ValueError,"gateway runtime Git SHA"):
                 prepare(layout,extracted,env,p)
