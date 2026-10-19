@@ -1,0 +1,3 @@
+# Source-pinned production SSH witness — no mutations
+
+The deployment workflow expects the Tailscale OAuth identity tagged `tag:kipnerter-ci` to SSH as non-root user `kipnerter` to exactly one online node with tag `tag:kipnerter-prod`. This one-time CI check uses that exact deploy principal for read-only commands only. It does not alter any service, config, secret, file, Postgres database, MinIO volume, or OAuth grant. A green SSH result would demonstrate connectivity, *not* safe data recovery or permission to deploy. The source-controlled target selector fails closed on missing/ambiguous/dual-tagged peers. The actual portal release still requires OIDC and independent signed DB/volume restore witnesses before cutover.
