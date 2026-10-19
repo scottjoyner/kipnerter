@@ -44,6 +44,7 @@ class ScratchRestoreSafetyTests(unittest.TestCase):
             (p/"snapshot-receipt.json").write_text(json.dumps({
                 "schema":1,"source_staging_sha":"a"*40,
                 "postgres_archive_toc_parsed":True,"safe_to_cutover":False}))
+            (p/"snapshot-receipt.json").chmod(0o600)
             with self.assertRaisesRegex(ValueError,"does not match"):
                 load_receipt(p)
 
