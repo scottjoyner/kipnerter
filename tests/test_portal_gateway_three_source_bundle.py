@@ -23,9 +23,16 @@ class ThreeSourceBundleTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(platform), "add", "compose.gateway-031.yml"], check=True)
         subprocess.run(["git", "-C", str(platform), "commit", "-qm", "reviewed opt-in overlay"], check=True)
         p = subprocess.check_output(["git","-C",str(platform),"rev-parse","HEAD"],text=True).strip()
+        (spatial / ".env.example").write_text("NON_RELEASE_TEMPLATE=example\n")
+        subprocess.run(["git", "-C", str(spatial), "add", ".env.example"], check=True)
+        subprocess.run(["git", "-C", str(spatial), "commit", "-qm",
+                        "track nondeployable dotenv template"], check=True)
+        s = subprocess.check_output(["git","-C",str(spatial),"rev-parse","HEAD"],
+                                    text=True).strip()
         gateway = root / "gateway"
         g = repo(gateway, {
             "Dockerfile": "FROM scratch\n",
+            ".env.example": "NOT_A_DEPLOYABLE_SECRET=example\n",
             "app/main.py": "print('source pinned gateway')\n",
             "pyproject.toml": "[project]\nname = 'fixture'\nversion = '0.3.1'\n",
         })
@@ -53,6 +60,8 @@ class ThreeSourceBundleTests(unittest.TestCase):
                 self.assertIn("gateway-api/app/main.py",names)
                 self.assertIn("compose.gateway-031.yml",names)
                 self.assertNotIn("gateway-api/.env",names)
+                self.assertNotIn("gateway-api/.env.example",names)
+                self.assertNotIn("spatial-api/.env.example",names)
                 self.assertNotIn("gateway-api/__pycache__/secret.pyc",names)
                 self.assertEqual(src.extractfile("gateway-api/app/main.py").read(),
                                  b"print('source pinned gateway')\n")
