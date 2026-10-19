@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import ChatComposer from "./ChatComposer";
 import { snapshotExpired, canApplyPoll } from "../../lib/telemetry-freshness.mjs";
 
 const SECTIONS = [
@@ -25,6 +26,7 @@ function Empty({ title, detail }) {
 }
 export default function FleetConsole({ email }) {
   const [tab, setTab] = useState("chat");
+  const [chatDraft, setChatDraft] = useState("");
   const [data, setData] = useState({});
   const [errors, setErrors] = useState({});
   const [updated, setUpdated] = useState(null);
@@ -149,7 +151,7 @@ export default function FleetConsole({ email }) {
           <section className="workspace-panel chat-workspace">
             <div className="panel-heading"><div><h2>New conversation</h2><p>Model routing is held until authenticated admission and receipt validation are connected.</p></div><Badge status="not_configured" /></div>
             <div className="chat-welcome"><div className="chat-mark">✳</div><h3>What should we work on?</h3><p>Auto-AssistX, Sophia, Hermes, and OpenCode will share one conversation history and trace lineage.</p></div>
-            <div className="composer-locked"><span>◈</span><span>Chat execution is disabled until the router admission gate passes.</span><span>↵</span></div>
+            <ChatComposer draft={chatDraft} onDraftChange={setChatDraft} />
           </section>
         </>}
         {tab === "agents" && <>
