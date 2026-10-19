@@ -9,3 +9,7 @@ Even a passing capacity result is not permission to replace the live web/API con
 ## Diagnostic rerun (no OCI mutation)
 
 The first scoped production check reported a Docker CLI failure while reading image metadata, with no archive created. The verifier now reports only a fixed operation name and 1-based expected container position on any failure—no raw Docker error, image manifest, configuration, credentials or environment. Repeat the owner-gated **read-only** check; never compensate for a missing old image by building, pulling or changing a running container. This is not permission to back up or deploy.
+
+## Full uncached-image classification (no writes)
+
+A physical read-only run showed that the first running API container's immutable OCI image ID could not be retrieved through Docker image inspect. The corrected witness inspects **all seven** running Compose roles, reports only the numerical positions of missing local images and an aggregate cached-image count, and refuses a backup/export or deployment. It does not query image repositories or attempt to rebuild running images. This classification is a hard dependency of the legacy application rollback authority; an unavailable image must be recovered through an independently reviewed process, not fabricated from a live container.
