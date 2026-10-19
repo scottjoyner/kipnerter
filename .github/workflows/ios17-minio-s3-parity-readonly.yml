@@ -1,0 +1,81 @@
+name: Kipnerter 1.7 Restored MinIO S3 Metadata Parity (Read-only)
+
+on:
+  push:
+    branches:
+      - release/17-minio-s3-parity-20261019
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-17-minio-s3-metadata-readonly
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    if: >-
+      ${{ github.repository == 'scottjoyner/kipnerter' &&
+          github.actor == github.repository_owner &&
+          contains(github.event.head_commit.message, '[ios17-minio-s3-parity-readonly]') }}
+    name: Compare restored scratch S3 metadata against live object inventory
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 18
+    steps:
+      - name: Checkout exact owner-reviewed metadata-only source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify source and six negative-control tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest scripts.tests.test_portal_minio_s3_parity -v
+          python3 -m py_compile scripts/portal_minio_s3_parity.py
+          grep -Fq 'SOURCE="ad4cffe6e1fe6c659d97e48a96d220f2f0543c55"' \
+            scripts/portal_minio_s3_parity.py
+          grep -Fq '"--network","none"' scripts/portal_minio_s3_parity.py
+      - name: Join authorized Tailscale CI principal
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+      - name: Verify production target and backup custody
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="$(tailscale status --json |
+            python3 scripts/portal_deploy_target.py --environment production)"
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]]
+          tailscale ping --timeout=8s "$TARGET" >/dev/null
+          tailscale ssh "kipnerter@$TARGET" \
+            'set -eu; test "$(id -un)" = kipnerter;
+             test -f /home/kipnerter/.local/state/kipnerter-release/state-backups/ios17-precutover-ad4cffe6e1fe/snapshot-receipt.json;
+             docker compose version >/dev/null'
+          echo "address=$TARGET" >> "$GITHUB_OUTPUT"
+      - name: Compare authenticated S3 bucket and object metadata without any payload reads
+        shell: bash
+        env:
+          TARGET: ${{ steps.target.outputs.address }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]]
+          cat scripts/portal_minio_s3_parity.py |
+            timeout 480 tailscale ssh "kipnerter@$TARGET" 'python3 -'
+      - name: Preserve production cutover HOLD
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "### MinIO S3-level metadata parity"
+            echo "- Live S3 and restored scratch data queried through read-only mc listing"
+            echo "- User bucket names/object keys/credentials: not logged"
+            echo "- Scratch MinIO network: none; live MinIO service: unchanged"
+            echo "- Point-in-time write fencing, object bodies and remote custody: NOT PROVEN"
+            echo "- Portal/API production cutover: NO GO"
+          } >> "$GITHUB_STEP_SUMMARY"
