@@ -83,12 +83,24 @@ def git_entries(repo, prefix, allowed):
         yield dest, int(mode[-3:], 8), data
 
 
+def _tracked_source_allowed(name):
+    # Git may legitimately track an .env.example template. It is never a
+    # deployable input: omit ALL dotenv variants and build caches before
+    # forming a manifest. safe_path still rejects a forged archive that has
+    # any of these names.
+    parts = name.split("/")
+    return bool(name) and all(part not in DENIED_PARTS and
+                              not part.startswith(".env") for part in parts)
+
+
 def platform_file(name):
-    return name in ALLOWED_FILES or name.startswith(ALLOWED_PREFIXES)
+    return _tracked_source_allowed(name) and (
+        name in ALLOWED_FILES or name.startswith(ALLOWED_PREFIXES)
+    )
 
 
 def spatial_file(name):
-    return bool(name)  # safe_path enforces component restrictions
+    return _tracked_source_allowed(name)
 
 
 def build(platform_repo, spatial_repo, platform_sha, spatial_sha, output,
