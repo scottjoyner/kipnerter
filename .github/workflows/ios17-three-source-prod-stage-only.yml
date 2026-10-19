@@ -1,0 +1,138 @@
+name: Kipnerter 1.7 Stage Three-Source Release Without Cutover
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-prod-three-source-stage-only
+  cancel-in-progress: false
+
+jobs:
+  stage-only:
+    if: ${{ github.repository == 'scottjoyner/kipnerter' && github.actor == github.repository_owner }}
+    name: Verify and stage exact platform/spatial/gateway bytes on production host
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 25
+    steps:
+      - name: Exact checkout of portal source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Exact checkout of spatial API source
+        uses: actions/checkout@v4
+        with:
+          repository: scottjoyner/kipnerter-api
+          ref: 3490c05ce529b9d8775e9c99f358bb95481331f5
+          path: spatial-api
+          token: ${{ secrets.KIPNERTER_API_REPO_TOKEN }}
+          persist-credentials: false
+      - name: Exact checkout of portal-compatible API gateway source
+        uses: actions/checkout@v4
+        with:
+          repository: scottjoyner/kipnerter-api
+          ref: 88fcebbcbf951e966996c778321a6cfaaeae2298
+          path: gateway-api
+          token: ${{ secrets.KIPNERTER_API_REPO_TOKEN }}
+          persist-credentials: false
+      - name: Verify source revisions and fail-closed archive tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C spatial-api rev-parse HEAD)" = "3490c05ce529b9d8775e9c99f358bb95481331f5"
+          test "$(git -C gateway-api rev-parse HEAD)" = "88fcebbcbf951e966996c778321a6cfaaeae2298"
+          python3 -m unittest \
+            tests.test_portal_gateway_three_source_bundle \
+            tests.test_portal_release_bundle \
+            tests.test_gateway031_compose_overlay -q
+      - name: Build and prove reproducible immutable bundle offline
+        id: bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          STORE="$RUNNER_TEMP/kipnerter-17-three-source"
+          mkdir -m 700 "$STORE"
+          SPATIAL_SHA="$(git -C spatial-api rev-parse HEAD)"
+          GATEWAY_SHA="$(git -C gateway-api rev-parse HEAD)"
+          for suffix in a b; do
+            python3 scripts/portal_release_bundle.py build \
+              --platform-root . --spatial-root spatial-api --gateway-root gateway-api \
+              --platform-sha "$GITHUB_SHA" --spatial-sha "$SPATIAL_SHA" \
+              --gateway-sha "$GATEWAY_SHA" --archive "$STORE/$suffix.tgz"
+            python3 scripts/portal_release_bundle.py verify \
+              --platform-sha "$GITHUB_SHA" --spatial-sha "$SPATIAL_SHA" \
+              --gateway-sha "$GATEWAY_SHA" --archive "$STORE/$suffix.tgz"
+          done
+          cmp "$STORE/a.tgz" "$STORE/b.tgz"
+          [[ "$(stat -c %a "$STORE/a.tgz")" = "600" ]]
+          printf 'sha256=%s\n' "$(sha256sum "$STORE/a.tgz" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          printf 'spatial=%s\n' "$SPATIAL_SHA" >> "$GITHUB_OUTPUT"
+          printf 'gateway=%s\n' "$GATEWAY_SHA" >> "$GITHUB_OUTPUT"
+          echo "THREE_SOURCE_REPRODUCIBILITY=PASS"
+      - name: Join intended first-party Tailscale CI identity
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+      - name: Select unique production-tagged target and verify nonroot access
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="$(tailscale status --json | \
+            python3 scripts/portal_deploy_target.py --environment production)"
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]]
+          tailscale ping --timeout=10s "$TARGET" >/dev/null
+          tailscale ssh "kipnerter@$TARGET" \
+            'set -eu; test "$(id -un)" = kipnerter; test -d /opt/kipnerter; docker compose version >/dev/null'
+          printf 'host=%s\n' "$TARGET" >> "$GITHUB_OUTPUT"
+          echo "PRODUCTION_PRINCIPAL_READONLY_VERIFIED"
+      - name: Transfer bundle into operator-private source custody (NO APP CUTOVER)
+        env:
+          TARGET: ${{ steps.target.outputs.host }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]]
+          ROOT="/home/kipnerter/.local/state/kipnerter-release"
+          INPUT="$ROOT/incoming/$GITHUB_SHA.tgz"
+          # The only production write is a new 0600 tarball and a new verified
+          # source tree under the non-root release principal's private HOME.
+          # Existing files are never clobbered and no /opt path is modified.
+          tailscale ssh "kipnerter@$TARGET" \
+            "set -eu; umask 077; test \"\$(id -un)\" = kipnerter; \
+             mkdir -p '$ROOT/incoming'; chmod 700 '$ROOT' '$ROOT/incoming'; \
+             set -C; cat > '$INPUT'" \
+            < "$RUNNER_TEMP/kipnerter-17-three-source/a.tgz"
+          cat scripts/portal_release_bundle.py | tailscale ssh "kipnerter@$TARGET" \
+            "python3 - stage --platform-sha $GITHUB_SHA \
+             --spatial-sha ${{ steps.bundle.outputs.spatial }} \
+             --gateway-sha ${{ steps.bundle.outputs.gateway }} \
+             --archive '$INPUT' \
+             --archive-sha256 ${{ steps.bundle.outputs.sha256 }} \
+             --revisions-root '$ROOT/verified'"
+          echo "PRODUCTION_PRIVATE_SOURCE_STAGED=PASS; NO CONTAINERS CHANGED"
+      - name: Explain remaining production release gates
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "### Kipnerter 1.7 immutable production staging"
+            echo ""
+            echo "- Three repository sources: **exact revisions checked**"
+            echo "- Byte-for-byte reproducible source archive: **verified**"
+            echo "- Production-stage target: **unique non-root tagged Tailnet host**"
+            echo "- Production source staged: **private and immutable by name**"
+            echo "- Managed /opt release, live container swap and traffic cutover: **not performed**"
+            echo "- DB/MinIO writes, migrations and restore: **not performed**"
+            echo "- OIDC and operator data-restore approval: **still required**"
+          } >> "$GITHUB_STEP_SUMMARY"
