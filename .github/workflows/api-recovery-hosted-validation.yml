@@ -86,7 +86,7 @@ jobs:
             --tmpfs /tmp:rw,noexec,nosuid,size=16m \
             --tmpfs /data:rw,noexec,nosuid,size=16m \
             --mount type=bind,src="$PWD/scripts/portal_api_container_smoke.py",dst=/opt/container-smoke.py,readonly \
-            -e KIPNERTER_LOCATION_HMAC_SECRET=SYNTHETIC_GATEWAY_TEST_HMAC_KEY_123456789012345678 \
-            -e KIPNERTER_GATEWAY_BEARER_TOKEN=SYNTHETIC_GATEWAY_TEST_BEARER_123456789012345678 \
+            -e KIPNERTER_LOCATION_HMAC_SECRET="$(python3 -c 'import secrets; print(secrets.token_hex(32))')" \
+            -e KIPNERTER_GATEWAY_BEARER_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')" \
             -e KIPNERTER_ENVIRONMENT=staging \
             kipnerter-api:verified-031 python3 /opt/container-smoke.py
