@@ -49,3 +49,31 @@ The original `scripts/portal_image_custody.py` **remains unchanged** and the
 production image is **not** altered. This candidate probe reports
 `production_approved=false`, `restore_parity_verified=false` and
 `independent_custody_verified=false` even when every manifest hash matches.
+### October 19 follow-up: OCI descriptor consistency hardening
+
+The research verifier now rejects an otherwise correctly hashed OCI index if its
+selected linux/amd64 child descriptor declares a byte length different from
+the fetched child manifest. It also requires syntactically qualified,
+size-bounded config and layer descriptors with recognized runnable OCI/Docker
+media types. The candidate child must have between 1 and 128 layers, each
+with a valid SHA-256 digest, exact integer size and a supported layer media
+type. A boolean size, negative/oversized size, unknown descriptor type,
+missing config descriptor, or an empty-layer candidate fails closed even
+when the surrounding index and child manifest SHA-256 digests match.
+
+This intentionally stricter runnable-image candidate policy follows the
+OCI image descriptor contract: a descriptor binds its target type, digest,
+and byte size. The new boolean witness fields explicitly distinguish child
+descriptor size validation, config descriptor shape validation and layer
+descriptor shape validation. Config blobs and image layers are NOT downloaded
+or hash-checked; their declared hashes cannot be treated as measured layer
+integrity or execution readiness. No new image repositories are admitted,
+and no candidate is authorized for production.
+
+Both fixed candidate endpoints were rechecked on October 19, 2026 using
+read-only Buildx index/child-manifest queries after the new validator was
+enabled. Both reported valid child-byte sizes and structurally valid
+config and layer descriptors with status 'immutable_manifest_tree_verified'.
+The reported research child digests remained the ones listed above. Both
+outputs retained false values for architecture runtime, restore parity,
+independent custody and production approval.

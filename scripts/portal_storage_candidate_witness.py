@@ -22,6 +22,32 @@ MANIFEST_TYPES = {"application/vnd.oci.image.manifest.v1+json",
                   "application/vnd.docker.distribution.manifest.v2+json"}
 DIGEST = re.compile(r"sha256:[a-f0-9]{64}\Z")
 MAX_BYTES = 131072
+# This read-only witness supports runnable OCI/Docker images, not arbitrary
+# OCI artifacts. These values describe blobs; the blobs are not downloaded.
+CONFIG_TYPES = {
+    "application/vnd.oci.image.config.v1+json",
+    "application/vnd.docker.container.image.v1+json",
+}
+LAYER_TYPES = {
+    "application/vnd.oci.image.layer.v1.tar",
+    "application/vnd.oci.image.layer.v1.tar+gzip",
+    "application/vnd.oci.image.layer.v1.tar+zstd",
+    "application/vnd.docker.image.rootfs.diff.tar.gzip",
+}
+MAX_DESCRIPTOR_SIZE = 20 * 1024 ** 3
+MAX_LAYERS = 128
+
+
+def _descriptor(value, media_types):
+    """Validate an OCI blob descriptor without fetching the referenced blob."""
+    return (isinstance(value, dict) and
+            type(value.get("size")) is int and
+            0 < value["size"] <= MAX_DESCRIPTOR_SIZE and
+            type(value.get("digest")) is str and
+            bool(DIGEST.fullmatch(value["digest"])) and
+            type(value.get("mediaType")) is str and
+            value["mediaType"] in media_types)
+
 
 
 def _unique(pairs):
@@ -59,6 +85,9 @@ def witness(candidate, runner=subprocess.run):
         "index_digest_verified": False,
         "linux_amd64_descriptor_observed": False,
         "linux_amd64_child_manifest_bytes_verified": False,
+        "child_descriptor_size_verified": False,
+        "config_descriptor_shape_verified": False,
+        "layer_descriptors_shape_verified": False,
         "child_digest": None,
         "architecture_runtime_verified": False,
         "restore_parity_verified": False,
@@ -90,9 +119,8 @@ def witness(candidate, runner=subprocess.run):
             and item["platform"].get("os") == "linux"
             and item["platform"].get("architecture") == "amd64"
             and item["platform"].get("variant") in (None, "")
-            and item.get("mediaType") in MANIFEST_TYPES
-            and isinstance(item.get("digest"), str)
-            and DIGEST.fullmatch(item["digest"])
+            and _descriptor(item, MANIFEST_TYPES)
+            and item["size"] <= MAX_BYTES
         ]
         if len(candidates) != 1:
             raise ValueError("ambiguous or absent linux/amd64 child manifest")
@@ -104,15 +132,27 @@ def witness(candidate, runner=subprocess.run):
         child_raw = _request([child_ref, "--raw"], runner)
         if (not isinstance(child_raw, bytes) or len(child_raw) > MAX_BYTES or
                 "sha256:" + hashlib.sha256(child_raw).hexdigest() != child["digest"]):
-            raise ValueError("child bytes do not match descriptor")
+            raise ValueError("child bytes do not match descriptor digest")
+        if len(child_raw) != child["size"]:
+            raise ValueError("child bytes do not match descriptor size")
+        record["child_descriptor_size_verified"] = True
         manifest = _decode(child_raw)
-        if (not isinstance(manifest, dict) or manifest.get("schemaVersion") != 2 or
-                manifest.get("mediaType") != child["mediaType"] or
-                not isinstance(manifest.get("config"), dict) or
-                not isinstance(manifest.get("config", {}).get("digest"), str) or
-                not DIGEST.fullmatch(manifest["config"]["digest"]) or
-                not isinstance(manifest.get("layers"), list)):
-            raise ValueError("invalid child OCI manifest")
+        if (not isinstance(manifest, dict) or
+                type(manifest.get("schemaVersion")) is not int or
+                manifest["schemaVersion"] != 2 or
+                manifest.get("mediaType") != child["mediaType"]):
+            raise ValueError("invalid child image manifest")
+        if not _descriptor(manifest.get("config"), CONFIG_TYPES):
+            raise ValueError("invalid runnable-image config descriptor")
+        record["config_descriptor_shape_verified"] = True
+        layers = manifest.get("layers")
+        if (not isinstance(layers, list) or
+                not 1 <= len(layers) <= MAX_LAYERS or
+                not all(_descriptor(layer, LAYER_TYPES) for layer in layers)):
+            raise ValueError("invalid runnable-image layer descriptors")
+        record["layer_descriptors_shape_verified"] = True
+        # Only the index and child manifest bytes were retrieved. The
+        # referenced config/layer blob hashes are metadata declarations.
         record["linux_amd64_child_manifest_bytes_verified"] = True
         record["status"] = "immutable_manifest_tree_verified"
     except (ValueError, TypeError, UnicodeError, OSError, subprocess.SubprocessError):

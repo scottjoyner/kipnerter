@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import json
 import subprocess
@@ -16,14 +17,34 @@ def digest(blob):
 
 
 CHILD = {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
-         "config": {"digest": "sha256:" + "a" * 64}, "layers": []}
+         "config": {"mediaType": "application/vnd.oci.image.config.v1+json",
+                    "digest": "sha256:" + "a" * 64, "size": 256},
+         "layers": [{"mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+                     "digest": "sha256:" + "b" * 64, "size": 512}]}
 CHILD_BYTES = encoded(CHILD)
 
 
 def fixture(*, duplicate=False, bad_index=False, bad_child=False,
-            missing_arch=False, fail=False, large=False, duplicates=False):
-    descriptor = {"mediaType": CHILD["mediaType"], "digest": digest(CHILD_BYTES),
+            missing_arch=False, fail=False, large=False, duplicates=False,
+            bad_child_size=False, config_malformed=False, bad_config_size=False,
+            bad_layer=False, empty_layers=False, boolean_descriptor_size=False):
+    child = copy.deepcopy(CHILD)
+    if config_malformed:
+        child["config"].pop("mediaType")
+    if bad_config_size:
+        child["config"]["size"] = -5
+    if bad_layer:
+        child["layers"][0]["digest"] = "sha256:not-a-digest"
+    if empty_layers:
+        child["layers"] = []
+    child_bytes = encoded(child)
+    descriptor = {"mediaType": child["mediaType"], "digest": digest(child_bytes),
+                  "size": len(child_bytes),
                   "platform": {"os": "linux", "architecture": "amd64"}}
+    if bad_child_size:
+        descriptor["size"] += 1
+    if boolean_descriptor_size:
+        descriptor["size"] = True
     index = {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json",
              "manifests": ([descriptor, descriptor] if duplicate else
                            [{**descriptor, "platform": {"os": "linux", "architecture": "arm64"}}]
@@ -50,7 +71,7 @@ def fixture(*, duplicate=False, bad_index=False, bad_child=False,
                              raw_index.replace(b'"schemaVersion"', b'"schemaVersion":0,"schemaVersion"')
                              if duplicates else raw_index)
         else:
-            result.stdout = CHILD_BYTES + b"X" if bad_child else CHILD_BYTES
+            result.stdout = child_bytes + b"X" if bad_child else child_bytes
         return result
 
     return pin, runner, calls
@@ -69,6 +90,9 @@ class StorageResearchWitnessTests(unittest.TestCase):
         self.assertTrue(record["index_digest_verified"])
         self.assertTrue(record["linux_amd64_descriptor_observed"])
         self.assertTrue(record["linux_amd64_child_manifest_bytes_verified"])
+        self.assertTrue(record["child_descriptor_size_verified"])
+        self.assertTrue(record["config_descriptor_shape_verified"])
+        self.assertTrue(record["layer_descriptors_shape_verified"])
         self.assertEqual(record["child_digest"], digest(CHILD_BYTES))
         for flag in ("production_approved", "restore_parity_verified",
                      "architecture_runtime_verified", "independent_custody_verified",
@@ -96,6 +120,23 @@ class StorageResearchWitnessTests(unittest.TestCase):
         self.assertTrue(receipt["index_digest_verified"])
         self.assertFalse(receipt["linux_amd64_child_manifest_bytes_verified"])
         self.assertFalse(receipt["production_approved"])
+
+    def test_child_size_mismatch_or_noninteger_size_rejected(self):
+        for flag in ("bad_child_size", "boolean_descriptor_size"):
+            record, _, _ = self.inspect_fixture(**{flag: True})
+            self.assertNotEqual(record["status"], "immutable_manifest_tree_verified")
+            self.assertFalse(record["production_approved"])
+            self.assertFalse(record["child_descriptor_size_verified"])
+
+    def test_invalid_config_and_layer_descriptors_rejected_even_with_valid_hashes(self):
+        for flag in ("config_malformed", "bad_config_size", "bad_layer", "empty_layers"):
+            record, _, _ = self.inspect_fixture(**{flag: True})
+            self.assertNotEqual(record["status"], "immutable_manifest_tree_verified")
+            self.assertTrue(record["index_digest_verified"])
+            self.assertTrue(record["child_descriptor_size_verified"])
+            self.assertFalse(record["linux_amd64_child_manifest_bytes_verified"])
+            self.assertFalse(record["production_approved"])
+            self.assertFalse(record["layers_downloaded"])
 
     def test_duplicate_or_missing_amd64_descriptor_rejected(self):
         for flag in ("duplicate", "missing_arch"):
