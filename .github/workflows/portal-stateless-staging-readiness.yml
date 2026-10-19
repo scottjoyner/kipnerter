@@ -43,7 +43,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.planned_portal_sha }}
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Verify candidate identity and ancestry
@@ -52,7 +52,6 @@ jobs:
           set -euo pipefail
           [[ "$PLANNED_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 2
           [[ "$(git rev-parse HEAD)" = "$PLANNED_SHA" ]] || exit 2
-          git fetch --quiet --depth=150 origin             '+refs/heads/feat/unified-fleet-portal-20261017:refs/remotes/origin/feat/unified-fleet-portal-20261017'
           git merge-base --is-ancestor "$PLANNED_SHA"             refs/remotes/origin/feat/unified-fleet-portal-20261017
 
       - name: Exercise deny-only stateless configuration tests
