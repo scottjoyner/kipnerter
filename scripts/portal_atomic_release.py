@@ -16,9 +16,12 @@ import re
 import shutil
 import stat
 import tempfile
+from datetime import datetime, timezone
 
 SHA = re.compile(r"[a-f0-9]{40}\Z")
 MANIFEST = ".portal-file-manifest.json"
+PENDING = ".portal-promotion-pending.json"
+CONFIRMED_DIR = ".portal-confirmations"
 MAX_ROWS = 10000
 MAX_TOTAL = 256 * 1024 * 1024
 
@@ -255,13 +258,61 @@ def prepare(root_path, verified_source, environment_file, revision):
         if scratch.exists():
             shutil.rmtree(scratch)
 
+def _pending(root):
+    record = root / PENDING
+    if not os.path.lexists(record):
+        return None
+    if (record.is_symlink() or not record.is_file() or
+            record.stat().st_uid != os.getuid() or
+            stat.S_IMODE(record.stat().st_mode) != 0o600 or
+            record.stat().st_size > 2048):
+        raise ValueError("untrusted pending promotion record")
+    data = json.loads(record.read_text())
+    if (not isinstance(data, dict) or
+            set(data) != {"from_sha", "to_sha", "started_utc"} or
+            not SHA.fullmatch(str(data["from_sha"])) or
+            not SHA.fullmatch(str(data["to_sha"])) or
+            not isinstance(data["started_utc"], str)):
+        raise ValueError("malformed pending promotion")
+    return data
+
+
+def _write_private(root, path, value):
+    if os.path.lexists(path):
+        raise ValueError("promotion record already exists")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as writer:
+        json.dump(value, writer, sort_keys=True, separators=(",", ":"))
+        writer.write("\n")
+        writer.flush()
+        os.fsync(writer.fileno())
+    fd = os.open(root, os.O_DIRECTORY | os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def status(root):
+    """Read-only incident evidence; never resolve a failed rollout."""
+    root, releases, _, active = _root(root)
+    _validated_tree(releases / active, active)
+    pending = _pending(root)
+    return {"active_revision": active,
+            "promotion": "PENDING_HOLD" if pending else "not_pending",
+            "pending_from": pending["from_sha"] if pending else None,
+            "pending_to": pending["to_sha"] if pending else None}
+
+
 def inspect(root):
     root, releases, current, active = _root(root)
+    if _pending(root) is not None:
+        raise ValueError("unresolved prior release promotion: HOLD")
     _validated_tree(releases / active, active)
     return active
 
 
-def switch(root, target, expected_current):
+def switch(root, target, expected_current, *, track=False):
     target, expected_current = _sha(target), _sha(expected_current)
     root, releases, link, _ = _root(root)
     lock = root / ".portal-release.lock"
@@ -273,10 +324,19 @@ def switch(root, target, expected_current):
             raise ValueError("unsafe cutover lock")
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         _, releases, link, active = _root(root)
+        if _pending(root) is not None:
+            raise ValueError("pending release must be confirmed or manually recovered")
         if active != expected_current or target == active:
             raise ValueError("current revision differs from authorized previous revision")
         _validated_tree(releases / active, active)
         _validated_tree(releases / target, target)
+        if track:
+            # Durable HOLD marker is written before switching the pointer.
+            # A failed up/health check cannot be mistaken for an approved,
+            # completed deploy on the next workflow run.
+            _write_private(root, root / PENDING,
+                           {"from_sha": active, "to_sha": target,
+                            "started_utc": datetime.now(timezone.utc).isoformat()})
         # Only the small symlink pointer is atomically replaced. Durable
         # contents must have been prepared and verified separately.
         temp = root / (".current." + target)
@@ -298,9 +358,51 @@ def switch(root, target, expected_current):
         os.close(fd)
 
 
+
+def confirm(root, target, expected_previous):
+    """Close promotion HOLD only after external HTTP and private API checks."""
+    target, expected_previous = _sha(target), _sha(expected_previous)
+    root, releases, _, active = _root(root)
+    lock = root / ".portal-release.lock"
+    fd = os.open(lock, os.O_RDWR | os.O_NOFOLLOW)
+    try:
+        st = os.fstat(fd)
+        if (st.st_uid != os.getuid() or not stat.S_ISREG(st.st_mode) or
+                st.st_mode & 0o077):
+            raise ValueError("unsafe release confirmation lock")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _, releases, _, active = _root(root)
+        record = _pending(root)
+        if (record is None or active != target or
+                record["to_sha"] != target or
+                record["from_sha"] != expected_previous):
+            raise ValueError("promotion identity mismatch or missing pending state")
+        _validated_tree(releases / active, active)
+        # Previous revision must still be restorable as source.
+        _validated_tree(releases / expected_previous, expected_previous)
+        evidence_dir = root / CONFIRMED_DIR
+        if evidence_dir.is_symlink():
+            raise ValueError("symlinked confirmation directory")
+        evidence_dir.mkdir(mode=0o700, exist_ok=True)
+        _owned_private_dir(evidence_dir)
+        ledger = evidence_dir / (target + ".json")
+        _write_private(evidence_dir, ledger,
+                       {"from_sha": expected_previous, "to_sha": target,
+                        "confirmed_utc": datetime.now(timezone.utc).isoformat()})
+        (root / PENDING).unlink()
+        dirfd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(dirfd)
+        finally:
+            os.close(dirfd)
+        return target
+    finally:
+        os.close(fd)
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("inspect", "switch", "prepare"))
+    parser.add_argument("action", choices=("inspect", "status", "switch", "promote", "confirm", "prepare"))
     parser.add_argument("--root", required=True)
     parser.add_argument("--revision")
     parser.add_argument("--expected-current")
@@ -310,12 +412,18 @@ def main():
     try:
         if args.action == "inspect":
             print("Active managed release: " + inspect(args.root))
+        elif args.action == "status":
+            print(json.dumps(status(args.root), sort_keys=True))
+        elif args.action == "confirm":
+            print("Managed release confirmed: " +
+                  confirm(args.root, args.revision, args.expected_current))
         elif args.action == "prepare":
             candidate = prepare(args.root, args.verified_source,
                                 args.environment_file, args.revision)
             print("Verified candidate prepared, not activated: " + candidate.name)
         else:
-            result = switch(args.root, args.revision, args.expected_current)
+            result = switch(args.root, args.revision, args.expected_current,
+                            track=(args.action == "promote"))
             print("Atomic release pointer changed: " + result["previous"] +
                   " -> " + result["active"])
     except (OSError, ValueError, KeyError, TypeError) as exc:

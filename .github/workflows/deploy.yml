@@ -315,6 +315,37 @@ jobs:
             exit 1
           }
 
+      - name: Validate and prebuild candidate before active cutover
+        env:
+          TARGET: ${{ steps.target.outputs.host }}
+          USER: ${{ steps.target.outputs.user }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          PREVIOUS_SHA: ${{ steps.managed.outputs.previous_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ && "$PREVIOUS_SHA" =~ ^[a-f0-9]{40}$ ]] || exit 1
+          [[ "$USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ && "$USER" != root ]] || exit 1
+          if [[ "$ENVIRONMENT" = staging ]]; then
+            PROJECT=kipnerter-staging
+            EXTRA="-f compose.staging.yml"
+          elif [[ "$ENVIRONMENT" = production ]]; then
+            PROJECT=kipnerter
+            EXTRA=""
+          else
+            echo "::error::Invalid environment"; exit 1
+          fi
+          # Recheck the operator-selected current release immediately before
+          # build. A failed image build must not move the active symlink or
+          # restart a live container. These actions do not run Compose up.
+          REPORT=$(cat scripts/portal_atomic_release.py | tailscale ssh "$USER@$TARGET" \
+            "python3 - inspect --root /opt/kipnerter")
+          [[ "$REPORT" == "Active managed release: $PREVIOUS_SHA" ]] || {
+            echo "::error::Concurrent release or stale expected current SHA"
+            exit 1
+          }
+          tailscale ssh "$USER@$TARGET" \
+            "cd /opt/kipnerter/releases/$GITHUB_SHA && docker compose -p $PROJECT -f docker-compose.yml -f compose.spatial.yml $EXTRA --profile edge config >/dev/null && docker compose -p $PROJECT -f docker-compose.yml -f compose.spatial.yml $EXTRA --profile edge build --pull"
+
       - name: Atomically select the prepared revision and deploy
         env:
           TARGET: ${{ steps.target.outputs.host }}
@@ -334,15 +365,14 @@ jobs:
           else
             echo "::error::Invalid deployment environment"; exit 1
           fi
-          # Full-file verification happened at receiving-side stage and in
-          # candidate prepare; an atomic symlink swap changes source identity
-          # without a partial copy into a live Compose directory.
+          # Prebuild was completed against the exact new SHA without touching
+          # the active pointer. No Compose image builds occur after cutover.
           cat scripts/portal_atomic_release.py | tailscale ssh "$USER@$TARGET" \
-            "python3 - switch --root /opt/kipnerter --revision $GITHUB_SHA --expected-current $PREVIOUS_SHA"
+            "python3 - promote --root /opt/kipnerter --revision $GITHUB_SHA --expected-current $PREVIOUS_SHA"
           # Keep Compose project identity fixed across SHA-named source dirs:
           # existing named Postgres/MinIO volumes cannot be silently renamed.
           tailscale ssh "$USER@$TARGET" \
-            "cd /opt/kipnerter/current && docker compose -p $PROJECT -f docker-compose.yml -f compose.spatial.yml $EXTRA --profile edge config >/dev/null && docker compose -p $PROJECT -f docker-compose.yml -f compose.spatial.yml $EXTRA --profile edge build --pull && docker compose -p $PROJECT -f docker-compose.yml -f compose.spatial.yml $EXTRA --profile edge up -d --remove-orphans && docker compose -p $PROJECT -f docker-compose.yml -f compose.spatial.yml $EXTRA ps"
+            "cd /opt/kipnerter/current && docker compose -p $PROJECT -f docker-compose.yml -f compose.spatial.yml $EXTRA --profile edge config >/dev/null && docker compose -p $PROJECT -f docker-compose.yml -f compose.spatial.yml $EXTRA --profile edge up -d --no-build --remove-orphans && docker compose -p $PROJECT -f docker-compose.yml -f compose.spatial.yml $EXTRA ps"
 
       - name: Verify deployment health
         env:
@@ -413,9 +443,31 @@ jobs:
           REMOTE
           echo "Authenticated control plane and Tailscale node feed verified."
 
+      - name: Confirm release after public and private health checks
+        if: success()
+        env:
+          TARGET: ${{ steps.target.outputs.host }}
+          USER: ${{ steps.target.outputs.user }}
+          PREVIOUS_SHA: ${{ steps.managed.outputs.previous_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ && "$PREVIOUS_SHA" =~ ^[a-f0-9]{40}$ ]] || exit 1
+          [[ "$USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ && "$USER" != root ]] || exit 1
+          # Any failed compose start or health check leaves a durable HOLD
+          # until an independent operator resolves application and data state.
+          cat scripts/portal_atomic_release.py | tailscale ssh "$USER@$TARGET" \
+            "python3 - confirm --root /opt/kipnerter --revision $GITHUB_SHA --expected-current $PREVIOUS_SHA"
+
       - name: Show deployment state on failure
         if: failure()
         env:
           TARGET: ${{ steps.target.outputs.host }}
           USER: ${{ steps.target.outputs.user }}
-        run: tailscale ssh "$USER@$TARGET" 'cd /opt/kipnerter/current && docker compose -f docker-compose.yml -f compose.spatial.yml ps' || true
+        run: |
+          set -euo pipefail
+          # Read-only, metadata-only incident evidence. Missing SSH does not
+          # make a failed deployment green; it remains a failed job.
+          cat scripts/portal_atomic_release.py | tailscale ssh "$USER@$TARGET" \
+            'python3 - status --root /opt/kipnerter' || true
+          tailscale ssh "$USER@$TARGET" \
+            'cd /opt/kipnerter/current && docker compose -f docker-compose.yml -f compose.spatial.yml ps' || true

@@ -860,3 +860,52 @@ revisions, competing locks and shell-stdin remote execution. It **does not**
 claim a production rehearsal. Production Tailscale SSH still requires
 additional identity approval, no verified staging-tagged host exists, and
 `https://kipnerter.com/chat` still returned HTTP 404. Keep PR #18 draft.
+
+### October 19 — prebuild and durable post-cutover failure fence
+
+An additional release-flow review found that Compose still performed image
+**builds after the source-pointer swap**. A broken build could therefore leave
+`current` selecting a revision whose services had not started. The workflow
+now verifies the existing managed revision **again** and runs
+`docker compose ... build --pull` against the already prepared
+`releases/<exact-SHA>/` directory **before** switching the pointer. This
+prebuild does not invoke `docker compose up`; failed builds leave the active
+source pointer and existing containers unchanged. After switching, Compose
+runs with `up -d --no-build` and the stable, environment-scoped project name.
+
+Source identity, build success and service health are distinct gates. To
+prevent a failed Compose restart, broken public route, or missing authenticated
+fleet view from being misreported as a successful release, the atomic release
+script also has a **durable pending-promotion fence**:
+
+- `promote --revision <new> --expected-current <old>` verifies both source
+  trees and records a private, mode-0600
+  `.portal-promotion-pending.json` **before** the symlink swap.
+- `inspect` refuses any unresolved pending marker, so the next automated
+  deployment stops rather than replacing a potentially unhealthy or
+  state-incompatible candidate.
+- `confirm --revision <new> --expected-current <old>` is a separate step
+  reached **only after both** the strict public health gate and authenticated
+  control-plane verification succeed. It revalidates the old/new source trees,
+  writes an immutable-named confirmation receipt under the private
+  `.portal-confirmations/` directory and then clears the pending marker.
+  It does not claim that a real human tsidp browser login has passed.
+- A failure after `promote` leaves `PENDING_HOLD` on the destination. The
+  incident-only `status` command prints the active and previous SHA and
+  pending status without leaking secrets, files, tokens, or process arguments.
+  The existing failure step now requests that metadata plus bounded Compose
+  status; neither command mutates application state.
+- **There is intentionally no unattended service or database rollback.**
+  A source-only pointer reversal after persistent schema/data changes may
+  worsen an incident. The pending marker cannot be cleared by rerunning CI;
+  an independently reviewed database/MinIO recovery and an explicit operator
+  service restoration plan are needed before that. The tests simulate failed
+  startup as an unconfirmed promotion, stale/replayed confirmation attempts,
+  and deliberately tampered candidate files, and verify they cannot be
+  marked healthy.
+
+This is an **offline, read-only-to-production safety milestone**. Neither
+staging nor production cutover, database backup/restore, schema downgrade,
+real Tailscale OIDC authorization, nor managed legacy-host migration has been
+rehearsed on an approved deployment host. Both exact-SHA operator approvals
+remain external to this change.

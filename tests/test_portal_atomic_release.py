@@ -9,7 +9,7 @@ import sys
 import tempfile
 import unittest
 
-from scripts.portal_atomic_release import MANIFEST, inspect, switch
+from scripts.portal_atomic_release import MANIFEST, PENDING, inspect, switch, confirm, status
 
 OLD = "a" * 40
 NEW = "b" * 40
@@ -125,6 +125,82 @@ class AtomicPointerTests(unittest.TestCase):
                 with self.assertRaises(BlockingIOError):
                     switch(root, NEW, OLD)
             self.assertEqual(inspect(root), OLD)
+
+    def test_promote_leaves_durable_hold_until_confirmed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = managed(Path(tmp) / "managed")
+            result = switch(root, NEW, OLD, track=True)
+            self.assertEqual(result["active"], NEW)
+            self.assertTrue((root / PENDING).is_file())
+            self.assertEqual(status(root)["promotion"], "PENDING_HOLD")
+            self.assertEqual(status(root)["pending_from"], OLD)
+            self.assertEqual(status(root)["pending_to"], NEW)
+            self.assertEqual((root / PENDING).stat().st_mode & 0o777, 0o600)
+            with self.assertRaisesRegex(ValueError, "unresolved prior release"):
+                inspect(root)
+            with self.assertRaisesRegex(ValueError, "pending release"):
+                switch(root, OLD, NEW)
+            with self.assertRaisesRegex(ValueError, "identity mismatch"):
+                confirm(root, NEW, NEW)
+            self.assertEqual(confirm(root, NEW, OLD), NEW)
+            self.assertEqual(inspect(root), NEW)
+            self.assertEqual(status(root)["promotion"], "not_pending")
+            self.assertFalse((root / PENDING).exists())
+            receipt = root / ".portal-confirmations" / (NEW + ".json")
+            self.assertTrue(receipt.is_file())
+            self.assertEqual(receipt.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(switch(root, OLD, NEW, track=True)["active"], OLD)
+            self.assertEqual(confirm(root, OLD, NEW), OLD)
+            self.assertEqual(inspect(root), OLD)
+
+    def test_unfinished_promote_blocks_new_release_and_confirmation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = managed(Path(tmp) / "managed")
+            # File-level pointer switch succeeded, but simulated Docker up
+            # or public health check did not; do not acknowledge it.
+            switch(root, NEW, OLD, track=True)
+            with self.assertRaisesRegex(ValueError, "pending release"):
+                switch(root, OLD, NEW, track=True)
+            (root / "releases" / NEW / "apps/web/current-revision.txt").write_text("tampered")
+            with self.assertRaisesRegex(ValueError, "source integrity changed"):
+                confirm(root, NEW, OLD)
+            self.assertTrue((root / PENDING).is_file())
+
+    def test_remote_promotion_confirmation_stdin_and_stale_replay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = managed(Path(tmp) / "managed")
+            script = (Path(__file__).resolve().parents[1] /
+                      "scripts/portal_atomic_release.py").read_text()
+            def remote(action, previous, selected):
+                return subprocess.run(
+                    [sys.executable, "-", action, "--root", str(root),
+                     "--revision", selected, "--expected-current", previous],
+                    input=script, text=True, capture_output=True, timeout=8)
+            first = remote("promote", OLD, NEW)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            wrong = remote("confirm", NEW, OLD)
+            self.assertNotEqual(wrong.returncode, 0)
+            second = remote("confirm", OLD, NEW)
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertEqual(inspect(root), NEW)
+            replay = remote("confirm", OLD, NEW)
+            self.assertNotEqual(replay.returncode, 0)
+            self.assertIn("RELEASE HOLD", replay.stderr)
+
+    def test_readonly_pending_status_via_remote_stdin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = managed(Path(tmp) / "managed")
+            switch(root, NEW, OLD, track=True)
+            source = (Path(__file__).resolve().parents[1] /
+                      "scripts/portal_atomic_release.py").read_text()
+            run = subprocess.run(
+                [sys.executable, "-", "status", "--root", str(root)],
+                input=source, text=True, capture_output=True, timeout=8)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            data = json.loads(run.stdout)
+            self.assertEqual(data["promotion"], "PENDING_HOLD")
+            self.assertEqual(data["active_revision"], NEW)
+            self.assertNotIn(".env", run.stdout)
 
     def test_exact_remote_python_stdin_entrypoint(self):
         with tempfile.TemporaryDirectory() as tmp:
