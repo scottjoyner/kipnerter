@@ -28,6 +28,8 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Assert legacy layout negative controls
+        run: python3 -m unittest scripts.tests.test_portal_prod_layout_inventory -q
       - name: Join tailnet with deployment CI tag
         uses: tailscale/github-action@v4
         with:
@@ -44,6 +46,13 @@ jobs:
           printf '%s' "$TARGET" > "$RUNNER_TEMP/qualified-production-target"
           chmod 600 "$RUNNER_TEMP/qualified-production-target"
           echo "unique-production-tagged-target=yes"
+      - name: Read-only production Compose, storage and rollback-layout inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="$(cat "$RUNNER_TEMP/qualified-production-target")"
+          cat scripts/portal_prod_layout_inventory.py | \
+            timeout 25 tailscale ssh "kipnerter@$TARGET" 'python3 -'
       - name: Prove CI principal read-only SSH to managed server
         shell: bash
         run: |
