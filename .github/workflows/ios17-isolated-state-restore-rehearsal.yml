@@ -1,0 +1,85 @@
+name: Kipnerter 1.7 Isolated Offline Stateful Restore Rehearsal
+
+on:
+  push:
+    branches:
+      - release/17-protected-state-snapshot-20261019
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-17-isolated-state-restore-once
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: >-
+      ${{ github.repository == 'scottjoyner/kipnerter' &&
+          github.actor == github.repository_owner &&
+          contains(github.event.head_commit.message, '[ios17-isolated-restore-rehearsal]') }}
+    name: Restore into disposable network-none containers only
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 18
+    steps:
+      - name: Checkout exact owner-reviewable restore code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify source, boundaries and negative tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest scripts.tests.test_portal_state_restore_rehearsal -v
+          python3 -m py_compile scripts/portal_state_restore_rehearsal.py
+          grep -Fq 'SOURCE = "ad4cffe6e1fe6c659d97e48a96d220f2f0543c55"' \
+            scripts/portal_state_restore_rehearsal.py
+          grep -Fq '"--network","none"' scripts/portal_state_restore_rehearsal.py
+          ! grep -Eq 'docker compose (up|down)|POSTGRES_PASSWORD=.*real|docker volume rm' \
+            scripts/portal_state_restore_rehearsal.py
+      - name: Join original production Tailnet deployment identity
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+      - name: Verify unique production host and one-shot backup custody presence
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="$(tailscale status --json |
+            python3 scripts/portal_deploy_target.py --environment production)"
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]]
+          tailscale ping --timeout=8s "$TARGET" >/dev/null
+          tailscale ssh "kipnerter@$TARGET" \
+            'set -eu; test "$(id -un)" = kipnerter;
+             test -f /home/kipnerter/.local/state/kipnerter-release/state-backups/ios17-precutover-ad4cffe6e1fe/snapshot-receipt.json;
+             docker compose version >/dev/null'
+          echo "address=$TARGET" >> "$GITHUB_OUTPUT"
+      - name: Rehearse Postgres restoration and MinIO boot from scratch copy, no live data mounts
+        env:
+          TARGET: ${{ steps.target.outputs.address }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]]
+          cat scripts/portal_state_restore_rehearsal.py |
+            timeout 720 tailscale ssh "kipnerter@$TARGET" 'python3 -'
+      - name: State that external independent custody and S3 parity remain HOLD
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "### Kipnerter 1.7 isolation-only restoration"
+            echo "- PostgreSQL dump reconstructed into a brand-new offline scratch DB"
+            echo "- Copied MinIO backing files started as scratch-only instance"
+            echo "- Production container mounts, named volumes and traffic: **unchanged**"
+            echo "- Network and host ports for disposable containers: **none**"
+            echo "- Independent encrypted off-host custody: **NOT ESTABLISHED**"
+            echo "- Live MinIO S3 object-level parity and point-in-time consistency: **NOT PROVEN**"
+            echo "- Production cutover: **NOT AUTHORIZED**"
+          } >> "$GITHUB_STEP_SUMMARY"
