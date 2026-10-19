@@ -1,0 +1,9 @@
+# Opt-in web/API only. Invoke with -p kipnerter-fleet-preview, NEVER a live project.
+# Caddy remains profile-gated; ingress can only be configured separately after OIDC.
+services:
+  web:
+    ports:
+      - "127.0.0.1:13300:3000"
+  api:
+    # No host-bound port. Access only through authenticated web BFF.
+    networks: [frontend, backend]
