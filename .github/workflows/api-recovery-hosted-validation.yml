@@ -3,7 +3,7 @@ name: Gateway 0.3.1 pinned hosted verification
 on:
   push:
     branches:
-      - ci/gateway031-scan-clean-final-20261019
+      - ci/gateway031-preserved-control-plane-20261019
     paths:
       - .github/workflows/api-recovery-hosted-validation.yml
   workflow_dispatch:
@@ -35,7 +35,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: scottjoyner/kipnerter-api
-          ref: c6a42e0edaeedda06d3702f2f07c82cc8bcd4d59
+          ref: 65c720f793adf161073aa12b7e80cde2657d2b1c
           path: recovery-api
           token: ${{ secrets.KIPNERTER_API_REPO_TOKEN }}
           persist-credentials: false
@@ -44,7 +44,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git -C recovery-api rev-parse HEAD)" = "c6a42e0edaeedda06d3702f2f07c82cc8bcd4d59"
+          test "$(git -C recovery-api rev-parse HEAD)" = "65c720f793adf161073aa12b7e80cde2657d2b1c"
           test ! -e recovery-api/.git-credentials
           test ! -e recovery-api/.env
           echo "API HEAD pinned and production secrets not supplied"
@@ -72,6 +72,22 @@ jobs:
           source "$RUNNER_TEMP/recovery-031-env/bin/activate"
           cd recovery-api
           python scripts/verify_gateway_release_surface.py
+      - name: Verify authenticated portal routes survived API recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          source "$RUNNER_TEMP/recovery-031-env/bin/activate"
+          python -m pip install -r apps/api/requirements.txt
+          python -m unittest scripts.tests.test_api_recovery_portal_control_plane -q
+          (cd apps/api && PYTHONPATH=. python -c \
+            'import json; from app.main import app; print(json.dumps(app.openapi()))') \
+            > "$RUNNER_TEMP/portal-api-openapi.json"
+          (cd recovery-api && PYTHONPATH=. python -c \
+            'import json; from app.main import app; print(json.dumps(app.openapi()))') \
+            > "$RUNNER_TEMP/recovery-api-openapi.json"
+          python scripts/verify_api_recovery_portal_control_plane.py \
+            --portal "$RUNNER_TEMP/portal-api-openapi.json" \
+            --candidate "$RUNNER_TEMP/recovery-api-openapi.json"
       - name: Build isolated release candidate image
         shell: bash
         run: |
