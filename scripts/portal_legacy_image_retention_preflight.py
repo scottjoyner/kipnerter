@@ -86,10 +86,13 @@ def validate(containers: dict, images: dict, free: int)->dict:
 
 
 def main()->int:
+    stage='startup'
+    role_index=0
     try:
         containers={}
         images={}
-        for name in EXPECTED:
+        for role_index,name in enumerate(EXPECTED,start=1):
+            stage='container_metadata'
             # Format accesses only allowlisted Docker fields. Never request
             # full Config.Env, private Mount Source paths or image history.
             line=command(["docker","inspect","--format",
@@ -110,17 +113,21 @@ def main()->int:
                 "service":service,
             }
             if isinstance(image,str) and image not in images:
+                stage='image_metadata'
                 meta=command(["docker","image","inspect","--format",
                     "{{.Id}}|{{.Size}}",image]).split("|")
                 if len(meta)!=2 or meta[0]!=image or not meta[1].isdigit():
                     raise ValueError("image source changed during inspection")
                 images[image]=int(meta[1])
+        stage='validate_inventory'
         result=validate(containers,images,shutil.disk_usage(Path("/opt/kipnerter")).free)
         print(json.dumps(result,sort_keys=True))
         return 0 if result["conservative_local_image_retention_capacity"] else 3
     except (OSError,ValueError,KeyError,TypeError,json.JSONDecodeError,
             subprocess.SubprocessError) as exc:
         print(json.dumps({"status":"NO_GO","reason_class":type(exc).__name__,
+                          "failure_stage":stage,
+                          "failure_role_position":role_index,
                           "image_archive_created":False,
                           "production_containers_or_volumes_modified":False,
                           "safe_to_cutover":False},sort_keys=True))
