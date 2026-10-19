@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import sys
 import tarfile
 
 ROOT=Path("/opt/kipnerter")
@@ -90,7 +91,7 @@ def gather(root:Path)->list[tuple[Path,Path]]:
                 output.append((rel,item))
     for relative,file in output:
         st=file.stat()
-        if not stat.S_ISREG(st.st_mode) or not 0<st.st_size<=MAX_FILE:
+        if not stat.S_ISREG(st.st_mode) or not 0<=st.st_size<=MAX_FILE:
             raise ValueError("invalid source file type or size")
         total+=st.st_size
         if total>MAX_TOTAL or len(output)>MAX_FILES:
@@ -173,14 +174,53 @@ def snapshot(root:Path,base:Path)->dict:
     return info
 
 
+def preflight(root:Path,base:Path)->dict:
+    """No writes. Determine source eligibility and any interrupted prior attempt."""
+    private_dir(base)
+    entries=gather(root)
+    archive_exists=os.path.lexists(base/FILENAME)
+    receipt_exists=os.path.lexists(base/RECEIPT)
+    return {
+        "source_preflight":"PASS" if not archive_exists and not receipt_exists else "HOLD",
+        "source_file_count":len(entries),
+        "previous_attempt_archive_present":archive_exists,
+        "previous_attempt_receipt_present":receipt_exists,
+        "source_data_or_secrets_read":False,
+        "production_app_containers_or_volumes_modified":False,
+        "safe_to_cutover":False,
+    }
+
+
 def main()->int:
     try:
+        if sys.argv[1:]==["--inspect-only"]:
+            report=preflight(ROOT,DESTINATION)
+            print(json.dumps(report,sort_keys=True))
+            return 0 if report["source_preflight"]=="PASS" else 3
+        if len(sys.argv)!=1:
+            raise ValueError("unknown retention command")
         report=snapshot(ROOT,DESTINATION)
         print(json.dumps(report,sort_keys=True))
         return 0
     except (OSError,ValueError,tarfile.TarError) as exc:
+        allowed={"untrusted production source root",
+                 "essential legacy Compose source missing",
+                 "essential legacy build tree missing",
+                 "linked build context directory",
+                 "linked build context file",
+                 "nonregular build context file",
+                 "invalid source file type or size",
+                 "production source exceeds retention bound",
+                 "duplicate archived source entry",
+                 "essential legacy app build input unavailable",
+                 "untrusted existing backup custody",
+                 "one-shot source backup already present",
+                 "source tar entries changed",
+                 "unknown retention command"}
+        reason=str(exc) if isinstance(exc,ValueError) and str(exc) in allowed else "unspecified"
         print(json.dumps({
             "status":"HOLD","reason_class":type(exc).__name__,
+            "bounded_reason_code":reason,
             "ambiguous_partial_source_copy_may_exist":True,
             "production_app_containers_or_volumes_modified":False,
             "safe_to_cutover":False,
