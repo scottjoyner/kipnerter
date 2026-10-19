@@ -91,6 +91,7 @@ def main()->int:
     try:
         containers={}
         images={}
+        uncached_roles=[]
         for role_index,name in enumerate(EXPECTED,start=1):
             stage='container_metadata'
             # Format accesses only allowlisted Docker fields. Never request
@@ -114,12 +115,32 @@ def main()->int:
             }
             if isinstance(image,str) and image not in images:
                 stage='image_metadata'
-                meta=command(["docker","image","inspect","--format",
-                    "{{.Id}}|{{.Size}}",image]).split("|")
+                try:
+                    meta=command(["docker","image","inspect","--format",
+                        "{{.Id}}|{{.Size}}",image]).split("|")
+                except subprocess.CalledProcessError:
+                    # A running container may outlive a locally cached image.
+                    # Report only a fixed role position; never print the
+                    # image ref or Docker stderr and never auto-pull it.
+                    uncached_roles.append(role_index)
+                    continue
                 if len(meta)!=2 or meta[0]!=image or not meta[1].isdigit():
                     raise ValueError("image source changed during inspection")
                 images[image]=int(meta[1])
         stage='validate_inventory'
+        if uncached_roles:
+            print(json.dumps({
+                "status":"HOLD",
+                "running_roles_checked":len(containers),
+                "unique_cached_image_ids":len(images),
+                "uncached_image_role_positions":sorted(set(uncached_roles)),
+                "image_export_possible_for_all_running_roles":False,
+                "image_archive_created":False,
+                "old_image_rollback_verified":False,
+                "production_containers_or_volumes_modified":False,
+                "safe_to_cutover":False,
+            },sort_keys=True))
+            return 3
         result=validate(containers,images,shutil.disk_usage(Path("/opt/kipnerter")).free)
         print(json.dumps(result,sort_keys=True))
         return 0 if result["conservative_local_image_retention_capacity"] else 3
