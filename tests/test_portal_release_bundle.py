@@ -9,6 +9,8 @@ import tempfile
 import unittest
 
 from scripts.portal_release_bundle import build, verify, stage_verified
+from scripts.portal_atomic_release import prepare, switch, inspect
+from tests.test_portal_atomic_release import managed, OLD
 
 
 def run_git(repo, *args):
@@ -174,15 +176,101 @@ class SourcePinnedReleaseTests(unittest.TestCase):
             'Build immutable source bundle before tailnet access',
             'Resolve deployment target',
             'Receive and verify bundle on the actual destination',
+            'Validate explicitly provisioned atomic release layout',
             'Preserve and verify production application rollback snapshot',
             'Upload revision after verified rollback snapshot',
-            'Build and deploy',
+            'Require independent cutover and data-recovery approval',
+            'Atomically select the prepared revision and deploy',
         )]
         self.assertEqual(events, sorted(events))
         self.assertIn('python3 - stage --platform-sha', workflow)
-        self.assertIn('cp -a $VERIFIED/. /opt/kipnerter/', workflow)
+        self.assertIn('python3 - prepare --root /opt/kipnerter', workflow)
+        self.assertIn('python3 - switch --root /opt/kipnerter', workflow)
+        self.assertIn('KIPNERTER_CUTOVER_APPROVED_SHA', workflow)
+        self.assertIn('KIPNERTER_DATA_RECOVERY_WITNESS_SHA', workflow)
+        self.assertIn('docker compose -p $PROJECT', workflow)
+        self.assertIn('/opt/kipnerter/current', workflow)
+        self.assertNotIn('cp -a $VERIFIED/. /opt/kipnerter/', workflow)
+        self.assertNotIn('cat > /opt/kipnerter/.env', workflow)
+        self.assertNotIn("sed -n 's/^KIPNERTER_GATEWAY_TOKEN=", workflow)
         self.assertNotIn('tar -xzf - -C /opt/kipnerter', workflow)
         self.assertNotIn('sudo chown -R', workflow)
+
+    def test_complete_verified_bundle_prepare_switch_and_rollback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            platform, spatial, p, s = self.make_fixture(root)
+            bundle = root / "received.tgz"
+            build(platform, spatial, p, s, bundle)
+            source = stage_verified(bundle, p, s,
+                                    hashlib.sha256(bundle.read_bytes()).hexdigest(),
+                                    root / "isolated-verified")
+            self.assertTrue((source / ".portal-staged.json").is_file())
+            actual = managed(root / "managed")
+            environment = root / "candidate.env"
+            environment.write_text("SYNTHETIC_STAGE_PASSWORD=not_a_real_secret\n")
+            environment.chmod(0o600)
+            deployed = prepare(actual, source, environment, p)
+            self.assertEqual(deployed, actual/"releases"/p)
+            self.assertEqual(inspect(actual), OLD)
+            self.assertEqual((deployed / ".env").stat().st_mode & 0o777, 0o600)
+            self.assertEqual(switch(actual, p, OLD)["active"], p)
+            self.assertEqual(inspect(actual), p)
+            self.assertEqual((actual / "current/apps/web/app/page.js").read_text(),
+                             "export default function Page() {}\n")
+            self.assertEqual(switch(actual, OLD, p)["active"], OLD)
+            self.assertEqual(inspect(actual), OLD)
+
+    def test_managed_candidate_prepare_via_exact_remote_stdin_program(self):
+        import sys
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            platform, spatial, p, s = self.make_fixture(root)
+            bundle = root / "received.tgz"
+            build(platform, spatial, p, s, bundle)
+            source = stage_verified(bundle, p, s,
+                                    hashlib.sha256(bundle.read_bytes()).hexdigest(),
+                                    root / "verified")
+            live = managed(root / "managed")
+            envfile = root / "stage.env"
+            envfile.write_text("SYNTHETIC_STAGE_KEY=this_is_only_a_fixture\n")
+            envfile.chmod(0o600)
+            script = (Path(__file__).resolve().parents[1] /
+                      "scripts/portal_atomic_release.py").read_text()
+            argv = [sys.executable, "-", "prepare", "--root", str(live),
+                    "--verified-source", str(source),
+                    "--environment-file", str(envfile), "--revision", p]
+            proc = subprocess.run(argv, input=script, text=True,
+                                  capture_output=True, timeout=12)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn("not activated", proc.stdout)
+            self.assertEqual(inspect(live), OLD)
+            replay = subprocess.run(argv, input=script, text=True,
+                                    capture_output=True, timeout=12)
+            self.assertNotEqual(replay.returncode, 0)
+            self.assertEqual(inspect(live), OLD)
+
+    def test_prepare_rejects_forged_source_and_bad_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            platform, spatial, p, s = self.make_fixture(root)
+            bundle = root / "received.tgz"
+            build(platform, spatial, p, s, bundle)
+            source = stage_verified(bundle, p, s,
+                                    hashlib.sha256(bundle.read_bytes()).hexdigest(),
+                                    root / "isolated-verified")
+            actual = managed(root / "managed")
+            environment = root / "candidate.env"
+            environment.write_text("FAKE=synthetic\n")
+            environment.chmod(0o644)
+            with self.assertRaisesRegex(ValueError, "private"):
+                prepare(actual, source, environment, p)
+            environment.chmod(0o600)
+            (source / "apps/web/app/page.js").write_text("mutation")
+            with self.assertRaisesRegex(ValueError, "modified"):
+                prepare(actual, source, environment, p)
+            self.assertFalse((actual / "releases" / p).exists())
+            self.assertEqual(inspect(actual), OLD)
 
     def test_tracked_symlinks_and_submodules_denied(self):
         with tempfile.TemporaryDirectory() as tmp:

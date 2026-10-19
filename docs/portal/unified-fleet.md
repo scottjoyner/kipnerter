@@ -802,3 +802,61 @@ production rollback, signed artifacts, an authorized real OIDC login, or
 model/agent execution permission. Do not promote this draft release until
 staging, database/MinIO rollback, and production Tailscale SSH acceptance are
 all independently satisfied.
+
+## October 19: managed atomic source cutover — isolated rehearsal
+
+The previous release workflow could still leave **mixed application revisions**
+because it copied verified files into the existing live Compose directory.
+The new `scripts/portal_atomic_release.py` eliminates this *application-file*
+hazard for **explicitly provisioned managed layouts only**:
+
+- Operator-managed `/opt/kipnerter` is a private directory with
+  `releases/<exact-sha>/` and a `current -> releases/<exact-sha>` symlink.
+  A legacy checkout in `/opt/kipnerter`, an unowned/permissive directory,
+  a symlink to an unmanaged target, or a missing verified prior release causes
+  **RELEASE HOLD**. The automation **never migrates the legacy layout**.
+- Receiving-side verified source bundles carry an exact, private staging
+  manifest. Before promotion, the candidate builder rehashes **every source
+  file** against it, checks for unlisted/symlinked entries, and copies the
+  selected version into a new private release directory. It adds a separate,
+  mode-0600 candidate `.env` supplied from the appropriate GitHub
+  environment secrets, without touching the active service's environment.
+- A per-release manifest records exact SHA, mode and digest of **all** source
+  files and the candidate environment. Switching rechecks both existing and
+  requested releases, checks `--expected-current` against the actual symlink,
+  takes a nonblocking operator-owned lock, and changes only the
+  `current` symlink via atomic `os.replace` within the same directory.
+  Racing changes, altered files, extra files, wrong revisions, permissive
+  secrets, and missing targets refuse promotion.
+- Rollback uses the **same** pointer switch with swapped exact expected/current
+  revision arguments. The prior complete release stays on disk; the script
+  performs no Docker or data-volume mutations itself.
+- Compose runs from `/opt/kipnerter/current` with **stable project names**:
+  `kipnerter` in production and `kipnerter-staging` in staging. This
+  prevents release-directory hashes from accidentally renaming persistent
+  named volumes. Changing the symlink alone **does not roll back running
+  containers, Postgres migrations, or MinIO writes**.
+- Deployment refuses to read a legacy gateway token back into the GitHub
+  runner or silently generate a replacement. It requires a separately
+  provisioned `KIPNERTER_GATEWAY_TOKEN` environment secret and transfers
+  candidate secrets to a private, non-clobbering staging file.
+
+**Authorization boundary:** before automatic pointer selection, the protected
+GitHub environment must independently supply both
+`KIPNERTER_CUTOVER_APPROVED_SHA` and
+`KIPNERTER_DATA_RECOVERY_WITNESS_SHA`, **equal to the specific incoming
+GitHub commit SHA**. Their presence is merely an explicit operator gate; it
+is **not itself evidence of a real browser login, independently witnessed
+DB/volume restore, or safe schema downgrade**. Both should remain
+**unconfigured** until external staging and recovery acceptance is recorded.
+A complete migration from the legacy layout needs a separate operator plan,
+including permissions, storage capacity, Compose bind mounts, volume identity,
+remote rollback commands, and an actual successful exercise.
+
+The test suite simulates a full verified source-bundle-to-prepared-release
+round trip, a switch forward and backward, then tests malformed/changed
+manifests, injected files, symlinks, world-readable secrets, stale expected
+revisions, competing locks and shell-stdin remote execution. It **does not**
+claim a production rehearsal. Production Tailscale SSH still requires
+additional identity approval, no verified staging-tagged host exists, and
+`https://kipnerter.com/chat` still returned HTTP 404. Keep PR #18 draft.

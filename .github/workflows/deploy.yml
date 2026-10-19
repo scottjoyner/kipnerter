@@ -126,6 +126,7 @@ jobs:
           FLEET_MONITOR_BASE_URL: ${{ secrets.FLEET_MONITOR_BASE_URL }}
           FLEET_MONITOR_TOKEN: ${{ secrets.FLEET_MONITOR_TOKEN }}
           ASSISTX_BASE_URL: ${{ secrets.ASSISTX_BASE_URL }}
+          GATEWAY_TOKEN: ${{ secrets.KIPNERTER_GATEWAY_TOKEN }}
         run: |
           set -euo pipefail
           for value in API_KEY DB_PASSWORD S3_ACCESS S3_SECRET; do
@@ -136,6 +137,7 @@ jobs:
             [[ -n "${!value:-}" ]] || { echo "::error::Missing portal authentication setting $value"; exit 1; }
           done
           [[ ${#NEXTAUTH_SECRET} -ge 32 ]] || { echo "::error::NEXTAUTH_SECRET must be at least 32 chars"; exit 1; }
+          [[ ${#GATEWAY_TOKEN} -ge 32 ]] || { echo "::error::Explicit gateway token secret required; no old-token extraction"; exit 1; }
           [[ "$TSIDP_ISSUER" == https://* ]] || { echo "::error::TSIDP_ISSUER must use HTTPS"; exit 1; }
           for value in FLEET_MONITOR_BASE_URL FLEET_MONITOR_TOKEN; do
             [[ -n "${!value:-}" ]] || { echo "::error::Missing required read-only fleet integration $value"; exit 1; }
@@ -168,20 +170,39 @@ jobs:
           cat scripts/portal_release_bundle.py | tailscale ssh "$DEPLOY_USER@$TARGET" \
             "python3 - stage --platform-sha $GITHUB_SHA --spatial-sha $SPATIAL_SHA --archive $BUNDLE --archive-sha256 $EXPECTED_SHA256 --revisions-root $STORE/verified"
 
-      - name: Preserve and verify production application rollback snapshot
-        if: inputs.environment == 'production'
+      - name: Validate explicitly provisioned atomic release layout
+        id: managed
         env:
           TARGET: ${{ steps.target.outputs.host }}
           USER: ${{ steps.target.outputs.user }}
         run: |
           set -euo pipefail
+          # Required operator migration: never turn the legacy /opt tree
+          # into a symlink or mutate it during a CI release.
+          REPORT=$(cat scripts/portal_atomic_release.py | tailscale ssh "$USER@$TARGET" \
+            "python3 - inspect --root /opt/kipnerter")
+          [[ "$REPORT" =~ ^Active\ managed\ release:\ ([0-9a-f]{40})$ ]] || {
+            echo "::error::Managed revision preflight did not prove current identity"
+            exit 1
+          }
+          printf 'previous_sha=%s\n' "${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+
+      - name: Preserve and verify production application rollback snapshot
+        if: inputs.environment == 'production'
+        env:
+          TARGET: ${{ steps.target.outputs.host }}
+          USER: ${{ steps.target.outputs.user }}
+          PREVIOUS_SHA: ${{ steps.managed.outputs.previous_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$PREVIOUS_SHA" =~ ^[a-f0-9]{40}$ ]] || exit 1
           [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::Non-immutable release SHA"; exit 1; }
           # Snapshot the live deployed application BEFORE overwriting a file.
           # This uses stdin to run the exact checked-in verifier and leaves
           # only a mode-0600 archive in an owner-private directory. The SSH
           # identity check in "Resolve deployment target" must pass first.
           cat scripts/portal_release_backup.py | tailscale ssh "$USER@$TARGET" \
-            "python3 - snapshot --root /opt/kipnerter --backup-dir /home/kipnerter/.local/share/kipnerter-release-backups --revision $GITHUB_SHA"
+            "python3 - snapshot --root /opt/kipnerter/releases/$PREVIOUS_SHA --backup-dir /home/kipnerter/.local/share/kipnerter-release-backups --revision $GITHUB_SHA"
           # Database/volume state is NOT in this snapshot. Promotion still
           # requires a separately rehearsed application/DB rollback.
 
@@ -211,19 +232,13 @@ jobs:
           SPATIAL_S3_SECRET_ACCESS_KEY: ${{ secrets.KIPNERTER_SPATIAL_S3_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
-          # This mutation is reachable ONLY after the receiving host has
-          # independently verified and staged the exact source bundle.
-          # It still requires external Compose/data rollback authorization.
+          # Prepares a candidate release only; live services and the
+          # active pointer remain unchanged until explicit approval.
           [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
           [[ "$USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ && "$USER" != root ]] || exit 1
           VERIFIED="/home/$USER/.local/state/kipnerter-release/verified/$GITHUB_SHA"
-          trap 'rm -f /tmp/kipnerter.env /tmp/kipnerter.tgz' EXIT
-          # Refuse unknown, symlinked, or operator-unowned release roots.
-          # Do not recursively chown the running application on deployment.
-          tailscale ssh "$USER@$TARGET" \
-            "test -d /opt/kipnerter && test ! -L /opt/kipnerter && test -w /opt/kipnerter && test -f $VERIFIED/docker-compose.yml && test -f $VERIFIED/apps/web/Dockerfile"
-          tailscale ssh "$USER@$TARGET" \
-            "cp -a $VERIFIED/. /opt/kipnerter/"
+          ENV_INCOMING="/home/$USER/.local/state/kipnerter-release/candidate/$GITHUB_SHA.env"
+          trap 'rm -f /tmp/kipnerter.env' EXIT
           if [ "$ENVIRONMENT" = production ]; then
             AUTH_ORIGIN=https://kipnerter.com
             API_ORIGIN=https://api.kipnerter.com
@@ -242,17 +257,12 @@ jobs:
             ASSISTX_BASE_URL="${ASSISTX_BASE_URL:-}"
             SOPHIA_BASE_URL="${SOPHIA_BASE_URL:-}"
             LMSTUDIO_BASE_URL="${LMSTUDIO_BASE_URL:-}"
+            # Never read an old production gateway secret into the runner,
+            # and never silently generate a replacement on deploy.
+            [[ ${#GATEWAY_TOKEN_OVERRIDE} -ge 32 ]] || {
+              echo "::error::Explicit gateway token secret required"; exit 1;
+            }
             GATEWAY_TOKEN="$GATEWAY_TOKEN_OVERRIDE"
-            if [ -z "$GATEWAY_TOKEN" ]; then
-              GATEWAY_TOKEN=$(tailscale ssh "$USER@$TARGET" "sed -n 's/^KIPNERTER_GATEWAY_TOKEN=//p' /opt/kipnerter/.env 2>/dev/null | head -n1" || true)
-            fi
-            if [ -z "$GATEWAY_TOKEN" ]; then
-              GATEWAY_TOKEN=$(python3 - <<'PY'
-          import secrets
-          print(secrets.token_urlsafe(48))
-          PY
-              )
-            fi
             {
               printf 'KIPNERTER_ENV=%s\n' "$ENVIRONMENT"
               printf 'NEXTAUTH_URL=%s\n' "$AUTH_ORIGIN"
@@ -281,25 +291,58 @@ jobs:
               printf 'KIPNERTER_SPATIAL_S3_SECRET_ACCESS_KEY=%s\n' "$SPATIAL_S3_SECRET_ACCESS_KEY"
             } > /tmp/kipnerter.env
             chmod 600 /tmp/kipnerter.env
-            cat /tmp/kipnerter.env | tailscale ssh "$USER@$TARGET" 'cat > /opt/kipnerter/.env && chmod 600 /opt/kipnerter/.env'
+            # Candidate secrets are copied to a separate mode-0600 file;
+            # there is no write to the active .env before cutover.
+            tailscale ssh "$USER@$TARGET" \
+              "umask 077; set -C; mkdir -p /home/$USER/.local/state/kipnerter-release/candidate; cat > $ENV_INCOMING" < /tmp/kipnerter.env
             rm -f /tmp/kipnerter.env
+            cat scripts/portal_atomic_release.py | tailscale ssh "$USER@$TARGET" \
+              "python3 - prepare --root /opt/kipnerter --verified-source $VERIFIED --environment-file $ENV_INCOMING --revision $GITHUB_SHA"
 
-      - name: Build and deploy
+      - name: Require independent cutover and data-recovery approval
+        env:
+          CUTOVER_APPROVED_SHA: ${{ secrets.KIPNERTER_CUTOVER_APPROVED_SHA }}
+          DATA_RECOVERY_WITNESS_SHA: ${{ secrets.KIPNERTER_DATA_RECOVERY_WITNESS_SHA }}
+        run: |
+          set -euo pipefail
+          # These GitHub-environment secrets must be set by an independent
+          # operator after a complete staging OIDC and volume/DB rehearsal.
+          # They are an authorization check, NOT proof a rehearsal occurred.
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]] || exit 1
+          [[ "$CUTOVER_APPROVED_SHA" == "$GITHUB_SHA" &&
+             "$DATA_RECOVERY_WITNESS_SHA" == "$GITHUB_SHA" ]] || {
+            echo "::error::RELEASE HOLD: independent cutover and DB/volume rollback authorizations missing"
+            exit 1
+          }
+
+      - name: Atomically select the prepared revision and deploy
         env:
           TARGET: ${{ steps.target.outputs.host }}
           USER: ${{ steps.target.outputs.user }}
           ENVIRONMENT: ${{ inputs.environment }}
+          PREVIOUS_SHA: ${{ steps.managed.outputs.previous_sha }}
         run: |
           set -euo pipefail
-          COMPOSE="docker compose -f docker-compose.yml -f compose.spatial.yml"
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ && "$PREVIOUS_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          [[ "$USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ && "$USER" != root ]] || exit 1
           if [[ "$ENVIRONMENT" = staging ]]; then
-            COMPOSE="$COMPOSE -f compose.staging.yml"
-          elif [[ "$ENVIRONMENT" != production ]]; then
+            PROJECT=kipnerter-staging
+            EXTRA="-f compose.staging.yml"
+          elif [[ "$ENVIRONMENT" = production ]]; then
+            PROJECT=kipnerter
+            EXTRA=""
+          else
             echo "::error::Invalid deployment environment"; exit 1
           fi
-          # A dedicated staging host uses only the staging Caddyfile and
-          # staging API domain. The prod deploy never adds staging routes.
-          tailscale ssh "$USER@$TARGET" "cd /opt/kipnerter && $COMPOSE --profile edge config >/dev/null && $COMPOSE --profile edge build --pull && $COMPOSE --profile edge up -d --remove-orphans && $COMPOSE --profile edge ps"
+          # Full-file verification happened at receiving-side stage and in
+          # candidate prepare; an atomic symlink swap changes source identity
+          # without a partial copy into a live Compose directory.
+          cat scripts/portal_atomic_release.py | tailscale ssh "$USER@$TARGET" \
+            "python3 - switch --root /opt/kipnerter --revision $GITHUB_SHA --expected-current $PREVIOUS_SHA"
+          # Keep Compose project identity fixed across SHA-named source dirs:
+          # existing named Postgres/MinIO volumes cannot be silently renamed.
+          tailscale ssh "$USER@$TARGET" \
+            "cd /opt/kipnerter/current && docker compose -p $PROJECT -f docker-compose.yml -f compose.spatial.yml $EXTRA --profile edge config >/dev/null && docker compose -p $PROJECT -f docker-compose.yml -f compose.spatial.yml $EXTRA --profile edge build --pull && docker compose -p $PROJECT -f docker-compose.yml -f compose.spatial.yml $EXTRA --profile edge up -d --remove-orphans && docker compose -p $PROJECT -f docker-compose.yml -f compose.spatial.yml $EXTRA ps"
 
       - name: Verify deployment health
         env:
@@ -328,7 +371,7 @@ jobs:
           import urllib.request
           from pathlib import Path
 
-          line = next((line for line in Path('/opt/kipnerter/.env').read_text().splitlines()
+          line = next((line for line in Path('/opt/kipnerter/current/.env').read_text().splitlines()
                        if line.startswith('KIPNERTER_GATEWAY_TOKEN=')), '')
           token = line.partition('=')[2]
           if len(token) < 32:
@@ -375,4 +418,4 @@ jobs:
         env:
           TARGET: ${{ steps.target.outputs.host }}
           USER: ${{ steps.target.outputs.user }}
-        run: tailscale ssh "$USER@$TARGET" 'cd /opt/kipnerter && docker compose -f docker-compose.yml -f compose.spatial.yml ps' || true
+        run: tailscale ssh "$USER@$TARGET" 'cd /opt/kipnerter/current && docker compose -f docker-compose.yml -f compose.spatial.yml ps' || true
