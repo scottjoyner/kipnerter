@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: scottjoyner/kipnerter-api
-          ref: d8c3074460d519979eca33e21058f54c60c8fac4
+          ref: 88fcebbcbf951e966996c778321a6cfaaeae2298
           path: recovery-api
           token: ${{ secrets.KIPNERTER_API_REPO_TOKEN }}
           persist-credentials: false
@@ -45,7 +45,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git -C recovery-api rev-parse HEAD)" = "d8c3074460d519979eca33e21058f54c60c8fac4"
+          test "$(git -C recovery-api rev-parse HEAD)" = "88fcebbcbf951e966996c778321a6cfaaeae2298"
           test ! -e recovery-api/.git-credentials
           test ! -e recovery-api/.env
           echo "API HEAD pinned and production secrets not supplied"
