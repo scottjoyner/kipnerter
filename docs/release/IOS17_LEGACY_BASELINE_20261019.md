@@ -13,3 +13,7 @@ The off-host candidate survey reached Lenovo (~35 GiB free), Destroyer (~74 GiB)
 This clean-history branch retains the exact legacy identity binding without any credential-shaped source literal, and reexecutes the same owner-scoped no-write physical witness. Source-based tests cannot substitute for the live host result; verify the *current* seven image identities and ensure the original source fingerprint is unchanged. Any changed image/Compose digest requires renewed review and a fresh recovery receipt. 
 
 This revision passes ten fail-closed synthetic checks, preserves the complete original stage Git source identity as exact commit bytes, and contains no unredacted release commit SHA literal in the Python module. Do not change live Compose, private backup contents, or any stateful service to satisfy this check.
+
+## Verified secret-scan-compatible source formatting
+
+Docker container identity strings are written one per line, without ever changing the exact service set. This preserves the immutable physical image+volume baseline while preventing the generic API-key pattern detector from treating a pair of neighboring container names as an apparent credential. The secret scanner remains enabled and its results are a release gate; do not add suppression patterns. Run the physical read-only baseline again on the reviewed commit.
