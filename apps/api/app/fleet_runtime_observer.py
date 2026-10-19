@@ -47,7 +47,7 @@ def observations(path=None, now=None):
             raise ValueError("unexpected runtime host")
         for kind,fields,bound in (("native",{"catalog_entries","loaded_instances"},256),
                                   ("openai",{"advertised_entries"},1000),
-                                  ("processes",{"llama_server_count"},256)):
+                                  ("processes",{"llama_server_count","lmstudio_child_count"},256)):
             item=row[kind]
             if not isinstance(item,dict) or item.get("status") not in ("reported","unavailable"):
                 raise ValueError("invalid runtime endpoint")
@@ -55,4 +55,6 @@ def observations(path=None, now=None):
                 if set(item)!={"status"}:raise ValueError("leaked runtime response fields")
             elif set(item)!=fields|{"status"} or any(type(item[k]) is not int or not 0<=item[k]<=bound for k in fields):
                 raise ValueError("unexpected runtime count")
+            if kind == "processes" and item["status"] == "reported" and item["lmstudio_child_count"] > item["llama_server_count"]:
+                raise ValueError("invalid child-parent process relationship")
     return data

@@ -32,7 +32,7 @@ def test_read_only_allowlisted_host_with_bounded_probe_and_no_model_payload():
         returncode=0
         stdout=json.dumps({"native":{"status":"reported","catalog_entries":11,"loaded_instances":1},
                            "openai":{"status":"reported","advertised_entries":11},
-                           "processes":{"status":"reported","llama_server_count":2}})
+                           "processes":{"status":"reported","llama_server_count":2,"lmstudio_child_count":1}})
     def fake_run(args, **kwargs):
         assert args[0]=='ssh' and args[-2]=='beelink' and args[-1]=='python3 -'
         assert 'StrictHostKeyChecking=yes' in args
@@ -43,7 +43,7 @@ def test_read_only_allowlisted_host_with_bounded_probe_and_no_model_payload():
         return Result()
     row=sample_host('beelink',fake_run)
     assert row['native']=={"status":"reported","catalog_entries":11,"loaded_instances":1}
-    assert row['processes']=={"status":"reported","llama_server_count":2}
+    assert row['processes']=={"status":"reported","llama_server_count":2,"lmstudio_child_count":1}
     assert row['model_binding']=='unverified'
     assert 'models' not in row
     with pytest.raises(ValueError):sample_host('arbitrary-remote-host',fake_run)
@@ -87,6 +87,15 @@ def test_wrong_host_or_unexpected_raw_fields_denied(tmp_path):
     altered['nodes'][0]['processes']={'status':'reported','llama_server_count':True}
     with pytest.raises(ValueError):observations(private_file(target,altered))
     altered=record()
+    altered['nodes'][0]['processes']={'status':'reported','llama_server_count':1,'lmstudio_child_count':2}
+    with pytest.raises(ValueError):observations(private_file(target,altered))
+    from scripts.refresh_fleet_runtime_snapshot import from_schema
+    with pytest.raises(ValueError):from_schema(altered)
+    altered=record()
+    altered['nodes'][0]['processes']={'status':'reported','llama_server_count':1,'lmstudio_child_count':1,
+                                     'process_arg':'--api-key secret'}
+    with pytest.raises(ValueError):observations(private_file(target,altered))
+    altered=record()
     altered['nodes'][0]['model_binding']='verified'
     with pytest.raises(ValueError):observations(private_file(target,altered))
     altered=record()
@@ -107,7 +116,7 @@ def test_api_reports_offhost_ssh_counts_but_never_infers_admission(monkeypatch):
         data=record()
         data['nodes'][3]['native']={'status':'reported','catalog_entries':11,'loaded_instances':1}
         data['nodes'][3]['openai']={'status':'reported','advertised_entries':11}
-        data['nodes'][3]['processes']={'status':'reported','llama_server_count':2}
+        data['nodes'][3]['processes']={'status':'reported','llama_server_count':2,'lmstudio_child_count':1}
         return data
     monkeypatch.setattr(control_plane,'_tailscale_read',observe)
     response=TestClient(app).get('/api/v1/control-plane/models',headers={
@@ -119,6 +128,7 @@ def test_api_reports_offhost_ssh_counts_but_never_infers_admission(monkeypatch):
     beelink=value['fleet_runtime_nodes'][3]
     assert beelink['node']=='beelink' and beelink['native']['loaded_instances']==1
     assert beelink['processes']['llama_server_count']==2
+    assert beelink['processes']['lmstudio_child_count']==1
     assert beelink['model_binding']=='unverified'
     assert value['models']==[] # no attempt to map unverified remote instance to routed model
     assert '/home/private/' not in str(value)

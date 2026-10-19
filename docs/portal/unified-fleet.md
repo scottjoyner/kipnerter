@@ -634,3 +634,38 @@ The protocol, snapshot, validator and portal have been updated in lockstep.
 A fresh signed-transport observation remains bounded to 90 seconds, with
 host-key verification, no remote writes, and bearer-only Tailscale Serve.
 No inference tests or new model activations were performed.
+
+### October 19: LM Studio parent-process corroboration (read-only)
+
+Beelink's native LM Studio endpoint still reports one loaded instance for
+**Lfm2.5 1.2B**, with two local `llama-server` processes. A separate local
+read-only process inspection found that the API-key-protected server is a
+**direct child of the `lm-studio` process**, while another independent
+`llama-server` is not. The two server model-file sizes differ, and the
+native model catalog's size does not exactly match either on-disk server
+model file: this is **not sufficient to claim an exact binding**.
+
+The existing six-host SSH survey now reads only Linux `/proc/<pid>/comm`
+plus `/proc/<pid>/status` `PPid` and the immediate parent's `/comm`.
+Neither numeric PID, parent identity, process arguments, model paths,
+API keys, usernames, nor file inode details leave the SSH host. Two count
+fields are emitted for the already-published process status:
+`llama_server_count` and `lmstudio_child_count`; the second may not exceed
+the first. The collector and independent observer both reject forged counts,
+negative/boolean values, extra fields and impossible parent counts.
+
+| Host | `llama-server` count | Direct `lm-studio` children | Exact model binding |
+| --- | ---: | ---: | --- |
+| Xwing | 4 | 0 | **unverified** |
+| Destroyer | 2 | 0 | **unverified** |
+| Lenovo | 3 | 0 | **unverified** |
+| Beelink | 2 | 1 | **unverified** |
+| Deathstar | 4 | 0 | **unverified** |
+| Optiplex | 3 | 0 | **unverified** |
+
+A changed/unreadable process relationship fails closed to `unavailable`
+rather than filling in a model identity. All read-only source snapshots are
+still ephemeral (90-second validity) and the portal never uses these counts
+for router admission or dispatch. Remaining work for a strong binding would
+require a documented, signed provider instance-to-process identity contract
+and independent attestation, not filename resemblance or process ancestry.

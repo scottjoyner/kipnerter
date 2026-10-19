@@ -48,16 +48,31 @@ def read(endpoint, key):
     except Exception:
         return {"status":"unavailable"}
 def process_count():
+    # Read two Linux comm names, not process arguments or credentials.
+    # This corroborates a parent runtime without claiming a model binding.
     try:
         count = 0
+        lmstudio_children = 0
         for entry in pathlib.Path("/proc").iterdir():
             if not entry.name.isdigit(): continue
             try:
-                if (entry/"comm").read_text().strip() == "llama-server":
-                    count += 1
-            except (OSError, UnicodeError): continue
-        if count > 256: return {"status":"unavailable"}
-        return {"status":"reported", "llama_server_count":count}
+                if (entry/"comm").read_text().strip() != "llama-server":
+                    continue
+                count += 1
+                ppid = next((line.split()[1] for line in (entry/"status").read_text().splitlines()
+                             if line.startswith("PPid:")), None)
+                if ppid and ppid.isdigit():
+                    parent = pathlib.Path("/proc")/ppid/"comm"
+                    if parent.read_text().strip() == "lm-studio":
+                        lmstudio_children += 1
+            except FileNotFoundError:
+                continue   # process exited during bounded observation
+            except (PermissionError, UnicodeError, ValueError):
+                return {"status":"unavailable"}
+        if count > 256 or lmstudio_children > count:
+            return {"status":"unavailable"}
+        return {"status":"reported", "llama_server_count":count,
+                "lmstudio_child_count":lmstudio_children}
     except (OSError, UnicodeError): return {"status":"unavailable"}
 print(json.dumps({"native":read("http://127.0.0.1:1234/api/v1/models","models"),
                   "openai":read("http://127.0.0.1:1234/v1/models","data"),
@@ -91,7 +106,7 @@ def sample_host(host, runner=None):
         native, openai, processes = data["native"],data["openai"],data["processes"]
         for item, fields, bound in ((native,{"catalog_entries","loaded_instances"},256),
                                     (openai,{"advertised_entries"},1000),
-                                    (processes,{"llama_server_count"},256)):
+                                    (processes,{"llama_server_count","lmstudio_child_count"},256)):
             if not isinstance(item,dict) or item.get("status") not in ("reported","unavailable"):
                 raise ValueError("invalid runtime state")
             if item["status"]=="unavailable":
@@ -100,6 +115,10 @@ def sample_host(host, runner=None):
                 raise ValueError("invalid runtime counter fields")
             elif any(type(item[k]) is not int or not 0<=item[k]<=bound for k in fields):
                 raise ValueError("invalid runtime count")
+        if processes["status"] == "reported" and (
+            processes["lmstudio_child_count"] > processes["llama_server_count"]
+        ):
+            raise ValueError("impossible LM Studio child count")
         return {"node":host, "ssh":"reported", "native":native, "openai":openai,
                 "processes":processes, "model_binding":"unverified"}
     except (ValueError,TypeError,KeyError):
@@ -153,7 +172,7 @@ def from_schema(document):
             raise ValueError("invalid fixed host witness")
         for kind,allowed,bound in (("native",{"catalog_entries","loaded_instances"},256),
                                    ("openai",{"advertised_entries"},1000),
-                                   ("processes",{"llama_server_count"},256)):
+                                   ("processes",{"llama_server_count","lmstudio_child_count"},256)):
             info=row[kind]
             if not isinstance(info,dict) or info.get("status") not in ("reported","unavailable"):
                 raise ValueError("bad probe status")
@@ -161,6 +180,8 @@ def from_schema(document):
                 if set(info)!={"status"}:raise ValueError("unknown unavailable fields")
             elif set(info)!=allowed|{"status"} or any(type(info[k]) is not int or not 0<=info[k]<=bound for k in allowed):
                 raise ValueError("bad probe fields")
+            if kind == "processes" and info["status"] == "reported" and info["lmstudio_child_count"] > info["llama_server_count"]:
+                raise ValueError("impossible parent-child process count")
     return document
 
 if __name__=="__main__":
