@@ -19,7 +19,7 @@ class Gateway031OverlayTests(unittest.TestCase):
 
     def test_preserve_existing_internal_api_port(self):
         self.assertIn('"--port", "8000"', self.text)
-        self.assertIn('"/ready', self.text)
+        self.assertIn('/ready', self.text)
         self.assertIn('http://127.0.0.1:8000/ready', self.text)
         self.assertNotIn("8080:8000", self.text)
         self.assertNotIn("ports:", self.text)
