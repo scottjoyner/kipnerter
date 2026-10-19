@@ -13,7 +13,8 @@ from scripts.refresh_fleet_runtime_snapshot import refresh, sample_host
 EMPTY={"status":"unavailable"}
 
 def rows():
-    return [{"node":host,"ssh":"reported","native":dict(EMPTY),"openai":dict(EMPTY)}
+    return [{"node":host,"ssh":"reported","native":dict(EMPTY),"openai":dict(EMPTY),"processes":dict(EMPTY),
+             "model_binding":"unverified"}
             for host in HOSTS]
 
 def record(when=None):
@@ -30,7 +31,8 @@ def test_read_only_allowlisted_host_with_bounded_probe_and_no_model_payload():
     class Result:
         returncode=0
         stdout=json.dumps({"native":{"status":"reported","catalog_entries":11,"loaded_instances":1},
-                           "openai":{"status":"reported","advertised_entries":11}})
+                           "openai":{"status":"reported","advertised_entries":11},
+                           "processes":{"status":"reported","llama_server_count":2}})
     def fake_run(args, **kwargs):
         assert args[0]=='ssh' and args[-2]=='beelink' and args[-1]=='python3 -'
         assert 'StrictHostKeyChecking=yes' in args
@@ -41,6 +43,8 @@ def test_read_only_allowlisted_host_with_bounded_probe_and_no_model_payload():
         return Result()
     row=sample_host('beelink',fake_run)
     assert row['native']=={"status":"reported","catalog_entries":11,"loaded_instances":1}
+    assert row['processes']=={"status":"reported","llama_server_count":2}
+    assert row['model_binding']=='unverified'
     assert 'models' not in row
     with pytest.raises(ValueError):sample_host('arbitrary-remote-host',fake_run)
 
@@ -50,6 +54,8 @@ def test_ssh_failure_never_invents_available_model():
     assert row['ssh']=='unavailable'
     assert row['native']==EMPTY
     assert row['openai']==EMPTY
+    assert row['processes']==EMPTY
+    assert row['model_binding']=='unverified'
 
 def test_secure_snapshot_and_stale_reading(tmp_path):
     target=tmp_path/'state'/'fleet-runtime.json'
@@ -78,6 +84,12 @@ def test_wrong_host_or_unexpected_raw_fields_denied(tmp_path):
                                    'model_path':'/home/private/sensitive.gguf'}
     with pytest.raises(ValueError):observations(private_file(target,altered))
     altered=record()
+    altered['nodes'][0]['processes']={'status':'reported','llama_server_count':True}
+    with pytest.raises(ValueError):observations(private_file(target,altered))
+    altered=record()
+    altered['nodes'][0]['model_binding']='verified'
+    with pytest.raises(ValueError):observations(private_file(target,altered))
+    altered=record()
     altered['nodes'][0]['openai']={'status':'reported','advertised_entries':True}
     with pytest.raises(ValueError):observations(private_file(target,altered))
 
@@ -95,6 +107,7 @@ def test_api_reports_offhost_ssh_counts_but_never_infers_admission(monkeypatch):
         data=record()
         data['nodes'][3]['native']={'status':'reported','catalog_entries':11,'loaded_instances':1}
         data['nodes'][3]['openai']={'status':'reported','advertised_entries':11}
+        data['nodes'][3]['processes']={'status':'reported','llama_server_count':2}
         return data
     monkeypatch.setattr(control_plane,'_tailscale_read',observe)
     response=TestClient(app).get('/api/v1/control-plane/models',headers={
@@ -105,5 +118,7 @@ def test_api_reports_offhost_ssh_counts_but_never_infers_admission(monkeypatch):
     assert value['assistx_status']=='reported_empty'
     beelink=value['fleet_runtime_nodes'][3]
     assert beelink['node']=='beelink' and beelink['native']['loaded_instances']==1
+    assert beelink['processes']['llama_server_count']==2
+    assert beelink['model_binding']=='unverified'
     assert value['models']==[] # no attempt to map unverified remote instance to routed model
     assert '/home/private/' not in str(value)

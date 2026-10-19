@@ -18,7 +18,7 @@ import tempfile
 HOSTS = ("xwing", "destroyer", "lenovo", "beelink", "deathstar", "optiplex")
 MAX_BYTES = 32768
 REMOTE = r'''
-import json, urllib.request, urllib.error
+import json, urllib.request, urllib.error, pathlib
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *a, **kw): return None
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
@@ -47,8 +47,21 @@ def read(endpoint, key):
         return {"status":"reported", "advertised_entries":len(models)}
     except Exception:
         return {"status":"unavailable"}
+def process_count():
+    try:
+        count = 0
+        for entry in pathlib.Path("/proc").iterdir():
+            if not entry.name.isdigit(): continue
+            try:
+                if (entry/"comm").read_text().strip() == "llama-server":
+                    count += 1
+            except (OSError, UnicodeError): continue
+        if count > 256: return {"status":"unavailable"}
+        return {"status":"reported", "llama_server_count":count}
+    except (OSError, UnicodeError): return {"status":"unavailable"}
 print(json.dumps({"native":read("http://127.0.0.1:1234/api/v1/models","models"),
-                  "openai":read("http://127.0.0.1:1234/v1/models","data")},separators=(",",":")))
+                  "openai":read("http://127.0.0.1:1234/v1/models","data"),
+                  "processes":process_count()},separators=(",",":")))
 '''
 
 def sample_host(host, runner=None):
@@ -65,17 +78,20 @@ def sample_host(host, runner=None):
                         timeout=11, check=False)
     except (OSError, subprocess.SubprocessError):
         return {"node": host, "ssh": "unavailable", "native": unavailable,
-                "openai": unavailable}
+                "openai": unavailable, "processes": unavailable,
+                "model_binding":"unverified"}
     if result.returncode != 0 or len(result.stdout) > MAX_BYTES:
         return {"node": host, "ssh": "unavailable", "native": unavailable,
-                "openai": unavailable}
+                "openai": unavailable, "processes": unavailable,
+                "model_binding":"unverified"}
     try:
         data = json.loads(result.stdout)
-        if not isinstance(data,dict) or set(data)!={"native","openai"}:
+        if not isinstance(data,dict) or set(data)!={"native","openai","processes"}:
             raise ValueError("wrong remote result fields")
-        native, openai = data["native"],data["openai"]
+        native, openai, processes = data["native"],data["openai"],data["processes"]
         for item, fields, bound in ((native,{"catalog_entries","loaded_instances"},256),
-                                    (openai,{"advertised_entries"},1000)):
+                                    (openai,{"advertised_entries"},1000),
+                                    (processes,{"llama_server_count"},256)):
             if not isinstance(item,dict) or item.get("status") not in ("reported","unavailable"):
                 raise ValueError("invalid runtime state")
             if item["status"]=="unavailable":
@@ -84,10 +100,12 @@ def sample_host(host, runner=None):
                 raise ValueError("invalid runtime counter fields")
             elif any(type(item[k]) is not int or not 0<=item[k]<=bound for k in fields):
                 raise ValueError("invalid runtime count")
-        return {"node":host, "ssh":"reported", "native":native, "openai":openai}
+        return {"node":host, "ssh":"reported", "native":native, "openai":openai,
+                "processes":processes, "model_binding":"unverified"}
     except (ValueError,TypeError,KeyError):
         return {"node":host, "ssh":"unavailable", "native":unavailable,
-                "openai":unavailable}
+                "openai":unavailable, "processes":unavailable,
+                "model_binding":"unverified"}
 
 def snapshot_path():
     return Path(pwd.getpwuid(os.getuid()).pw_dir) / ".local/state/kipnerter-observer/fleet-runtime.json"
@@ -131,10 +149,11 @@ def from_schema(document):
     if not isinstance(document["nodes"],list) or len(document["nodes"])!=len(HOSTS):
         raise ValueError("missing fixed witness hosts")
     for host,row in zip(HOSTS,document["nodes"]):
-        if not isinstance(row,dict) or set(row)!={"node","ssh","native","openai"} or row["node"]!=host or row["ssh"] not in ("reported","unavailable"):
+        if not isinstance(row,dict) or set(row)!={"node","ssh","native","openai","processes","model_binding"} or row["node"]!=host or row["ssh"] not in ("reported","unavailable") or row["model_binding"]!="unverified":
             raise ValueError("invalid fixed host witness")
         for kind,allowed,bound in (("native",{"catalog_entries","loaded_instances"},256),
-                                   ("openai",{"advertised_entries"},1000)):
+                                   ("openai",{"advertised_entries"},1000),
+                                   ("processes",{"llama_server_count"},256)):
             info=row[kind]
             if not isinstance(info,dict) or info.get("status") not in ("reported","unavailable"):
                 raise ValueError("bad probe status")

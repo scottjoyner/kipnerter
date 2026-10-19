@@ -43,10 +43,11 @@ def observations(path=None, now=None):
     if not isinstance(rows,list) or len(rows)!=len(HOSTS):
         raise ValueError("missing required fixed host evidence")
     for host,row in zip(HOSTS,rows):
-        if not isinstance(row,dict) or set(row)!={"node","ssh","native","openai"} or row["node"]!=host or row["ssh"] not in ("reported","unavailable"):
+        if not isinstance(row,dict) or set(row)!={"node","ssh","native","openai","processes","model_binding"} or row["node"]!=host or row["ssh"] not in ("reported","unavailable") or row["model_binding"]!="unverified":
             raise ValueError("unexpected runtime host")
         for kind,fields,bound in (("native",{"catalog_entries","loaded_instances"},256),
-                                  ("openai",{"advertised_entries"},1000)):
+                                  ("openai",{"advertised_entries"},1000),
+                                  ("processes",{"llama_server_count"},256)):
             item=row[kind]
             if not isinstance(item,dict) or item.get("status") not in ("reported","unavailable"):
                 raise ValueError("invalid runtime endpoint")

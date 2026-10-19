@@ -597,3 +597,40 @@ private route and signed-in SSE projection, and rejects absent remote evidence.
 Production release verification only checks the six-host telemetry receipt,
 not that every host must have a runtime. Production SSH and tsidp login
 remain independent release-blocking gates.
+
+### October 18 late: independent process-presence corroboration
+
+The fixed-host SSH survey now also reads **only** Linux
+`/proc/<numeric-pid>/comm` on its existing six SSH aliases, counting exact
+`llama-server` process names and exporting one bounded integer per node.
+It does not export process IDs, command-line arguments, model filenames,
+file paths, memory contents, API-key values, endpoint port mappings or
+process-control commands. The process count is included as a **separate**
+observed signal; endpoint catalog absence must not be equated to the absence
+of local inference processes. A nonzero count is **not** proof of a matching
+loaded model, GPU memory residency, serving readiness, user authorization
+or AssistX admission.
+
+Physical observations in this read-only sample:
+
+| Node | Exact `llama-server` comm count | Native LM Studio loaded-instance claim | Process-to-model binding |
+| --- | ---: | ---: | --- |
+| Xwing | 4 | Unavailable | **unverified** |
+| Destroyer | 2 | Unavailable | **unverified** |
+| Lenovo | 3 | Unavailable | **unverified** |
+| Beelink | 2 | 1 | **unverified** |
+| Deathstar | 4 | Unavailable | **unverified** |
+| Optiplex | 3 | 0 | **unverified** |
+
+A separate read-only Beelink inspection found a native loaded model display
+name of `Lfm2.5 1.2B`, two `llama-server` processes, one loopback process
+with an API-key-protected model endpoint, and another local model endpoint
+returning one model ID. These observations **do not resolve** the exact
+process ownership of LM Studio's native loaded-instance report. The portal
+therefore hardcodes `model_binding: unverified`; no attempt is made to join
+the native instance to a process by fuzzy filename matching.
+
+The protocol, snapshot, validator and portal have been updated in lockstep.
+A fresh signed-transport observation remains bounded to 90 seconds, with
+host-key verification, no remote writes, and bearer-only Tailscale Serve.
+No inference tests or new model activations were performed.
