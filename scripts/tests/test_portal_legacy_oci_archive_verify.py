@@ -1,5 +1,7 @@
 """Synthetic OCI archive digest-tree controls, no Docker or production data."""
 import hashlib
+import gzip
+from unittest.mock import patch
 import io
 import json
 import tarfile
@@ -13,12 +15,16 @@ def encoded(value):
 
 
 def build_archive(*, mutate=None, omit=None, config_override=None,
-                  manifest_override=None, docker_override=None, tar_override=None):
+                  manifest_override=None, docker_override=None, tar_override=None,
+                  compression=None, diffid_override=None):
     layer = b"SYNTHETIC_FIXTURE_NOT_IMAGE_LAYER_CONTENT" * 3
+    uncompressed_id = hashlib.sha256(layer).hexdigest()
+    if compression == "gzip":
+        layer = gzip.compress(layer, mtime=0)
     layer_id = hashlib.sha256(layer).hexdigest()
     config = {
         "os": "linux", "architecture": "amd64",
-        "rootfs": {"type": "layers", "diff_ids": ["sha256:" + layer_id]},
+        "rootfs": {"type": "layers", "diff_ids": ["sha256:" + (diffid_override or uncompressed_id)]},
         "config": {"Entrypoint": ["./fixture"], "Env": ["SECRET=synthetic-not-real"]},
     }
     if config_override:
@@ -30,7 +36,9 @@ def build_archive(*, mutate=None, omit=None, config_override=None,
         "mediaType": "application/vnd.oci.image.manifest.v1+json",
         "config": {"mediaType": "application/vnd.oci.image.config.v1+json",
                    "digest": "sha256:" + conf_id, "size": len(conf_bytes)},
-        "layers": [{"mediaType": "application/vnd.oci.image.layer.v1.tar",
+        "layers": [{"mediaType": ("application/vnd.oci.image.layer.v1.tar+gzip"
+                                 if compression == "gzip" else
+                                 "application/vnd.oci.image.layer.v1.tar"),
                     "digest": "sha256:" + layer_id, "size": len(layer)}],
     }
     if manifest_override:
@@ -90,13 +98,69 @@ class OCIArchiveControls(unittest.TestCase):
         report = verify_archive(raw, identity)
         self.assertEqual(report["status"], "OCI_DIGEST_TREE_VERIFIED_NOT_RUNNABLE")
         self.assertEqual(report["saved_layer_count"], 1)
+        self.assertTrue(report["uncompressed_layer_diffids_verified"])
         for expected in ("safe_to_cutover", "launch_behavior_verified",
                          "rollback_after_failure_verified",
                          "original_image_registry_provenance_verified",
-                         "uncompressed_layer_diffids_verified",
                          "sensitive_config_or_layer_bytes_disclosed",
                          "archive_imported_or_extracted", "production_modified"):
             self.assertFalse(report[expected], expected)
+
+    def test_gzip_compressed_layer_matches_uncompressed_diffid(self):
+        raw, identity, _ = build_archive(compression="gzip")
+        report = verify_archive(raw, identity)
+        self.assertTrue(report["uncompressed_layer_diffids_verified"])
+        self.assertEqual(report["saved_layer_count"], 1)
+
+    def test_wrong_uncompressed_diffid_rejected_even_when_saved_layer_checksum_ok(self):
+        raw, identity, _ = build_archive(
+            compression="gzip", diffid_override="f"*64)
+        with self.assertRaisesRegex(ValueError, "diffID"):
+            verify_archive(raw, identity)
+
+    def test_fake_gzip_magic_rejected_as_corrupt_stream(self):
+        def sabotage(blobs):
+            key = next(k for k, v in blobs.items() if v.startswith(b"SYNTHETIC_FIXTURE"))
+            old = blobs.pop(key)
+            spoiled = b"\x1f\x8b" + old
+            blobs["blobs/sha256/" + hashlib.sha256(spoiled).hexdigest()] = spoiled
+            # Other metadata still points to old digest, but invalid gzip
+            # must fail before descriptor comparison.
+        raw, identity, _ = build_archive(mutate=sabotage)
+        with self.assertRaisesRegex(ValueError, "compressed"):
+            verify_archive(raw, identity)
+
+    def test_gzip_trailing_bytes_rejected_before_layer_promotion(self):
+        def sabotage(blobs):
+            target = next(k for k in blobs if
+                          blobs[k].startswith(b"\x1f\x8b"))
+            old = blobs.pop(target)
+            spoiled = old + b"TRAILING!"
+            blobs["blobs/sha256/" + hashlib.sha256(spoiled).hexdigest()] = spoiled
+        raw, identity, _ = build_archive(compression="gzip", mutate=sabotage)
+        with self.assertRaisesRegex(ValueError, "trailing"):
+            verify_archive(raw, identity)
+
+    def test_gzip_expansion_limit_denies_ratio_bomb(self):
+        raw, identity, _ = build_archive(compression="gzip")
+        with patch("scripts.portal_legacy_oci_archive_verify.MAX_INFLATED_LAYER", 32):
+            with self.assertRaisesRegex(ValueError, "expanded"):
+                verify_archive(raw, identity)
+
+    def test_media_mismatch_between_gzip_bytes_and_raw_descriptor_rejected(self):
+        def change(manifest):
+            manifest["layers"][0]["mediaType"] = "application/vnd.oci.image.layer.v1.tar"
+        raw, identity, _ = build_archive(
+            compression="gzip", manifest_override=change)
+        with self.assertRaisesRegex(ValueError, "diffID"):
+            verify_archive(raw, identity)
+
+    def test_zstd_media_rejected_until_bounded_zstd_decoder_is_available(self):
+        def change(manifest):
+            manifest["layers"][0]["mediaType"] = "application/vnd.oci.image.layer.v1.tar+zstd"
+        raw, identity, _ = build_archive(manifest_override=change)
+        with self.assertRaisesRegex(ValueError, "compression"):
+            verify_archive(raw, identity)
 
     def test_mismatched_image_id_rejected(self):
         raw, identity, _ = build_archive()

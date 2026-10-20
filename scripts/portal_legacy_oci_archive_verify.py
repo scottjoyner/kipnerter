@@ -11,11 +11,15 @@ import json
 import re
 import sys
 import tarfile
+import zlib
 
 MAX_TOTAL = 5 * 1024**3
 MAX_MEMBER = 3 * 1024**3
 MAX_META = 1024 * 1024
 MAX_FILES = 250
+MAX_INFLATED_LAYER = 4 * 1024**3
+MAX_INFLATED_TOTAL = 8 * 1024**3
+BLOCK = 1024 * 1024
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 ROLES = {
     "legacy-api": "sha256:7efc68e54ff1289ee2033440ea0ee176962e3a57e0d24e091a2365ca769d5860",
@@ -74,11 +78,77 @@ def _member_name(name):
     raise ValueError("unexpected OCI archive member")
 
 
+def _inflate_piece(decoder, part, digest, total):
+    """Consume one gzip chunk with bounded output and no unbounded buffers."""
+    pending = part
+    while pending:
+        out = decoder.decompress(pending, BLOCK)
+        pending = decoder.unconsumed_tail
+        total += len(out)
+        if total > MAX_INFLATED_LAYER:
+            raise ValueError("expanded OCI layer exceeds independent size bound")
+        digest.update(out)
+        if decoder.unused_data:
+            raise ValueError("trailing data after compressed OCI layer")
+    return total
+
+
+def _stream_blob(reader, member_size, *, candidate):
+    """Return saved-blob hash and optional bounded gzip diffID from one FD."""
+    raw_digest = hashlib.sha256()
+    inflated = hashlib.sha256()
+    decoder = None
+    expanded = 0
+    data = bytearray()
+    consumed = 0
+    while part := reader.read(BLOCK):
+        consumed += len(part)
+        if consumed > member_size:
+            raise ValueError("OCI archive member exceeds declared length")
+        raw_digest.update(part)
+        if member_size <= MAX_META:
+            data.extend(part)
+        if candidate:
+            if decoder is None:
+                # OCI raw tar bytes also have a valid diffID: hash of raw bytes.
+                if part.startswith(b"\x1f\x8b"):
+                    decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                else:
+                    decoder = False
+            if decoder is not False:
+                try:
+                    expanded = _inflate_piece(decoder, part, inflated, expanded)
+                except zlib.error as exc:
+                    raise ValueError("invalid compressed OCI layer stream") from exc
+    if consumed != member_size:
+        raise ValueError("truncated OCI blob")
+    if decoder not in (None, False):
+        try:
+            for _ in range(100):
+                tail = decoder.flush(BLOCK)
+                expanded += len(tail)
+                if expanded > MAX_INFLATED_LAYER:
+                    raise ValueError("expanded OCI layer exceeds independent size bound")
+                inflated.update(tail)
+                if not tail:
+                    break
+            else:
+                raise ValueError("unbounded compressed OCI flush")
+        except zlib.error as exc:
+            raise ValueError("invalid compressed OCI layer footer") from exc
+        if not decoder.eof or decoder.unused_data:
+            raise ValueError("incomplete or trailing compressed OCI layer")
+        return raw_digest.hexdigest(), bytes(data), inflated.hexdigest(), expanded, "gzip"
+    return raw_digest.hexdigest(), bytes(data), raw_digest.hexdigest(), consumed, "raw"
+
+
 def _archive(stream):
     files = {}
     metadata = {}
     total = 0
     count = 0
+    layers = {}
+    inflated_total = 0
     with tarfile.open(fileobj=stream, mode="r|") as archive:
         for member in archive:
             if member.isdir() and member.name.rstrip("/") in ("blobs", "blobs/sha256"):
@@ -93,19 +163,13 @@ def _archive(stream):
             reader = archive.extractfile(member)
             if reader is None:
                 raise ValueError("unreadable OCI archive member")
-            sha = hashlib.sha256()
-            short = bytearray()
-            read = 0
-            while part := reader.read(1024 * 1024):
-                read += len(part)
-                if read > member.size:
-                    raise ValueError("OCI archive member exceeds declared length")
-                sha.update(part)
-                if member.size <= MAX_META:
-                    short.extend(part)
-            if read != member.size:
-                raise ValueError("truncated OCI blob")
-            file_hash = sha.hexdigest()
+            file_hash, short, diff_id, expanded, mode = _stream_blob(
+                reader, member.size, candidate=len(name) == 64)
+            if len(name) == 64:
+                inflated_total += expanded
+                if inflated_total > MAX_INFLATED_TOTAL:
+                    raise ValueError("total expanded OCI layer bytes exceed limit")
+                layers[name] = (diff_id, mode)
             if len(name) == 64 and file_hash != name:
                 raise ValueError("OCI blob bytes differ from digest path")
             files[name] = (member.size, file_hash)
@@ -119,10 +183,10 @@ def _archive(stream):
                     # Non-JSON small OCI blobs can be other metadata/attestations.
     if not count or total == 0:
         raise ValueError("empty OCI archive")
-    return files, metadata, count
+    return files, metadata, count, layers
 
 
-def _validate_manifest(manifest, blobs, docs):
+def _validate_manifest(manifest, blobs, docs, unpacked):
     if (not isinstance(manifest, dict) or manifest.get("schemaVersion") != 2 or
             manifest.get("mediaType") != MANIFEST or
             not isinstance(manifest.get("layers"), list) or
@@ -141,14 +205,27 @@ def _validate_manifest(manifest, blobs, docs):
                 not SHA.fullmatch(d[7:]) for d in diffs)):
         raise ValueError("image rootfs diffID inventory incomplete")
     layers = []
-    for layer in manifest["layers"]:
-        layers.append(_descriptor(layer, blobs, allowed=LAYER_TYPES))
+    for position, layer in enumerate(manifest["layers"]):
+        blob = _descriptor(layer, blobs, allowed=LAYER_TYPES)
+        diff_id, mode = unpacked[blob]
+        if layer["mediaType"] not in (
+            "application/vnd.oci.image.layer.v1.tar",
+            "application/vnd.docker.image.rootfs.diff.tar",
+            "application/vnd.oci.image.layer.v1.tar+gzip",
+            "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        ):
+            # zstd is not currently available in the bounded stdlib reader.
+            raise ValueError("unverifiable OCI layer compression type")
+        expected_mode = "gzip" if layer["mediaType"].endswith(("+gzip", ".gzip")) else "raw"
+        if mode != expected_mode or diffs[position] != "sha256:" + diff_id:
+            raise ValueError("uncompressed OCI layer diffID mismatch")
+        layers.append(blob)
     return config_id, layers
 
 
 def verify_archive(stream, expected_image_id):
     expected = _digest(expected_image_id)
-    blobs, docs, file_count = _archive(stream)
+    blobs, docs, file_count, unpacked = _archive(stream)
     root = docs.get("index.json")
     if (not isinstance(root, dict) or root.get("schemaVersion") != 2 or
             root.get("mediaType") != INDEX or
@@ -171,7 +248,7 @@ def verify_archive(stream, expected_image_id):
         manifest_digest = _descriptor(matches[0], blobs, allowed={MANIFEST})
     else:
         manifest_digest = original
-    cfg, layers = _validate_manifest(docs.get(manifest_digest), blobs, docs)
+    cfg, layers = _validate_manifest(docs.get(manifest_digest), blobs, docs, unpacked)
     if expected not in (original, cfg):
         raise ValueError("OCI image identity does not match pinned original")
     legacy_manifest = docs.get("manifest.json")
@@ -196,7 +273,7 @@ def verify_archive(stream, expected_image_id):
         "saved_layer_count": len(layers),
         "archive_member_count": file_count,
         "original_image_registry_provenance_verified": False,
-        "uncompressed_layer_diffids_verified": False,
+        "uncompressed_layer_diffids_verified": True,
         "full_multiplatform_archive_verified": False,
         "launch_behavior_verified": False,
         "rollback_after_failure_verified": False,
