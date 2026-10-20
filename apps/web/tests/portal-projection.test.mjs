@@ -48,9 +48,9 @@ test("missing arrays, oversized rows, malformed nested structures and write clai
   assert.throws(() => projectControlPlaneSection("overview",
     {integrations:[],readonly:false}), /not a read-only/);
   assert.throws(() => projectControlPlaneSection("nodes",
-    {nodes:[{name:"x",models:Array(13).fill("a")}]}), /unbounded node labels/);
+    {nodes:[{name:"x",source:"tailscale",models:Array(13).fill("a")}]}), /unbounded node labels/);
   assert.throws(() => projectControlPlaneSection("traces",
-    {traces:[{correlation_id:"x",outcome:["injected"]}]}), /invalid projected/);
+    {traces:[{correlation_id:"x",outcome:["injected"]}]}), /malformed telemetry row/);
   assert.throws(() => projectControlPlaneSection("models",
     {...fixtures.models,fleet_runtime_nodes:Array(7).fill({})}), /unbounded fleet witnesses/);
 });
@@ -74,7 +74,7 @@ test("malformed rows, untrusted arrays and overlong response strings fail closed
   assert.throws(() => projectControlPlaneSection("sessions",
     {sessions:[null]}), /malformed telemetry row/);
   assert.throws(() => projectControlPlaneSection("sessions",
-    {sessions:[{agent:"a".repeat(600)}]}), /invalid projected/);
+    {sessions:[{agent:"a".repeat(600)}]}), /malformed telemetry row/);
   assert.throws(() => projectControlPlaneSection("models",
     {...fixtures.models,observer_observed_at:["bad"]}), /invalid model observer/);
 });
