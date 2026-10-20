@@ -60,6 +60,14 @@ test("source unavailable and stale observations never return a named healthy nod
   assert.match(ask("List online nodes", fixture), /No fresh authenticated fleet snapshot/);
 });
 
+test("unavailable nodes do not mask separately reported model, trace or session sources", () => {
+  const partial = { ...fixture, nodes: { status: "unavailable", nodes: [] } };
+  assert.match(ask("What fleet models are listed?", partial, opts), /catalog entries reported/);
+  assert.match(ask("Show Hermes sessions across fleet", partial, opts), /launcher session receipts/);
+  assert.match(ask("Show fleet traces", partial, opts), /trace-index entries/);
+  assert.match(ask("Which fleet nodes are online?", partial, opts), /node inventory source is unavailable/);
+});
+
 test("invalid entries, oversized labels and unsafe requests fail closed", () => {
   const bad = {
     ...fixture,

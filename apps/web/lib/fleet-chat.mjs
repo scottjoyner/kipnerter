@@ -46,7 +46,8 @@ export function answerFleetQuestion(question, snapshot, { fresh = false, observe
   const match = [...nodes].filter(row => typeof row.name === "string")
     .sort((a, b) => b.name.length - a.name.length)
     .find(row => mentionsHost(q, row.name));
-  if ((nodeIntent || match) && snapshot.nodes?.status === "unavailable") {
+  const needsNodeInventory = Boolean(match) || (nodeIntent && !modelIntent && !sessionsIntent && !tracesIntent);
+  if (needsNodeInventory && snapshot.nodes?.status === "unavailable") {
     return "The node inventory source is unavailable. No nodes can be classified as online or offline." + observed;
   }
   if (match && (sessionsIntent || tracesIntent)) {
@@ -62,7 +63,7 @@ export function answerFleetQuestion(question, snapshot, { fresh = false, observe
       (reported.length > 8 ? " (additional labels omitted)." : ".") +
       " These are inventory labels, not verified loaded instances, inference readiness, or AssistX admission." + observed);
   }
-  if ((nodeIntent && !modelIntent && !sessionsIntent && !tracesIntent) || match) {
+  if (needsNodeInventory) {
     if (match) {
       const presence = match.tailscale_online === true ? "reported online" : match.tailscale_online === false ? "reported offline" : "unverified";
       return cap(clean(match.name) + ": Tailscale presence " + presence + "; inflight tasks " + (Number.isInteger(match.inflight) ? match.inflight : "unknown") + ". This does not verify service reachability or authorize execution." + observed);
