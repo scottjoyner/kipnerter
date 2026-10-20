@@ -1,97 +1,106 @@
-name: Stateless Fleet Chat Staging — Readiness Only
+name: Kipnerter Stateless Chat Staging Readiness (No Writes)
 
 on:
   workflow_dispatch:
-    inputs:
-      planned_portal_sha:
-        description: Exact portal candidate SHA (must be on the reviewed portal branch)
-        required: true
-        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: kipnerter-stateless-preview-readiness
+  group: kipnerter-stateless-staging-readiness-pinned
   cancel-in-progress: false
 
 jobs:
-  read-only:
-    if: ${{ github.repository == 'scottjoyner/kipnerter' && github.actor == github.repository_owner }}
+  inspect-staging:
+    if: ${{ github.repository == 'scottjoyner/kipnerter' && github.actor == github.repository_owner && github.ref == 'refs/heads/master' }}
     environment: staging
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
-      PLANNED_SHA: ${{ inputs.planned_portal_sha }}
-      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-      TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
-      NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
-      TSIDP_ISSUER: ${{ secrets.TSIDP_ISSUER }}
-      TSIDP_CLIENT_ID: ${{ secrets.TSIDP_CLIENT_ID }}
-      TSIDP_CLIENT_SECRET: ${{ secrets.TSIDP_CLIENT_SECRET }}
-      KIPNERTER_ALLOWED_EMAILS: ${{ secrets.KIPNERTER_ALLOWED_EMAILS }}
-      KIPNERTER_ALLOWED_TSIDP_SUBJECTS: ${{ secrets.KIPNERTER_ALLOWED_TSIDP_SUBJECTS }}
-      FLEET_MONITOR_BASE_URL: ${{ secrets.FLEET_MONITOR_BASE_URL }}
-      FLEET_MONITOR_TOKEN: ${{ secrets.FLEET_MONITOR_TOKEN }}
-      KIPNERTER_GATEWAY_TOKEN: ${{ secrets.KIPNERTER_GATEWAY_TOKEN }}
-      KIPNERTER_DEPLOY_HOST: ${{ secrets.KIPNERTER_DEPLOY_HOST }}
-      KIPNERTER_DEPLOY_USER: ${{ secrets.KIPNERTER_DEPLOY_USER }}
+      EXPECTED_PORTAL_SHA: 999f3caa49da73b89b5534c2f9037a78bc799797
       KIPNERTER_ENV: staging
       NEXTAUTH_URL: https://staging.kipnerter.com
     steps:
-      - name: Check out exact reviewed candidate (no saved credentials)
+      - name: Check out exact reviewed development candidate
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.planned_portal_sha }}
-          fetch-depth: 0
+          ref: 999f3caa49da73b89b5534c2f9037a78bc799797
           persist-credentials: false
+          fetch-depth: 1
 
-      - name: Verify candidate identity and ancestry
+      - name: Verify revision and pre-reviewed script identities before secrets
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$PLANNED_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 2
-          [[ "$(git rev-parse HEAD)" = "$PLANNED_SHA" ]] || exit 2
-          git merge-base --is-ancestor "$PLANNED_SHA"             refs/remotes/origin/feat/unified-fleet-portal-20261017
+          test "$(git rev-parse HEAD)" = "$EXPECTED_PORTAL_SHA"
+          test "$(git rev-parse HEAD:scripts/portal_stateless_readiness.py)" = dbb58d7ea0851efcddff4d15605bb3c8726cf7e4
+          test "$(git rev-parse HEAD:scripts/portal_fleet_preview_preflight.py)" = 76c213e23229ba91c62657215412ada13aac8976
+          test "$(git rev-parse HEAD:scripts/portal_deploy_target.py)" = 6d5d3801e9135ece4ee73e8e41095e35a17ef940
+          test "$(git rev-parse HEAD:scripts/portal_oidc_preflight.py)" = f2075c73b9bdee1cb6f14ba66254ec07099306f6
+          test "$(git rev-parse HEAD:tests/test_portal_stateless_readiness.py)" = deac37c2affcc80c85c9d27f3d223136304a72c3
+          test "$(git rev-parse HEAD:docker-compose.yml)" = 5d520d2a8b8f9898e32f65f02e415ca953c4629b
+          test "$(git rev-parse HEAD:compose.fleet-preview.yml)" = 6ad35ba31d79887a9c4416d1a31a3e43ef9ac546
+          test "$(git rev-parse HEAD:apps/web/lib/auth.js)" = ae6c2e44429823215c4250f52d2128317f6512b3
+          test "$(git rev-parse HEAD:apps/web/lib/tsidp-config.mjs)" = fc9950c135e8920729c97e37f68535ba5a57191a
+          test "$(git rev-parse HEAD:apps/web/tests/tsidp-runtime-config.test.mjs)" = f78536bb0ca627939f6f20a56695896f6f23d6f0
+          echo "Exact approved source blobs verified; no write action authorized."
 
-      - name: Exercise deny-only stateless configuration tests
-        run: python3 -m unittest tests.test_portal_stateless_readiness -v
-
-      - name: Inspect only the stateless preview inputs
-        shell: bash
-        run: python3 scripts/portal_stateless_readiness.py --planned-sha "$PLANNED_SHA"
-
-      - name: Check exact service graph without creating containers
+      - name: Execute isolated deny-only unit and Compose tests
         shell: bash
         run: |
           set -euo pipefail
-          docker compose -p kipnerter-fleet-preview             -f docker-compose.yml -f compose.fleet-preview.yml config --format json |
+          python3 -m unittest tests.test_portal_stateless_readiness -v
+          node --test apps/web/tests/tsidp-runtime-config.test.mjs
+          docker compose -p kipnerter-fleet-preview \
+            -f docker-compose.yml -f compose.fleet-preview.yml config --format json |
             python3 scripts/portal_fleet_preview_preflight.py
 
-      - name: Join authorized Tailscale CI identity
+      - name: Classify staging configuration without revealing credentials
+        shell: bash
+        env:
+          TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+          TSIDP_ISSUER: ${{ secrets.TSIDP_ISSUER }}
+          TSIDP_CLIENT_ID: ${{ secrets.TSIDP_CLIENT_ID }}
+          TSIDP_CLIENT_SECRET: ${{ secrets.TSIDP_CLIENT_SECRET }}
+          KIPNERTER_ALLOWED_EMAILS: ${{ secrets.KIPNERTER_ALLOWED_EMAILS }}
+          KIPNERTER_ALLOWED_TSIDP_SUBJECTS: ${{ secrets.KIPNERTER_ALLOWED_TSIDP_SUBJECTS }}
+          FLEET_MONITOR_BASE_URL: ${{ secrets.FLEET_MONITOR_BASE_URL }}
+          FLEET_MONITOR_TOKEN: ${{ secrets.FLEET_MONITOR_TOKEN }}
+          KIPNERTER_GATEWAY_TOKEN: ${{ secrets.KIPNERTER_GATEWAY_TOKEN }}
+          KIPNERTER_DEPLOY_HOST: ${{ secrets.KIPNERTER_DEPLOY_HOST }}
+          KIPNERTER_DEPLOY_USER: ${{ secrets.KIPNERTER_DEPLOY_USER }}
+        run: python3 scripts/portal_stateless_readiness.py --planned-sha "$EXPECTED_PORTAL_SHA"
+
+      - name: Join scoped CI Tailnet identity (no SSH)
         uses: tailscale/github-action@v4
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:kipnerter-ci
 
-      - name: Verify real staging tag isolation, without SSH or writes
+      - name: Verify exclusively staging-tagged host is reachable (no SSH)
         shell: bash
+        env:
+          KIPNERTER_DEPLOY_HOST: ${{ secrets.KIPNERTER_DEPLOY_HOST }}
         run: |
           set -euo pipefail
-          [[ -n "$KIPNERTER_DEPLOY_HOST" ]] || exit 2
           TARGET="$(tailscale status --json |
-            python3 scripts/portal_deploy_target.py               --environment staging --preferred-host "$KIPNERTER_DEPLOY_HOST")"
-          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 2
+            python3 scripts/portal_deploy_target.py \
+              --environment staging --preferred-host "$KIPNERTER_DEPLOY_HOST")"
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]]
           tailscale ping --timeout=8s "$TARGET" >/dev/null
-          echo "Qualified exclusively staging-tagged peer reachable; no SSH requested."
+          echo "One role-isolated staging target reachable; no SSH or deployment."
 
-      - name: Verify live tsidp discovery, without browser sign-in
+      - name: Verify private Tailscale OIDC discovery and staging origin
         shell: bash
+        env:
+          TSIDP_ISSUER: ${{ secrets.TSIDP_ISSUER }}
         run: python3 scripts/portal_oidc_preflight.py
 
-      - name: Preserve read-only release boundary
-        shell: bash
+      - name: State explicit release HOLD
+        if: success()
         run: |
-          echo "PASS: staging configuration, Compose isolation, Tailnet role and OIDC discovery only."
-          echo "NO-GO: real browser sign-in, observer ACL, SSH operator approval, rollback and any cutover remain separately gated."
+          echo "Read-only staging configuration and connectivity checks passed."
+          echo "No deployment, real browser sign-in, storage restore, approved ingress or rollback has been proven."
