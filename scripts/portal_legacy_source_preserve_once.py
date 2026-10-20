@@ -100,7 +100,7 @@ def gather(root:Path)->list[tuple[Path,Path]]:
     if len(names)!=len(set(names)):
         raise ValueError("duplicate archived source entry")
     for required in ("apps/api/Dockerfile","apps/api/requirements.txt",
-                     "apps/web/Dockerfile","apps/web/package-lock.json"):
+                     "apps/web/Dockerfile","apps/web/package.json"):
         if required not in names:
             raise ValueError("essential legacy app build input unavailable")
     return sorted(output,key=lambda row:row[0].as_posix())
@@ -158,6 +158,8 @@ def snapshot(root:Path,base:Path)->dict:
         "source_file_count":len(entries),
         "source_total_mib_upper_bound":(total+1024**2-1)//1024**2,
         "private_archive_created":True,
+        "web_dependency_lock_present":any(p.as_posix()=="apps/web/package-lock.json" for p,_ in entries),
+        "web_legacy_build_reproducibility_verified":False,
         "docker_images_recovered":False,
         "runnable_equivalence_tested":False,
         "prior_git_revision_authoritative":False,
@@ -183,6 +185,8 @@ def preflight(root:Path,base:Path)->dict:
     return {
         "source_preflight":"PASS" if not archive_exists and not receipt_exists else "HOLD",
         "source_file_count":len(entries),
+        "web_dependency_lock_present":any(p.as_posix()=="apps/web/package-lock.json" for p,_ in entries),
+        "web_legacy_build_reproducibility_verified":False,
         "previous_attempt_archive_present":archive_exists,
         "previous_attempt_receipt_present":receipt_exists,
         "source_data_or_secrets_read":False,
