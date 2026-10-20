@@ -1,0 +1,74 @@
+name: Kipnerter 1.7 Private Legacy Container Rootfs Retention (One Shot)
+
+on:
+  push:
+    branches: [release/17-old-app-source-private-preserve-20261019]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-17-private-legacy-rootfs-retention-once
+  cancel-in-progress: false
+
+jobs:
+  preserve:
+    if: >-
+      ${{ github.repository == 'scottjoyner/kipnerter' &&
+          github.actor == github.repository_owner &&
+          contains(github.event.head_commit.message, '[ios17-legacy-rootfs-copy-once]') }}
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact private rootfs retention code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Run deny-by-default retention and feasibility tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest scripts.tests.test_portal_legacy_rootfs_export_preflight scripts.tests.test_portal_legacy_rootfs_preserve_once -q
+          python3 -m py_compile scripts/portal_legacy_rootfs_preserve_once.py
+      - name: Join production-scoped Tailscale CI identity
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+      - name: Find unique production-tagged host, without shell writes
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="$(tailscale status --json |
+            python3 scripts/portal_deploy_target.py --environment production)"
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 2
+          tailscale ping --timeout=8s "$TARGET" >/dev/null
+          tailscale ssh "kipnerter@$TARGET" 'test "$(id -un)" = kipnerter;
+            test -d /home/kipnerter/.local/state/kipnerter-release/state-backups'
+          echo "address=$TARGET" >> "$GITHUB_OUTPUT"
+      - name: Preserve private old rootfs tar files without restarting containers
+        shell: bash
+        env:
+          TARGET: ${{ steps.target.outputs.address }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 2
+          cat scripts/portal_legacy_rootfs_preserve_once.py |
+            timeout 480 tailscale ssh "kipnerter@$TARGET" 'python3 -'
+      - name: Explicitly maintain production release HOLD
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "### Private legacy container rootfs preservation"
+            echo "- Two bounded private tar files and digest receipt may now exist on the old host."
+            echo "- No Docker image save, commit, tag, replace or restart was performed."
+            echo "- May contain baked-in sensitive data: restrict access to custodian only."
+            echo "- Rootfs export equals original OCI manifest and launch metadata: FALSE"
+            echo "- Independent off-host custody and isolated runnable rollback: NOT PROVEN"
+            echo "- Public chat deployment and stateful API cutover: HOLD"
+          } >> "$GITHUB_STEP_SUMMARY"
