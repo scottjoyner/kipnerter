@@ -19,12 +19,14 @@ class ScratchRestoreSafetyTests(unittest.TestCase):
                 item=tarfile.TarInfo(member)
                 item.size=1
                 archive.addfile(item,io.BytesIO(b"a"))
+        path.chmod(0o600)
         return path
 
     def test_digest_accepts_exact_bytes_only(self):
         with tempfile.TemporaryDirectory() as d:
-            path=Path(d)/"dump"
+            path=Path(d)/"postgresql.custom"
             path.write_bytes(b"fixture")
+            path.chmod(0o600)
             expected=hashlib.sha256(b"fixture").hexdigest()
             archive_digest(path,expected)
             path.write_bytes(b"modified")
@@ -33,10 +35,10 @@ class ScratchRestoreSafetyTests(unittest.TestCase):
 
     def test_digest_rejects_symlink(self):
         with tempfile.TemporaryDirectory() as d:
-            p=Path(d);(p/"safe").write_bytes(b"fixture")
-            (p/"link").symlink_to(p/"safe")
-            with self.assertRaisesRegex(ValueError,"untrusted"):
-                archive_digest(p/"link","a"*64)
+            p=Path(d);(p/"postgresql.custom").write_bytes(b"fixture")
+            (p/"minio-raw-live.tar").symlink_to(p/"postgresql.custom")
+            with self.assertRaises(OSError):
+                archive_digest(p/"minio-raw-live.tar","a"*64)
 
     def test_receipt_rejects_wrong_source(self):
         with tempfile.TemporaryDirectory() as d:
