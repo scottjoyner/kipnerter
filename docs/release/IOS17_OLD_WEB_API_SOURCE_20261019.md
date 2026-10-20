@@ -1,0 +1,5 @@
+Kipnerter 1.7 — old web/API image source classification
+
+Running gateway and web containers have no locally retrievable previous image IDs. Production read-only run 39339701199 proved only five of seven cached. This owner-only workflow queries only Docker Config.Image reference classification, SHA256 fingerprint of its reference string without printing that reference, immutable runtime image digest fingerprint, whether an image is retrievable, and the SHA256 of the local legacy Dockerfile. It never requests Docker Config.Env or registry credentials, reads image layers, or changes containers, volumes, or files.
+
+A Dockerfile or mutable image tag is NOT a proven executable rollback. No automatic pull, build, save, export, commit, container replacement, or migration is allowed. Run only as a read-only prerequisite for P0 issue #50. Existing 1.7 TestFlight remains unaffected; public /chat and API 0.3.1 remain undeployed until old app rollback, independently administered off-host backups and production TSIDP/OIDC credentials pass review.
