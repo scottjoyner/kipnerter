@@ -85,7 +85,7 @@ def _open_log(directory, name, *, create):
         if (folder.st_uid != os.getuid() or
             not stat.S_ISDIR(folder.st_mode) or folder.st_mode & 0o077):
             raise ValueError("custodian research directory must be owner-private")
-        flags = os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+        flags = (os.O_RDWR if create else os.O_RDONLY) | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
         if create:
             try:
                 fd = os.open(name, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=dirfd)
