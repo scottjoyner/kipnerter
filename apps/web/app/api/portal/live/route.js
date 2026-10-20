@@ -1,40 +1,15 @@
 import { getServerSession } from "next-auth";
 import { authOptions, authReady, isAllowed } from "../../../../lib/auth";
-import { boundedJson, abortableDelay } from "../../../../lib/stream-utils.mjs";
+import { abortableDelay } from "../../../../lib/stream-utils.mjs";
+import { readSanitizedControlPlaneSnapshot } from "../../../../lib/portal-stream-snapshot.mjs";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const SECTIONS = ["overview", "models", "nodes", "traces", "sessions"];
-const EMPTY = {
-  overview: { integrations: [], status: "unavailable" },
-  models: { models: [], status: "unavailable" },
-  nodes: { nodes: [], status: "unavailable" },
-  traces: { traces: [], status: "unavailable" },
-  sessions: { sessions: [], status: "unavailable" },
-};
 const MAX_STREAMS = 8;
 const POLL_MS = 15000;
 const LIFETIME_MS = 120000;
 let openStreams = 0;
-
-// Poll sanitized read-only API projections; never relay arbitrary upstream events.
-async function snapshot(token, origin, stopSignal) {
-  const result = await Promise.all(SECTIONS.map(async (section) => {
-    try {
-      const url = new URL(`/api/v1/control-plane/${section}`, origin);
-      const response = await fetch(url, {
-        headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
-        cache: "no-store",
-        signal: AbortSignal.any([stopSignal, AbortSignal.timeout(7000)]),
-      });
-      return [section, await boundedJson(response)];
-    } catch {
-      return [section, EMPTY[section]];
-    }
-  }));
-  return Object.fromEntries(result);
-}
 
 export async function GET(request) {
   if (!authReady) return Response.json({ error: "identity not configured" }, { status: 503 });
@@ -74,7 +49,7 @@ export async function GET(request) {
       (async () => {
         controller.enqueue(encoder.encode("retry: 15000\n: authenticated read-only stream\n\n"));
         while (!stopped && Date.now() < deadline) {
-          const value = JSON.stringify(await snapshot(token, origin, abort.signal));
+          const value = JSON.stringify(await readSanitizedControlPlaneSnapshot(token, origin, abort.signal));
           if (stopped) break;
           // Abort rather than retain unlimited queued snapshots for a stalled
           // browser connection. The browser may reconnect under the same auth.

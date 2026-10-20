@@ -24,6 +24,13 @@ const SECTION = Object.freeze({
           "model_verified", "archive_verified", "harvest_hold"] },
 });
 
+const REQUIRED = Object.freeze({
+  overview: ["id", "status"],
+  nodes: ["name", "source"],
+  models: ["id", "name", "source", "status"],
+  traces: ["correlation_id", "outcome"],
+  sessions: ["id", "agent", "status"],
+});
 const isRecord = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const primitive = value => value === null || typeof value === "boolean" ||
   (typeof value === "string" && value.length <= 512) ||
@@ -77,6 +84,9 @@ export function projectControlPlaneSection(section, document) {
     }
   }
   out[spec.key] = rows.map(row => {
+    if (!isRecord(row) || REQUIRED[section].some(key =>
+      typeof row[key] !== "string" || !row[key] || row[key].length > 160
+    )) throw new TypeError("malformed telemetry row");
     const projected = {};
     for (const field of spec.row) {
       if (!Object.hasOwn(row ?? {}, field)) continue;
