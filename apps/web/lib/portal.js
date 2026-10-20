@@ -1,5 +1,6 @@
 import { getServerSession } from "next-auth";
 import { authOptions, authReady, isAllowed } from "./auth";
+import { readBoundedPortalSection } from "./portal-projection.mjs";
 
 const SECTIONS = new Set(["overview", "nodes", "models", "traces", "sessions"]);
 export async function readPortal(section) {
@@ -18,9 +19,8 @@ export async function readPortal(section) {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
       cache: "no-store", signal: AbortSignal.timeout(9000),
     });
-    if (!reply.ok) return Response.json({ error: "control plane unavailable" }, { status: 502 });
-    const data = await reply.json();
-    return Response.json(data, { headers: { "Cache-Control": "private, no-store" } });
+    const data = await readBoundedPortalSection(section, reply);
+    return Response.json(data, { headers: { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" } });
   } catch {
     return Response.json({ error: "control plane unavailable" }, { status: 502 });
   }
