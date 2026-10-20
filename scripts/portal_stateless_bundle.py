@@ -11,11 +11,16 @@ import re
 import subprocess
 import tarfile
 import tempfile
+import zlib
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 MAX_FILES = 512
 MAX_FILE = 8 * 1024 * 1024
 MAX_TOTAL = 64 * 1024 * 1024
+# Allow USTAR headers, alignment padding and end markers, not arbitrary
+# decompression growth beyond the bounded manifest/file-content budget.
+MAX_EXPANDED = MAX_TOTAL + 4 * 1024 * 1024
+MAX_COMPRESSED = MAX_EXPANDED
 MANIFEST = "stateless-fleet-manifest.json"
 SOURCES = {"docker-compose.yml", "compose.fleet-preview.yml"}
 REQUIRED = SOURCES | {"apps/web/Dockerfile", "apps/web/package.json",
@@ -99,9 +104,42 @@ def build(root, sha, output):
             os.unlink(name)
     return hashlib.sha256(output.read_bytes()).hexdigest()
 
+def _verify_single_gzip_stream(archive):
+    """Bound and authenticate the *entire* compressed transport artifact.
+
+    tarfile can ignore bytes beyond gzip EOF. That would allow a package to
+    look verified while carrying unreviewed appended bytes or another gzip
+    member. This check also caps expansion before tarfile consumes entries.
+    """
+    path = Path(archive)
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_COMPRESSED:
+        raise ValueError("missing, linked or oversized stateless archive")
+    decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    expanded = 0
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            if decoder.eof:
+                raise ValueError("bytes follow reviewed gzip stream")
+            remaining = MAX_EXPANDED + 1 - expanded
+            if remaining <= 0:
+                raise ValueError("stateless gzip expansion exceeded limit")
+            try:
+                data = decoder.decompress(block, remaining)
+            except zlib.error as exc:
+                raise ValueError("invalid gzip transport checksum or structure") from exc
+            expanded += len(data)
+            if (expanded > MAX_EXPANDED or decoder.unconsumed_tail or
+                    decoder.unused_data):
+                raise ValueError("extra gzip members, suffix or excessive expansion")
+    if not decoder.eof:
+        raise ValueError("stateless gzip stream incomplete")
+    return expanded
+
+
 def verify(archive, sha):
     if not SHA.fullmatch(sha):
         raise ValueError("invalid expected SHA")
+    expanded = _verify_single_gzip_stream(archive)
     seen = {}
     total = 0
     with tarfile.open(archive, mode="r:gz") as tar:
@@ -123,6 +161,18 @@ def verify(archive, sha):
             if len(data) != member.size:
                 raise ValueError("archive entry size mismatch")
             seen[path] = (member.mode, data)
+        # tarfile intentionally stops at the first end-of-archive block.
+        # A second member or arbitrary data hidden behind that marker must
+        # not be silently authorized by the source manifest.
+        end = tar.offset
+    expected_size = ((end + 1024 + 10239) // 10240) * 10240
+    if expanded != expected_size:
+        raise ValueError("noncanonical tar end or hidden archive suffix")
+    with gzip.open(archive, "rb") as full:
+        full.seek(end)
+        for block in iter(lambda: full.read(1024 * 1024), b""):
+            if any(block):
+                raise ValueError("nonzero bytes after tar end-of-archive")
     if MANIFEST not in seen or not REQUIRED.issubset(seen):
         raise ValueError("missing manifest or essential source")
     meta = json.loads(seen.pop(MANIFEST)[1])
@@ -159,7 +209,7 @@ def main():
         else:
             result = verify(args.archive, args.sha)
     except (OSError, ValueError, UnicodeError, subprocess.CalledProcessError,
-            tarfile.TarError, json.JSONDecodeError):
+            tarfile.TarError, json.JSONDecodeError, zlib.error):
         raise SystemExit("NO_GO: stateless archive provenance invalid") from None
     print(json.dumps(result, sort_keys=True))
 

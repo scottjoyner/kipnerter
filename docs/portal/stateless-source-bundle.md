@@ -32,3 +32,28 @@ This archive is only a preparation input. Do not untar it into the active
 project name, or assume that a stateless candidate authorizes public ingress.
 A reviewed, authorized staging deploy and exact revision rollback must be
 completed in a separate protected workflow.
+
+## October 19 — strict whole-transport verification
+
+The original source-only tar verifier checked each tar member's SHA-256 against
+its manifest, but Python's tar/gzip reader would also accept **unreviewed data
+following the first gzip member**, an entire second concatenated gzip stream,
+or hidden bytes beyond tar's end-of-archive marker. Such a file should not be
+reported as an approved **whole release artifact** even though the visible
+source files are unchanged.
+
+The read-only verifier now performs a bounded streaming gzip pass before
+accepting tar members. It rejects linked or oversized input archives,
+concatenated streams, trailer bytes, incomplete gzip streams, invalid gzip
+checksums, and expansion beyond the combined source/USTAR overhead budget.
+It then verifies the canonical USTAR end marker: the decompressed archive
+must have the expected 10-KiB block alignment and **only zero padding**
+following the final declared member. This detects otherwise invisible tar
+suffixes as well as appended gzip data. The Git object file-by-file manifest
+check is still required independently.
+
+Regression fixtures test all four hidden-data cases, corrupt/truncated gzip,
+repeated members, symlinks, source-bundle determinism and oversized archive
+transport. These tests do not independently authenticate a publisher or
+constitute permission to deploy a portal, connect new models, change volumes
+or disable the existing staging/OIDC/restore HOLD gates.

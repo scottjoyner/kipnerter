@@ -1,4 +1,5 @@
 import io
+import gzip
 import json
 import os
 from pathlib import Path
@@ -85,6 +86,59 @@ class StatelessArtifactTests(unittest.TestCase):
         data[len(data) // 2] ^= 0xFF
         self.archive.write_bytes(data)
         with self.assertRaises((ValueError, tarfile.TarError, OSError, EOFError)):
+            verify(self.archive, self.sha)
+
+    def test_appended_bytes_and_concatenated_gzip_streams_rejected(self):
+        build(self.root, self.sha, self.archive)
+        valid = self.archive.read_bytes()
+        payloads = (
+            valid + b"UNREVIEWED_APPENDIX",
+            valid + valid,
+            valid + gzip.compress(b"hidden-unreviewed-member"),
+            valid + b"\x00" * 128,
+        )
+        for tampered in payloads:
+            with self.subTest(size=len(tampered)):
+                self.archive.write_bytes(tampered)
+                with self.assertRaises(ValueError):
+                    verify(self.archive, self.sha)
+        self.archive.write_bytes(valid)
+        self.assertGreater(verify(self.archive, self.sha)["verified_files"], 0)
+
+    def test_hidden_tar_bytes_inside_valid_gzip_denied(self):
+        build(self.root, self.sha, self.archive)
+        raw = bytearray(gzip.decompress(self.archive.read_bytes()))
+        # Insert an unreviewed marker after tarfile's first end-of-archive
+        # record while keeping the gzip checksum valid.
+        with tarfile.open(self.archive, "r:gz") as tar:
+            list(tar)
+            end = tar.offset
+        self.assertGreater(len(raw) - end, 1024)
+        marker = b"UNLISTED_TAR_PAYL"
+        raw[end + 512:end + 512 + len(marker)] = marker
+        self.archive.write_bytes(gzip.compress(raw, mtime=0))
+        with self.assertRaisesRegex(ValueError, "nonzero bytes after"):
+            verify(self.archive, self.sha)
+
+    def test_extra_gzip_expansion_beyond_tar_end_denied(self):
+        build(self.root, self.sha, self.archive)
+        expanded = gzip.decompress(self.archive.read_bytes())
+        self.archive.write_bytes(gzip.compress(expanded + b"EXTRA", mtime=0))
+        with self.assertRaisesRegex(ValueError, "noncanonical tar"):
+            verify(self.archive, self.sha)
+
+    def test_symlinked_archive_and_oversized_transport_refused(self):
+        build(self.root, self.sha, self.archive)
+        alias = Path(self.tmp.name) / "untrusted-link.tgz"
+        alias.symlink_to(self.archive)
+        with self.assertRaises(ValueError):
+            verify(alias, self.sha)
+        # The cap is on the entire transport, even if gzip decompresses to
+        # a small manifest. The verifier rejects before memory allocation.
+        from scripts.portal_stateless_bundle import MAX_COMPRESSED
+        with self.archive.open("ab") as output:
+            output.truncate(MAX_COMPRESSED + 1)
+        with self.assertRaises(ValueError):
             verify(self.archive, self.sha)
 
     def test_truncated_archive_rejected(self):
