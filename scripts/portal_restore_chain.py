@@ -121,7 +121,7 @@ def _private_input(path, limit):
     # The chain can contain multiple signed receipts, unlike the individual
     # 64 KiB public-key trust files. Open no-follow then check the opened inode
     # before reading, rather than trusting an attacker-controlled path stat.
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
     try:
         st = os.fstat(fd)
         if (not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or
