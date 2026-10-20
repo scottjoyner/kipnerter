@@ -94,6 +94,10 @@ jobs:
         run: |
           python3 -m unittest scripts.tests.test_portal_legacy_launch_receipt_verify -v
           python3 -m py_compile scripts/portal_legacy_launch_receipt_verify.py
+      - name: Test synthetic isolated rootfs restoration without Docker mutation
+        run: |
+          python3 -m unittest scripts.tests.test_portal_synthetic_rootfs_restore_probe -v
+          python3 -m py_compile scripts/portal_synthetic_rootfs_restore_probe.py
       - name: Verify old live image rootfs preflight never authorizes cutover
         run: |
           python3 -m unittest scripts.tests.test_portal_legacy_rootfs_export_preflight -v
