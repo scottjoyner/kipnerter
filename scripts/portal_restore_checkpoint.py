@@ -17,11 +17,11 @@ import tempfile
 
 if __package__:
     from .portal_restore_evidence import (
-        _canonical, _stat_trust, _unique_json, _utc, _verify_sig, verify,
+        _canonical, _read_private_json, _utc, _verify_sig, verify,
     )
 else:
     from portal_restore_evidence import (
-        _canonical, _stat_trust, _unique_json, _utc, _verify_sig, verify,
+        _canonical, _read_private_json, _utc, _verify_sig, verify,
     )
 
 DIGEST = re.compile(r"[a-f0-9]{64}\Z")
@@ -113,10 +113,6 @@ def verify_checkpoint(checkpoint, checkpoint_trust, signed_receipt, role_trust,
         "durable_external_high_water_verified": False,
         "production_recovery_approved": False,
     }
-
-
-def _read_private_json(path):
-    return _unique_json(_stat_trust(path).read_text())
 
 
 def main():

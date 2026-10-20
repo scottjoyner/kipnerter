@@ -132,7 +132,7 @@ def _private_input(path, limit):
             raw = src.read(limit + 1)
         if len(raw) > limit:
             raise ValueError("private checkpoint input exceeds length cap")
-        return _unique_json(raw.decode("utf-8", "strict"))
+        return _unique_json(raw.decode("utf-8", "strict")), (st.st_dev, st.st_ino)
     finally:
         if fd != -1:
             os.close(fd)
@@ -148,14 +148,13 @@ def main():
     try:
         sources = [Path(x) for x in (args.chain, args.external_anchor,
                     args.external_role_trust, args.external_observer_trust)]
-        if len({(file.stat().st_dev, file.stat().st_ino) for file in sources}) != 4:
+        opened = [_private_input(path, size) for path, size in zip(
+            sources, (MAX_CHAIN_BYTES, 65536, 65536, 65536))]
+        # Compare identities from the exact opened file descriptors, not
+        # path.stat() performed before a potentially swappable path read.
+        if len({identity for _, identity in opened}) != 4:
             raise ValueError("anchor, keys and chain must be distinct private files")
-        result = verify_chain(
-            _private_input(args.chain, MAX_CHAIN_BYTES),
-            _private_input(args.external_anchor, 65536),
-            _private_input(args.external_role_trust, 65536),
-            _private_input(args.external_observer_trust, 65536),
-        )
+        result = verify_chain(*(payload for payload, _ in opened))
     except (OSError, ValueError, TypeError, KeyError, UnicodeError, subprocess.SubprocessError) as exc:
         raise SystemExit("RELEASE HOLD: synthetic checkpoint chain invalid: " + str(exc)) from None
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))

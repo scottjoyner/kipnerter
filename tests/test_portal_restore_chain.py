@@ -160,6 +160,15 @@ class ChainVerifierTests(unittest.TestCase):
             same_path[same_path.index('--external-anchor')+1] = str(files['chain'])
             bad = subprocess.run(same_path, capture_output=True, text=True, timeout=12)
             self.assertIn('distinct private files', bad.stderr)
+            # A hardlink with a different filename is not a genuinely
+            # independent trust input. Compare opened inode identities.
+            hardlink = root / "hardlink-anchor.json"
+            hardlink.hardlink_to(files['chain'])
+            same_inode = argv.copy()
+            same_inode[same_inode.index('--external-anchor')+1] = str(hardlink)
+            denied = subprocess.run(same_inode, capture_output=True, text=True, timeout=12)
+            self.assertIn('distinct private files', denied.stderr)
+            hardlink.unlink()
             files['anchor'].write_text(files['anchor'].read_text().replace(
                 '"version": 1', '"version": 1, "version": 1'))
             bad = subprocess.run(argv, capture_output=True, text=True, timeout=12)

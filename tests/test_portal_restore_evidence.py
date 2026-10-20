@@ -10,7 +10,7 @@ import sys
 import tempfile
 import unittest
 
-from scripts.portal_restore_evidence import _canonical, verify
+from scripts.portal_restore_evidence import _canonical, _read_private_json, verify
 
 D = "d" * 64
 E = "e" * 64
@@ -201,12 +201,62 @@ class RestoreEvidenceTests(unittest.TestCase):
                 with self.subTest(timestamp=timestamp), self.assertRaises(ValueError):
                     verify(bad, trust)
 
+    def test_fd_bound_private_input_rejects_symlink_permissions_fifo_and_duplicate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            good = root / "approved.json"
+            good.write_text('{"source":"pinned"}')
+            good.chmod(0o600)
+            self.assertEqual(_read_private_json(good), {"source": "pinned"})
+            alias = root / "alias.json"
+            alias.symlink_to(good)
+            with self.assertRaises(OSError):
+                _read_private_json(alias)
+            good.chmod(0o644)
+            with self.assertRaisesRegex(ValueError, "owner-controlled"):
+                _read_private_json(good)
+            good.chmod(0o600)
+            good.write_text('{"source":1,"source":2}')
+            with self.assertRaisesRegex(ValueError, "duplicate"):
+                _read_private_json(good)
+            good.write_text(' ' * 65537)
+            with self.assertRaisesRegex(ValueError, "private"):
+                _read_private_json(good)
+            fifo = root / "fifo"
+            os.mkfifo(fifo, 0o600)
+            with self.assertRaisesRegex(ValueError, "regular"):
+                _read_private_json(fifo)
+
+    def test_private_input_uses_opened_inode_even_if_path_changes_during_fstat(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            chosen = root / "chosen.json"
+            archived = root / "old.json"
+            chosen.write_text('{"source":"original"}')
+            chosen.chmod(0o600)
+            real_fstat = os.fstat
+            swapped = False
+            def swap_after_open(fd):
+                nonlocal swapped
+                if not swapped:
+                    swapped = True
+                    chosen.rename(archived)
+                    chosen.write_text('{"source":"replacement"}')
+                    chosen.chmod(0o600)
+                return real_fstat(fd)
+            with patch("scripts.portal_restore_evidence.os.fstat", side_effect=swap_after_open):
+                self.assertEqual(_read_private_json(chosen), {"source": "original"})
+            self.assertTrue(swapped)
+            self.assertEqual(_read_private_json(chosen), {"source": "replacement"})
+
     def test_cli_requires_private_external_trust_file_and_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             evidence, trust = signed_fixture(root)
             report, trustfile = root / "receipt.json", root / "trust.json"
             report.write_text(json.dumps(evidence))
+            report.chmod(0o600)
             trustfile.write_text(json.dumps(trust))
             script = Path(__file__).resolve().parents[1] / "scripts/portal_restore_evidence.py"
             argv = [sys.executable, str(script), "--evidence", str(report),

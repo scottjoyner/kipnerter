@@ -64,3 +64,24 @@ The current environment also lacks a separately tagged staging host and a
 verified MinIO image. Existing storage-topology checks and signed synthetic
 receipts remain prerequisites, not release authorization. No Docker images
 were downloaded and no volumes, processes or production services were touched.
+
+## Oct 19 — descriptor-bound private-input hardening
+
+The standalone executor/reviewer receipt verifier and third-role checkpoint
+verifier now load JSON from the **same open file descriptor** whose regular-file
+status, owner, mode and byte limit were checked. They reject symlinks,
+world/group-readable input, FIFOs and other special files, oversized or empty
+content, and duplicate JSON keys. The earlier path-stat-then-read code could
+read a different pathname target if it was swapped between the two operations.
+A deterministic regression test swaps the pathname after open and verifies
+that only the original inode's bytes are accepted.
+
+The multi-checkpoint verifier already opened private files with no-follow.
+It now also compares the **opened descriptor's device/inode identities** for
+its chain, external anchor and two trust roots, rather than stat'ing each
+pathname separately before reading. A hardlinked duplicate anchor is rejected.
+
+These checks protect against common local pathname substitution mistakes.
+They do **not** establish immutable files, independently administered trust,
+replay-resistant high-water storage, actual Postgres/MinIO restoration, or a
+production release approval. No stateful services or volumes were accessed.

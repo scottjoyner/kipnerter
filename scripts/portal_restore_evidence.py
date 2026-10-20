@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -50,13 +51,27 @@ def _utc(value, now):
         raise ValueError("restore evidence is stale, future dated or timezone-free")
 
 
-def _stat_trust(path):
-    path = Path(path)
-    if (path.is_symlink() or not path.is_file() or
-            path.stat().st_uid != os.getuid() or path.stat().st_mode & 0o077 or
-            path.stat().st_size > MAX_BYTES):
-        raise ValueError("private, owner-controlled external trust-root file required")
-    return path
+def _read_private_json(path, *, limit=MAX_BYTES):
+    """Read only an already-open, private regular inode, never a path after stat.
+
+    The identity and permissions examined here belong to the same descriptor
+    that is read. No path.stat()/read_text() gap or symlink-following fallback.
+    """
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        entry = os.fstat(fd)
+        if (not stat.S_ISREG(entry.st_mode) or entry.st_uid != os.getuid() or
+                entry.st_mode & 0o077 or not 0 < entry.st_size <= limit):
+            raise ValueError("private, owner-controlled regular restore input required")
+        with os.fdopen(fd, "rb") as content:
+            fd = -1
+            raw = content.read(limit + 1)
+        if not 0 < len(raw) <= limit:
+            raise ValueError("private restore input length cap exceeded")
+        return _unique_json(raw.decode("utf-8", "strict"))
+    finally:
+        if fd != -1:
+            os.close(fd)
 
 
 def _validate_claim(claim, now):
@@ -236,15 +251,11 @@ def main():
     parser.add_argument("--expected-topology-sha256", required=True)
     args = parser.parse_args()
     try:
-        root = _stat_trust(args.external_trust_root)
-        record = Path(args.evidence)
-        if (record.is_symlink() or not record.is_file() or
-                record.stat().st_size > MAX_BYTES):
-            raise ValueError("invalid bounded receipt file")
-        output = verify(_unique_json(record.read_text()), _unique_json(root.read_text()),
+        output = verify(_read_private_json(args.evidence),
+                        _read_private_json(args.external_trust_root),
                         expected_release=args.expected_release_sha,
                         expected_topology=args.expected_topology_sha256)
-    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
+    except (OSError, ValueError, TypeError, KeyError, UnicodeError, subprocess.SubprocessError) as exc:
         raise SystemExit("RELEASE HOLD: synthetic restore claim not verified: " + str(exc)) from None
     print(json.dumps(output, sort_keys=True, separators=(",", ":")))
 
