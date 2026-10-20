@@ -3,7 +3,15 @@
  */
 const MUTATIONS = /\b(?:restart|reboot|shutdown|stop|kill|delete|remove|deploy|ssh|sudo|shell|execute|exec|install|uninstall|load|unload|dispatch|admit|rotate|write|modify|terminate|run|scale|configure|provision|wipe|format)\b/i;
 const LABELS = { assistx: "Auto-AssistX", sophia: "Sophia", hermes: "Hermes", opencode: "OpenCode", lmstudio: "Inference", "fleet-monitor": "Tailscale monitoring" };
-const list = value => Array.isArray(value) ? value.slice(0, 100) : [];
+const list = value => Array.isArray(value) ? value.slice(0, 100).filter(row => row && typeof row === "object" && !Array.isArray(row)) : [];
+const escapeRegExp = value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const mentionsHost = (question, hostname) => {
+  if (typeof hostname !== "string" || hostname.length < 2 || hostname.length > 90) return false;
+  const full = hostname.toLowerCase();
+  const short = full.split(".")[0];
+  return [full, short].some(label => label.length > 1 &&
+    new RegExp("(^|[^a-z0-9_-])" + escapeRegExp(label) + "(?=$|[^a-z0-9_-])").test(question));
+};
 const status = value => typeof value === "string" && value.length <= 40 ? value.replaceAll("_", " ") : "unavailable";
 const cap = value => String(value).slice(0, 1800);
 const clean = value => typeof value === "string" ? value.replace(/[\r\n\t]+/g, " ").slice(0, 90) : "unknown";
@@ -33,18 +41,47 @@ export function answerFleetQuestion(question, snapshot, { fresh = false, observe
   const tracesIntent = any(q, [/\btrace(s)?\b/, /\bevent(s)?\b/, /\bactivity\b/, /\bobservability\b/]);
   const sessionsIntent = any(q, [/\bsession(s)?\b/, /\bjob(s)?\b/, /\bhermes\b/, /\bopencode\b/]);
   const healthIntent = any(q, [/\bhealth\b/, /\bhealthy\b/, /\bservice(s)?\b/, /\bintegration(s)?\b/, /\bstatus\b/, /\bassistx\b/, /\bsophia\b/]);
-  const match = nodes.find(row => {
-    const host = typeof row.name === "string" ? row.name.toLowerCase() : "";
-    return host.length > 1 && (q.includes(host) || q.includes(host.split(".")[0]));
-  });
-  if (nodeIntent || match) {
+  // Prefer the longest exact host token. A substring in an unrelated name
+  // must never become a reported physical host observation.
+  const match = [...nodes].filter(row => typeof row.name === "string")
+    .sort((a, b) => b.name.length - a.name.length)
+    .find(row => mentionsHost(q, row.name));
+  if ((nodeIntent || match) && snapshot.nodes?.status === "unavailable") {
+    return "The node inventory source is unavailable. No nodes can be classified as online or offline." + observed;
+  }
+  if (match && (sessionsIntent || tracesIntent)) {
+    return cap(clean(match.name) + ": node-specific session and trace attribution is unverified. The portal does not independently join launcher receipts or AssistX traces to this host." + observed);
+  }
+  if (match && modelIntent) {
+    const reported = Array.isArray(match.models)
+      ? match.models.slice(0, 16).filter(value => typeof value === "string" && value.trim()).map(clean)
+      : null;
+    if (!reported) return cap(clean(match.name) + ": model membership is unavailable in this node observation. No model loading or residency is verified." + observed);
+    return cap(clean(match.name) + ": " + reported.length + " reported node model labels" +
+      (reported.length ? ": " + reported.slice(0, 8).join(", ") : ".") +
+      (reported.length > 8 ? " (additional labels omitted)." : ".") +
+      " These are inventory labels, not verified loaded instances, inference readiness, or AssistX admission." + observed);
+  }
+  if ((nodeIntent && !modelIntent && !sessionsIntent && !tracesIntent) || match) {
     if (match) {
       const presence = match.tailscale_online === true ? "reported online" : match.tailscale_online === false ? "reported offline" : "unverified";
       return cap(clean(match.name) + ": Tailscale presence " + presence + "; inflight tasks " + (Number.isInteger(match.inflight) ? match.inflight : "unknown") + ". This does not verify service reachability or authorize execution." + observed);
     }
-    if (snapshot.nodes?.status === "unavailable") return "The node inventory source is unavailable. No nodes can be classified as online or offline." + observed;
     const online = nodes.filter(row => row.tailscale_online === true).length;
     const offline = nodes.filter(row => row.tailscale_online === false).length;
+    const listNames = /\b(which|list|show|name|identify)\b/.test(q);
+    const offlineOnly = /\boffline\b/.test(q) && !/\bonline\b/.test(q);
+    const onlineOnly = /\bonline\b/.test(q) && !/\boffline\b/.test(q);
+    if (listNames && (offlineOnly || onlineOnly)) {
+      const matching = nodes.filter(row => row.tailscale_online === (onlineOnly ? true : false));
+      const labels = matching.slice(0, 8).map(row => clean(row.name)).join(", ");
+      return cap("Tailscale observer reports " + nodes.length + " nodes: " + online +
+        " online, " + offline + " offline, " + (nodes.length - online - offline) +
+        " unverified. " + (onlineOnly ? "Reported online: " : "Reported offline: ") +
+        (labels || "none explicitly reported") +
+        (matching.length > 8 ? " (additional names omitted)." : ".") +
+        " Presence does not verify service or model readiness." + observed);
+    }
     return cap("Tailscale observer reports " + nodes.length + " nodes: " + online + " online, " + offline + " offline, " + (nodes.length - online - offline) + " unverified. Presence is not endpoint or model readiness." + observed);
   }
   if (modelIntent) {

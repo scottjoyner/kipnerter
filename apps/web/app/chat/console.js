@@ -161,7 +161,7 @@ export default function FleetConsole({ email }) {
           </div>
           <section className="workspace-panel chat-workspace">
             <div className="panel-heading"><div><h2>Read-only fleet chat</h2><p>Ask about authenticated telemetry. Model routing and execution remain disabled.</p></div><Badge status="read_only" /></div>
-            <div className="chat-welcome"><div className="chat-mark">✳</div><h3>Ask your fleet</h3><p>Try: Which nodes are online? What models are reported? Show Hermes sessions or historical AssistX traces.</p></div>
+            <div className="chat-welcome"><div className="chat-mark">✳</div><h3>Ask your fleet</h3><p>Try: List offline nodes. What models are reported on xwing? Show Hermes sessions or historical AssistX traces. Node-to-session attribution is not verified.</p></div>
             <div className="fleet-chat-history" role="log" aria-label="Read-only fleet questions" aria-live="polite">
               {chatHistory.map((item, index) => <div className={"fleet-chat-message " + item.role} key={index}>
                 <strong>{item.role === "question" ? "You" : "Fleet telemetry"}</strong>

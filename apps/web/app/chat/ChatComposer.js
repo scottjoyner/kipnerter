@@ -25,7 +25,7 @@ export default function ChatComposer({ draft, onDraftChange, onSend }) {
         maxLength={MAX_DRAFT_CHARS}
         rows={4}
         spellCheck={false}
-        placeholder="Which nodes are online? What models are reported?"
+        placeholder="List offline nodes. What models are reported on xwing?"
         aria-describedby="kipnerter-draft-custody"
       />
       <div className="chat-compose-actions">
