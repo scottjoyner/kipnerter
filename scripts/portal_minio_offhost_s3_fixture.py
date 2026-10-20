@@ -27,7 +27,7 @@ def verify_response(result, challenge):
     if result.get("cleanup_verified") is not True:
         raise ValueError("remote scratch cleanup unverified")
     if result.get("status") == "SYNTHETIC_ONLY_PASS":
-        for field in ("server_cached_id_verified", "mc_cached_id_verified",
+        for field in ("runtime_isolation_inspected", "server_cached_id_verified", "mc_cached_id_verified",
                       "synthetic_object_source_verified",
                       "synthetic_object_copy_verified",
                       "negative_integrity_control_rejected",

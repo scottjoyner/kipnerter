@@ -13,7 +13,7 @@ result={"source":"isolated_destroyer_synthetic_minio_roundtrip",
         "synthetic_object_source_verified":False,"synthetic_object_copy_verified":False,
         "negative_integrity_control_rejected":False,"minio_prod_image_identity_verified":False,
         "real_backup_restored":False,"independent_custody_verified":False,
-        "production_recovery_approved":False,"cleanup_verified":False}
+        "production_recovery_approved":False,"cleanup_verified":False,"runtime_isolation_inspected":False}
 started=[]
 stage="init"
 token=secrets.token_hex(6)
@@ -42,6 +42,41 @@ def client(*args,payload=None):
         cmd+=["-i"]
     cmd+=[CLIENT,*args]
     return must(cmd,payload=payload,deadline=22)
+def verify_runtime(name, expected_network):
+    # Observe Docker's actual container configuration; launch arguments alone
+    # are not evidence that storage or public-network isolation succeeded.
+    raw=must(["docker","inspect","--format","{{json .HostConfig}}",name],deadline=8)
+    if not 1 <= len(raw) <= 32768:raise ValueError("unbounded_runtime_inspect")
+    config=json.loads(raw)
+    if not isinstance(config,dict):raise ValueError("bad_runtime_hostconfig")
+    expected_tmpfs={"/data":"rw,nosuid,size=67108864",
+                    "/tmp":"rw,nosuid,size=33554432"}
+    network_matches=config.get("NetworkMode")==expected_network
+    if expected_network.startswith("container:"):
+        # Docker normalizes container:<name> to container:<full ID> on some hosts.
+        source_id=must(["docker","inspect","--format","{{.Id}}",src],deadline=8).decode().strip()
+        if len(source_id)!=64 or any(c not in "0123456789abcdef" for c in source_id):
+            raise ValueError("untrusted_source_container_identity")
+        network_matches=network_matches or config.get("NetworkMode")=="container:"+source_id
+    checks={
+        "network":network_matches,
+        "read_only":config.get("ReadonlyRootfs") is True,
+        "privilege":config.get("Privileged") is False,
+        "publish_all":config.get("PublishAllPorts") is False,
+        "port_bindings":config.get("PortBindings") in (None,{}),
+        "binds":config.get("Binds") in (None,[]),
+        "host_mount_config":config.get("Mounts") in (None,[]),
+        "tmpfs":config.get("Tmpfs")==expected_tmpfs,
+        "pids":config.get("PidsLimit")==128,
+        "memory":config.get("Memory")==536870912,
+        "cpu":config.get("NanoCpus")==500000000,
+    }
+    failures=sorted(name for name,valid in checks.items() if not valid)
+    if failures:raise ValueError("runtime_isolation_mismatch:"+",".join(failures))
+    actual=must(["docker","inspect","--format","{{.Image}}",name],deadline=8).decode().strip()
+    mounts=must(["docker","inspect","--format","{{json .Mounts}}",name],deadline=8)
+    if len(mounts)>8192 or json.loads(mounts) not in ([],None) or actual!=SERVER:
+        raise ValueError("runtime_image_or_mounts_mismatch")
 try:
     raw=sys.stdin.buffer.read(150)
     req=json.loads(raw)
@@ -69,6 +104,10 @@ try:
        "-e","HOME=/tmp",SERVER,"server","--address",":9001","/data"]
     stage="target_start"
     must(command,deadline=18);started.append(dst)
+    stage="inspect_runtime"
+    verify_runtime(src,"none")
+    verify_runtime(dst,"container:"+src)
+    result["runtime_isolation_inspected"]=True
     stage="wait_s3"
     ready=False
     for count in range(12):
