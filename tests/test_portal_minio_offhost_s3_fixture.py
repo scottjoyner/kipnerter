@@ -1,4 +1,5 @@
 """Fail-closed tests for host-key-verified synthetic-only MinIO replay."""
+import ast
 import copy
 import json
 import subprocess
@@ -9,6 +10,7 @@ from scripts.portal_minio_offhost_s3_fixture import probe, verify_response, REMO
 GOOD = {
     "source": "isolated_destroyer_synthetic_minio_roundtrip",
     "status": "SYNTHETIC_ONLY_PASS",
+    "runtime_isolation_inspected": True,
     "server_cached_id_verified": True,
     "mc_cached_id_verified": True,
     "network_external": "none",
@@ -73,7 +75,7 @@ class PhysicalS3ContractTests(unittest.TestCase):
                 probe(runner=fake_runner(lambda x: x | {field: val}))
 
     def test_success_requires_complete_parity(self):
-        for field in ("server_cached_id_verified", "mc_cached_id_verified",
+        for field in ("runtime_isolation_inspected", "server_cached_id_verified", "mc_cached_id_verified",
                       "synthetic_object_source_verified", "synthetic_object_copy_verified",
                       "negative_integrity_control_rejected",
                       "sha256_matched_on_both_isolated_servers"):
@@ -100,6 +102,10 @@ class PhysicalS3ContractTests(unittest.TestCase):
         self.assertIn('"--network","none"', REMOTE_CODE)
         self.assertIn('"--network","container:"+src', REMOTE_CODE)
         self.assertIn('"--tmpfs","/data:', REMOTE_CODE)
+        self.assertIn("verify_runtime(src,\"none\")", REMOTE_CODE)
+        self.assertIn("verify_runtime(dst,\"container:\"+src)", REMOTE_CODE)
+        self.assertIn("{{json .HostConfig}}", REMOTE_CODE)
+        self.assertIn("{{json .Mounts}}", REMOTE_CODE)
         self.assertNotIn("docker volume", REMOTE_CODE)
         self.assertNotIn("docker compose", REMOTE_CODE)
 
@@ -112,6 +118,58 @@ class PhysicalS3ContractTests(unittest.TestCase):
             return subprocess.CompletedProcess(argv, 0, stdout=b"x"*8000)
         with self.assertRaisesRegex(ValueError, "bounded"):
             probe(runner=huge)
+
+
+class ActualDockerIsolationInspectionTests(unittest.TestCase):
+    """Execute only the remote isolation function, with synthetic Docker metadata."""
+
+    def _run(self, changes=None, *, mounts=None, image=None, target=False):
+        function=next(item for item in ast.parse(REMOTE_CODE).body
+                      if isinstance(item,ast.FunctionDef) and item.name=="verify_runtime")
+        compiled=compile(ast.Module(body=[function],type_ignores=[]),"<safe-fixture>","exec")
+        image_id="sha256:a98a9d647e700e45c1d3d2e44709f23952a39c199731d84e623eb558fd5501f4"
+        source_id="c"*64
+        config={"NetworkMode":"container:"+source_id if target else "none",
+                "ReadonlyRootfs":True,"Privileged":False,"PublishAllPorts":False,
+                "PortBindings":{},"Binds":None,"Mounts":None,
+                "Tmpfs":{"/data":"rw,nosuid,size=67108864",
+                         "/tmp":"rw,nosuid,size=33554432"},
+                "PidsLimit":128,"Memory":536870912,"NanoCpus":500000000}
+        config.update(changes or {})
+        def inspected(argv,*,deadline=8):
+            marker=argv[3]
+            assert argv[:3]==["docker","inspect","--format"]
+            assert deadline<=8
+            if marker=="{{json .HostConfig}}":return json.dumps(config).encode()
+            if marker=="{{json .Mounts}}":return json.dumps([] if mounts is None else mounts).encode()
+            if marker=="{{.Image}}":return (image or image_id).encode()
+            if marker=="{{.Id}}":return source_id.encode()
+            raise AssertionError("unexpected Docker inspection")
+        scope={"must":inspected,"json":json,"SERVER":image_id,"src":"src"}
+        exec(compiled,scope)
+        return scope["verify_runtime"]("dst" if target else "src",
+                                       "container:src" if target else "none")
+
+    def test_actual_isolation_fields_and_docker_network_id_normalization(self):
+        self._run()
+        self._run(target=True)
+
+    def test_each_docker_isolation_escape_fails_closed(self):
+        violations={"NetworkMode":"bridge","ReadonlyRootfs":False,
+                    "Privileged":True,"PublishAllPorts":True,
+                    "PortBindings":{"9000/tcp":[{"HostPort":"9000"}]},
+                    "Binds":["/production:/data"],"Mounts":[{"Type":"bind"}],
+                    "Tmpfs":{"/tmp":"rw"},"PidsLimit":0,
+                    "Memory":0,"NanoCpus":0}
+        for field,value in violations.items():
+            with self.subTest(field=field),self.assertRaisesRegex(ValueError,"runtime_isolation_mismatch"):
+                self._run({field:value})
+        with self.assertRaisesRegex(ValueError,"runtime_image_or_mounts_mismatch"):
+            self._run(mounts=[{"Type":"volume"}])
+        with self.assertRaisesRegex(ValueError,"runtime_image_or_mounts_mismatch"):
+            self._run(image="sha256:"+"0"*64)
+        with self.assertRaisesRegex(ValueError,"runtime_isolation_mismatch"):
+            self._run({"NetworkMode":"container:unexpected"},target=True)
 
 
 if __name__ == "__main__":

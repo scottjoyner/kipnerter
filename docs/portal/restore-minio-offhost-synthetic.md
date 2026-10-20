@@ -25,6 +25,16 @@ no outside network and no host-published ports. Each server had independently
 generated, **synthetic** root credentials; no production secret or user data
 was passed. The original production MinIO installation was not contacted.
 
+### Runtime inspection hardening (2026-10-20)
+
+The memory-only physical fixture now verifies each launched container's
+**actual Docker HostConfig** instead of trusting its command-line flags:
+network namespace, read-only root, no privilege or published ports, no
+Docker binds/host mounts, exact two tmpfs mounts, CPU/memory/PID ceilings,
+local image identity and empty persistent `.Mounts`. Missing or altered
+Docker inspection fails closed before any S3 requests. The returning witness
+requires `runtime_isolation_inspected=true`; this remains synthetic-only.
+
 An object of 1,070 bytes was written using `mc pipe`, read back using
 `mc cat` and compared to the caller-known SHA-256. Then `mc cp` copied the
 same object into the second independent server; its `mc cat` bytes and
