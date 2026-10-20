@@ -87,6 +87,8 @@ jobs:
       - run: docker compose -f docker-compose.yml -f compose.spatial.yml -f compose.staging.yml --profile edge config --quiet
       - run: python3 -m py_compile scripts/spatial-smoke.py
       - run: python3 -m unittest discover -s tests -v
+      - name: Verify release-script recovery safety regression controls
+        run: python3 -m unittest discover -s scripts/tests -v
       - name: Verify deterministic stateless web/API-only source artifact
         shell: bash
         run: |
