@@ -86,6 +86,10 @@ jobs:
       - run: docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge config --quiet
       - run: docker compose -f docker-compose.yml -f compose.spatial.yml -f compose.staging.yml --profile edge config --quiet
       - run: python3 -m py_compile scripts/spatial-smoke.py
+      - name: Verify old live image rootfs preflight never authorizes cutover
+        run: |
+          python3 -m unittest scripts.tests.test_portal_legacy_rootfs_export_preflight -v
+          python3 -m py_compile scripts/portal_legacy_rootfs_export_preflight.py
       - run: python3 -m unittest discover -s tests -v
       - name: Verify deterministic stateless web/API-only source artifact
         shell: bash
