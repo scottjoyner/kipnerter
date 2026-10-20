@@ -15,6 +15,9 @@ import time
 
 RESEARCH = {
     "compat-031": "sha256:321f8eea80e45afeb34d15e645cfc1277361b5baf7e66ab45d2d99ebb3fb2197",
+    "ios17-research": "sha256:f8bc8c09103129146134e278f2aad23156821d2357f2c5f7e35c7c7dc4147347",
+    "turns-research": "sha256:b2856145e0285cbcc56d3ed4e380038c52b35219400f0249ea00bcf4d279fe5a",
+    "recovery-research": "sha256:ff8f3db0a24274712cc83752a7e9a6694898480126fc8a12e61b86051240f8c3",
     "synthetic-loopback": "sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f",
 }
 TOKEN = "1" * 40  # visibly synthetic source/release identity, no secret.
