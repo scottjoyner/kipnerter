@@ -1,5 +1,5 @@
 import { admittedIdentity, approvedTsidpProfile, parseAllowlist } from "./identity.mjs";
-import { isConfiguredOrigin } from "./portal-origin.mjs";
+import { isTsidpRuntimeReady, validatedTsidpIssuer } from "./tsidp-config.mjs";
 
 const issuer = process.env.TSIDP_ISSUER || "";
 const clientId = process.env.TSIDP_CLIENT_ID || "";
@@ -7,11 +7,13 @@ const clientSecret = process.env.TSIDP_CLIENT_SECRET || "";
 const secret = process.env.NEXTAUTH_SECRET || "";
 const allowedEmails = parseAllowlist(process.env.KIPNERTER_ALLOWED_EMAILS);
 const allowedSubjects = parseAllowlist(process.env.KIPNERTER_ALLOWED_TSIDP_SUBJECTS);
-export const authReady = Boolean(
-  issuer.startsWith("https://") && clientId && clientSecret && secret.length >= 32 &&
-  allowedEmails.length && allowedSubjects.length &&
-  isConfiguredOrigin(process.env.KIPNERTER_ENV || "production", process.env.NEXTAUTH_URL)
-);
+export const authReady = isTsidpRuntimeReady({
+  issuer, clientId, clientSecret, secret,
+  allowedEmails: process.env.KIPNERTER_ALLOWED_EMAILS,
+  allowedSubjects: process.env.KIPNERTER_ALLOWED_TSIDP_SUBJECTS,
+  environment: process.env.KIPNERTER_ENV || "production",
+  callbackOrigin: process.env.NEXTAUTH_URL,
+});
 export function isAllowed(email, subject) {
   return admittedIdentity(email, subject, allowedEmails, allowedSubjects);
 }
@@ -22,7 +24,7 @@ export const authOptions = {
   session: { strategy: "jwt", maxAge: 900 },
   providers: authReady ? [{
     id: "tailscale", name: "Tailscale", type: "oauth",
-    wellKnown: `${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`,
+    wellKnown: `${validatedTsidpIssuer(issuer)}/.well-known/openid-configuration`,
     clientId, clientSecret, idToken: true,
     authorization: { params: { scope: "openid email profile" } },
     profile(profile) {
