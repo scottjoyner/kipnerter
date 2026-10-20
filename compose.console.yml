@@ -1,0 +1,23 @@
+# Opt-in authenticated fleet console. Required values are deliberately unset by default.
+# Use with: docker compose -f docker-compose.yml -f compose.console.yml up -d --build
+services:
+  web:
+    environment:
+      KIPNERTER_API_INTERNAL_URL: http://api:8000
+      KIPNERTER_GATEWAY_TOKEN: ${KIPNERTER_GATEWAY_TOKEN:-}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-https://kipnerter.com}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-}
+      KIPNERTER_OIDC_ISSUER: ${KIPNERTER_OIDC_ISSUER:-}
+      KIPNERTER_OIDC_CLIENT_ID: ${KIPNERTER_OIDC_CLIENT_ID:-}
+      KIPNERTER_OIDC_CLIENT_SECRET: ${KIPNERTER_OIDC_CLIENT_SECRET:-}
+      KIPNERTER_ALLOWED_EMAILS: ${KIPNERTER_ALLOWED_EMAILS:-}
+      KIPNERTER_OPERATOR_EMAILS: ${KIPNERTER_OPERATOR_EMAILS:-}
+      KIPNERTER_WEB_CHAT_ENABLED: ${KIPNERTER_WEB_CHAT_ENABLED:-false}
+  api:
+    environment:
+      HERMES_BASE_URL: ${HERMES_BASE_URL:-}
+      OPENCODE_BASE_URL: ${OPENCODE_BASE_URL:-}
+      FLEET_MONITOR_BASE_URL: ${FLEET_MONITOR_BASE_URL:-}
+      FLEET_MONITOR_READ_TOKEN: ${FLEET_MONITOR_READ_TOKEN:-}
+      TRACES_BASE_URL: ${TRACES_BASE_URL:-}
+      TRACES_READ_TOKEN: ${TRACES_READ_TOKEN:-}
