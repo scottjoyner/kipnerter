@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 from scripts.portal_legacy_source_preserve_once import (
-    gather,private_dir,snapshot,FILENAME,RECEIPT
+    gather,private_dir,preflight,snapshot,FILENAME,RECEIPT
 )
 
 
@@ -20,6 +20,7 @@ def fixture(root:Path):
         "apps/api/requirements.txt":"fastapi\n",
         "apps/api/app/main.py":"print('safe')\n",
         "apps/web/Dockerfile":"FROM node:22-alpine\n",
+        "apps/web/package.json":'{"name":"legacy-web"}\n',
         "apps/web/package-lock.json":'{"lockfileVersion":3}\n',
         "apps/web/app/page.jsx":"export default function Page(){}\n",
         "infra/caddy/Caddyfile":"localhost\n",
@@ -70,10 +71,28 @@ class SourcePreserveTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"linked"):
                 gather(root)
 
-    def test_missing_package_lock_rejected(self):
+    def test_missing_package_lock_is_preserved_as_explicit_nonreproducible_evidence(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)/"release";root.mkdir();fixture(root)
             (root/"apps/web/package-lock.json").unlink()
+            destination=Path(d)/"backup";destination.mkdir(mode=0o700)
+            check=preflight(root,destination)
+            self.assertEqual(check["source_preflight"],"PASS")
+            self.assertFalse(check["web_dependency_lock_present"])
+            self.assertFalse(check["web_legacy_build_reproducibility_verified"])
+            report=snapshot(root,destination)
+            self.assertTrue(report["private_archive_created"])
+            self.assertFalse(report["web_dependency_lock_present"])
+            self.assertFalse(report["web_legacy_build_reproducibility_verified"])
+            self.assertFalse(report["docker_images_recovered"])
+            self.assertFalse(report["safe_to_cutover"])
+            with tarfile.open(destination/FILENAME) as archive:
+                self.assertNotIn("apps/web/package-lock.json",archive.getnames())
+
+    def test_missing_package_manifest_is_still_rejected(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)/"release";root.mkdir();fixture(root)
+            (root/"apps/web/package.json").unlink()
             with self.assertRaisesRegex(ValueError,"essential"):
                 gather(root)
 
