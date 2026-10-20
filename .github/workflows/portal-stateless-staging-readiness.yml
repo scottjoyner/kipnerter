@@ -17,14 +17,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
-      EXPECTED_PORTAL_SHA: a9b26d90dc7abf6a47355a84fb30c6045cfd66cf
+      EXPECTED_PORTAL_SHA: 999f3caa49da73b89b5534c2f9037a78bc799797
       KIPNERTER_ENV: staging
       NEXTAUTH_URL: https://staging.kipnerter.com
     steps:
       - name: Check out exact reviewed development candidate
         uses: actions/checkout@v4
         with:
-          ref: a9b26d90dc7abf6a47355a84fb30c6045cfd66cf
+          ref: 999f3caa49da73b89b5534c2f9037a78bc799797
           persist-credentials: false
           fetch-depth: 1
 
@@ -40,6 +40,9 @@ jobs:
           test "$(git rev-parse HEAD:tests/test_portal_stateless_readiness.py)" = deac37c2affcc80c85c9d27f3d223136304a72c3
           test "$(git rev-parse HEAD:docker-compose.yml)" = 5d520d2a8b8f9898e32f65f02e415ca953c4629b
           test "$(git rev-parse HEAD:compose.fleet-preview.yml)" = 6ad35ba31d79887a9c4416d1a31a3e43ef9ac546
+          test "$(git rev-parse HEAD:apps/web/lib/auth.js)" = ae6c2e44429823215c4250f52d2128317f6512b3
+          test "$(git rev-parse HEAD:apps/web/lib/tsidp-config.mjs)" = fc9950c135e8920729c97e37f68535ba5a57191a
+          test "$(git rev-parse HEAD:apps/web/tests/tsidp-runtime-config.test.mjs)" = f78536bb0ca627939f6f20a56695896f6f23d6f0
           echo "Exact approved source blobs verified; no write action authorized."
 
       - name: Execute isolated deny-only unit and Compose tests
@@ -47,6 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest tests.test_portal_stateless_readiness -v
+          node --test apps/web/tests/tsidp-runtime-config.test.mjs
           docker compose -p kipnerter-fleet-preview \
             -f docker-compose.yml -f compose.fleet-preview.yml config --format json |
             python3 scripts/portal_fleet_preview_preflight.py
