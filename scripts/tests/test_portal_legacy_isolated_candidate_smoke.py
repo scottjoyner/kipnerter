@@ -5,7 +5,8 @@ import unittest
 from unittest.mock import patch
 
 from scripts.portal_legacy_isolated_candidate_smoke import (
-    EXPECTED, RESEARCH, classify_probe, commands, rehearsal, safety_inspect
+    EXPECTED, RESEARCH, SYNTHETIC_HMAC, SYNTHETIC_BEARER,
+    classify_probe, commands, rehearsal, safety_inspect
 )
 
 FIXED_NAME = "kp-legacy-isolated-" + "a" * 12
@@ -27,10 +28,11 @@ def receipt(image, *, mounts=0, network="none", ports=0, tmpfs=None, cap=None):
 
 
 class FakeDocker:
-    def __init__(self, *, failure=None, wrong_code=False):
+    def __init__(self, *, failure=None, wrong_code=False, auth_disabled=False):
         self.ops = []
         self.failure = failure
         self.wrong_code = wrong_code
+        self.auth_disabled = auth_disabled
         self.image = RESEARCH["synthetic-loopback"]
 
     def __call__(self, argv, **kwargs):
@@ -51,6 +53,9 @@ class FakeDocker:
             obj = dict(EXPECTED)
             if self.wrong_code:
                 obj["/api/v1/control-plane/overview"] = 200
+            if self.auth_disabled:
+                obj["/api/v1/control-plane/overview:synthetic-auth"] = 503
+                obj["/api/v1/control-plane/nodes:synthetic-auth"] = 503
             return json.dumps(obj)
         if argv[1] == "rm":
             if self.failure == "rm":
@@ -82,6 +87,17 @@ class CandidateIsolationTests(unittest.TestCase):
                                   "--privileged", "--network=host", "--mount"):
                     self.assertNotIn(forbidden, start)
                 self.assertIn("/data:rw,nosuid,nodev,noexec,size=33554432", start)
+                self.assertEqual(start.count("--env"), 4)
+                for test_value in (
+                    "KIPNERTER_ENV=research",
+                    "KIPNERTER_RELEASE_SHA=" + "1"*40,
+                    "KIPNERTER_LOCATION_HMAC_SECRET=" + SYNTHETIC_HMAC,
+                    "KIPNERTER_GATEWAY_BEARER_TOKEN=" + SYNTHETIC_BEARER,
+                ):
+                    self.assertIn(test_value, start)
+                self.assertTrue(SYNTHETIC_HMAC.startswith("SYNTHETIC_ONLY_NEVER_PRODUCTION_"))
+                self.assertTrue(SYNTHETIC_BEARER.startswith("SYNTHETIC_ONLY_NEVER_PRODUCTION_"))
+                self.assertNotIn("--env-file", start)
                 self.assertEqual(remove[0:3], ["docker", "rm", "--force"])
                 self.assertEqual(probe[:2], ["docker", "exec"])
 
@@ -117,6 +133,7 @@ class CandidateIsolationTests(unittest.TestCase):
         self.assertEqual(result["status"], "SYNTHETIC_LOOPBACK_ISOLATION_PASS_NOT_LEGACY")
         self.assertTrue(result["disposable_container_cleanup_verified"])
         self.assertTrue(result["synthetic_http_fixture"])
+        self.assertTrue(result["synthetic_authenticated_control_plane_checks_passed"])
         self.assertFalse(result["actual_candidate_api_health_verified"])
         for key in ("safe_to_cutover", "original_legacy_api_equivalence_verified",
                     "runnable_original_rollback_verified",
@@ -146,6 +163,20 @@ class CandidateIsolationTests(unittest.TestCase):
                       pauses=lambda _: None, nonce="a"*12)
         self.assertEqual([x[1] for x in fake.ops].count("exec"), 18)
         self.assertIn("rm", [x[1] for x in fake.ops])
+
+    def test_fail_closed_when_gateway_token_is_unconfigured_or_auth_disabled(self):
+        fake = FakeDocker(auth_disabled=True)
+        with self.assertRaisesRegex(ValueError, "probe failed"):
+            rehearsal("synthetic-loopback", call=fake,
+                      pauses=lambda _: None, nonce="a"*12)
+        self.assertEqual([x[1] for x in fake.ops].count("exec"), 18)
+        self.assertIn("rm", [x[1] for x in fake.ops])
+
+    def test_authenticated_probe_must_contain_all_expected_codes(self):
+        self.assertEqual(EXPECTED["/api/v1/control-plane/overview"], 401)
+        self.assertEqual(EXPECTED["/api/v1/control-plane/nodes"], 401)
+        self.assertEqual(EXPECTED["/api/v1/control-plane/overview:synthetic-auth"], 200)
+        self.assertEqual(EXPECTED["/api/v1/control-plane/nodes:synthetic-auth"], 200)
 
     def test_cleanup_failure_is_hard_hold(self):
         fake = FakeDocker(failure="rm")

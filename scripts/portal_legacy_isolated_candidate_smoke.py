@@ -18,14 +18,25 @@ RESEARCH = {
     "synthetic-loopback": "sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f",
 }
 TOKEN = "1" * 40  # visibly synthetic source/release identity, no secret.
+SYNTHETIC_HMAC = "SYNTHETIC_ONLY_NEVER_PRODUCTION_" + "a" * 48
+SYNTHETIC_BEARER = "SYNTHETIC_ONLY_NEVER_PRODUCTION_" + "b" * 48
+PRIVATE_ROUTES = ("/api/v1/control-plane/overview",
+                  "/api/v1/control-plane/nodes")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 FIXTURE_SERVER = r"""
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import os
 class SyntheticHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        code = 200 if self.path in (
-            "/health", "/ready", "/api/v1", "/api/v1/release",
-        ) else 401
+        if self.path in ("/health", "/ready", "/api/v1", "/api/v1/release"):
+            code = 200
+        elif (self.path in ("/api/v1/control-plane/overview",
+                            "/api/v1/control-plane/nodes") and
+              self.headers.get("Authorization") ==
+                  "Bearer " + os.environ["KIPNERTER_GATEWAY_BEARER_TOKEN"]):
+            code = 200
+        else:
+            code = 401
         self.send_response(code)
         self.send_header("Content-Length", "2")
         self.end_headers()
@@ -35,10 +46,10 @@ class SyntheticHandler(BaseHTTPRequestHandler):
 HTTPServer(("127.0.0.1", 8080), SyntheticHandler).serve_forever()
 """
 PROBE = r"""
-import json, urllib.error, urllib.request
+import json, os, urllib.error, urllib.request
 results = {}
 for path in ("/health", "/ready", "/api/v1", "/api/v1/release",
-             "/api/v1/control-plane/overview",
+             "/api/v1/control-plane/overview", "/api/v1/control-plane/nodes",
              "/api/v1/gateway/lmstudio/v1/models"):
     try:
         with urllib.request.urlopen("http://127.0.0.1:8080" + path,
@@ -48,12 +59,28 @@ for path in ("/health", "/ready", "/api/v1", "/api/v1/release",
         results[path] = e.code
     except Exception:
         results[path] = 0
+for path in ("/api/v1/control-plane/overview", "/api/v1/control-plane/nodes"):
+    req = urllib.request.Request(
+        "http://127.0.0.1:8080" + path,
+        headers={"Authorization": "Bearer " +
+                 os.environ["KIPNERTER_GATEWAY_BEARER_TOKEN"]})
+    key = path + ":synthetic-auth"
+    try:
+        with urllib.request.urlopen(req, timeout=2) as response:
+            results[key] = response.status
+    except urllib.error.HTTPError as e:
+        results[key] = e.code
+    except Exception:
+        results[key] = 0
 print(json.dumps(results, separators=(",", ":"), sort_keys=True))
 """
 EXPECTED = {
     "/health": 200, "/ready": 200, "/api/v1": 200, "/api/v1/release": 200,
     "/api/v1/control-plane/overview": 401,
+    "/api/v1/control-plane/nodes": 401,
     "/api/v1/gateway/lmstudio/v1/models": 401,
+    "/api/v1/control-plane/overview:synthetic-auth": 200,
+    "/api/v1/control-plane/nodes:synthetic-auth": 200,
 }
 
 
@@ -88,6 +115,8 @@ def commands(name: str, image: str, *, synthetic: bool = False):
         "--tmpfs", "/data:rw,nosuid,nodev,noexec,size=33554432",
         "--env", "KIPNERTER_ENV=research",
         "--env", "KIPNERTER_RELEASE_SHA=" + TOKEN,
+        "--env", "KIPNERTER_LOCATION_HMAC_SECRET=" + SYNTHETIC_HMAC,
+        "--env", "KIPNERTER_GATEWAY_BEARER_TOKEN=" + SYNTHETIC_BEARER,
         "--restart", "no",
         image,
     ]
@@ -203,6 +232,7 @@ def rehearsal(role: str, *, call=runner, pauses=time.sleep, nonce=None):
         "isolated_readonly_network_none": True,
         "synthetic_release_identity": True,
         "http_health_and_deny_checks_passed": success,
+        "synthetic_authenticated_control_plane_checks_passed": success,
         "disposable_container_cleanup_verified": cleanup_ok,
         "original_legacy_oci_images_recovered": False,
         "original_legacy_api_equivalence_verified": False,

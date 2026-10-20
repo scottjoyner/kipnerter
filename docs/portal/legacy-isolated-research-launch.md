@@ -42,11 +42,17 @@ auto-remove status from the opened disposable container.
 
 Probes run only via `docker exec` from inside the no-network container,
 requesting **127.0.0.1:8080**; they do not publish any TCP socket to
-the host or connect to production. Require 200 for `/health`,
-`/ready`, `/api/v1`, `/api/v1/release`, and require 401 for
-unauthenticated `/api/v1/control-plane/overview` and
-`/api/v1/gateway/lmstudio/v1/models`. Bounded retries, no bearer keys,
-no production DB/MinIO, and no agent dispatch.
+the host or connect to production. The harness supplies two **fixed,
+visibly synthetic, nonproduction** startup settings:
+`KIPNERTER_LOCATION_HMAC_SECRET` and
+`KIPNERTER_GATEWAY_BEARER_TOKEN`. No actual production credential
+is read from the host or printed to logs. Require 200 on `/health`,
+`/ready`, `/api/v1` and `/api/v1/release`; require 401 on
+anonymous control-plane overview/nodes and gateway models; then
+require 200 on control-plane overview and nodes with the synthetic
+bearer token. The HTTP fixture applies the same rules. All probes
+are local to the no-network container: no production database,
+MinIO service, provider or agent dispatch is accessed.
 
 The disposable test container is forcibly removed in a `finally`
 block even if the service never starts. The harness performs a separate
@@ -66,18 +72,38 @@ and isolation policy, and verified cleanup. The report is exactly
 `runnable_original_rollback_verified=false`, and
 `safe_to_cutover=false`. Zero leftover disposable containers.
 
-**Candidate application negative control: HOLD.** The cached
-`kipnerter-api:031-portal-compat-20261019` image is not the original
-production image. It is configured to run Uvicorn on port 8080 and
-declares `VOLUME /data`. Initially, its implicit volume was detected
-and rejected. After overriding `/data` with bounded tmpfs, an
-independent read-back confirmed zero Docker mounts and full isolation.
-The app's PID 1 Uvicorn process remained alive but never opened a
-listener on localhost:8000/8080/3000 within the bounded observation
-window, so health/auth contract acceptance **failed**. The harness
-returned `HOLD` and removed the container; no relaxation of isolation
-and no false success. This does not diagnose the application's internal
-startup reason and is not evidence about historical production behavior.
+**Candidate application startup root cause and physical retest:
+PASS (research-only).** The cached
+`kipnerter-api:031-portal-compat-20261019` image is **not** the original
+production API. It runs Uvicorn on port 8080 and declares
+`VOLUME /data`. An initial run detected/rejected Docker's default
+persistent volume; replacing it with a bounded tmpfs confirmed zero
+Docker mounts and full isolation.
+
+The candidate then initially exited with code **3**. Read-only Docker
+event inspection and cgroup memory checks showed this was *not* an OOM
+termination. Processing ephemeral logs locally without printing raw
+lines or secret values classified a startup `RuntimeError` requiring
+the variable **name** `KIPNERTER_LOCATION_HMAC_SECRET`. A fixed
+synthetic HMAC permitted application startup and public HTTP 200
+health responses. However, protected endpoints remained 503 until a
+separate synthetic gateway bearer token was supplied.
+
+With **both synthetic startup values**, the cached 0.3.1 API passed:
+- **200** for health, readiness, API root and release;
+- **401** for anonymous control-plane overview/nodes and gateway models;
+- **200** for overview and nodes with the in-container synthetic token.
+
+All tests ran with `--network none`, no ports published, a read-only
+root filesystem, bounded tmpfs, 384 MiB memory, 0.5 CPU, dropped
+capabilities, and zero persistent mounts. The disposable container
+was removed and an independent Docker read-back found **zero leftovers**.
+
+This proves the compatibility candidate's isolated startup and
+synthetic authorization behavior; it does **not** prove historical
+production API equivalence, the old web image, real identity-provider
+login, model execution, genuine DB/MinIO recovery or reversible
+rollback. All deployment and production release flags remain **HOLD**.
 
 To reproduce on an authorized x1-370 worker with these already cached
 research images:
@@ -90,8 +116,10 @@ python3 scripts/portal_legacy_isolated_candidate_smoke.py \
 python3 -m unittest scripts.tests.test_portal_legacy_isolated_candidate_smoke -v
 ```
 
-The actual candidate is expected to fail until separately resolved.
-Twelve synthetic tests exercise policy and cleanup behavior. Test
+Both research roles now pass the isolated acceptance contract
+using **only synthetic values**. Fourteen synthetic tests exercise
+policy, required startup/auth configuration, anonymous denial,
+authenticated control-plane behavior and cleanup. Test
 reports never expose container logs, environment values or private
 archive content.
 
