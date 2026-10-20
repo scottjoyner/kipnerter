@@ -1,0 +1,74 @@
+name: Kipnerter 1.7 Independent Private Launch Receipt Verification (Read Only)
+
+on:
+  push:
+    branches: [release/17-old-app-source-private-preserve-20261019]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-17-private-launch-receipt-readback
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: >-
+      ${{ github.repository == 'scottjoyner/kipnerter' &&
+          github.actor == github.repository_owner &&
+          contains(github.event.head_commit.message, '[ios17-legacy-launch-verify-once]') }}
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 12
+    steps:
+      - name: Checkout exact review-approved source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Run negative tests without live credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest scripts.tests.test_portal_legacy_launch_receipt_verify -v
+          python3 -m py_compile scripts/portal_legacy_launch_receipt_verify.py
+      - name: Join scoped Tailscale CI identity
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+      - name: Select exactly one production-tagged host
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="$(tailscale status --json |
+            python3 scripts/portal_deploy_target.py --environment production)"
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 2
+          tailscale ping --timeout=8s "$TARGET" >/dev/null
+          tailscale ssh "kipnerter@$TARGET" 'test "$(id -un)" = kipnerter;
+            test -d /home/kipnerter/.local/state/kipnerter-release/state-backups'
+          echo "address=$TARGET" >> "$GITHUB_OUTPUT"
+      - name: Rehash old rootfs tar files and validate private redacted launch metadata
+        shell: bash
+        env:
+          TARGET: ${{ steps.target.outputs.address }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 2
+          cat scripts/portal_legacy_launch_receipt_verify.py |
+            timeout 250 tailscale ssh "kipnerter@$TARGET" 'python3 -'
+      - name: Explicitly deny runnable rollback and ingress promotion
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "### Read-only legacy launch custody verification"
+            echo "- Private rootfs file contents and receipt hashes checked on production."
+            echo "- Redacted launch-structure receipt validated, live originals checked."
+            echo "- No configuration or environment values printed or exported."
+            echo "- No Docker create/run/stop, images, data stores or ingress modified."
+            echo "- Verification is same-admin on-host custody, NOT independent authority."
+            echo "- Original OCI images / runnable rollback / public chat: HOLD."
+          } >> "$GITHUB_STEP_SUMMARY"
