@@ -30,7 +30,8 @@ def rules(direction):
         {
             "protocol": protocol,
             "action": "deny",
-            **({"ports": "1-65535"} if protocol in ("tcp", "udp") else {}),
+            # DigitalOcean API requires ports on every rule; ICMP uses "0".
+            "ports": "1-65535" if protocol in ("tcp", "udp") else "0",
             endpoint: {"addresses": ["0.0.0.0/0", "::/0"]},
         }
         for protocol in ("tcp", "udp", "icmp")
@@ -168,8 +169,10 @@ def _rule_set(values, endpoint):
             raise ValueError("quarantine contains non-deny traffic rules")
         protocol = rule.get("protocol")
         expected_ports = "1-65535" if protocol in ("tcp", "udp") else "0"
-        raw_ports = rule.get("ports", "0")
-        if protocol not in ("tcp", "udp", "icmp") or str(raw_ports or "0") != expected_ports:
+        # Do not infer an absent ICMP ports value. API readback must
+        # explicitly confirm "0" even though ICMP has no transport ports.
+        raw_ports = rule.get("ports")
+        if protocol not in ("tcp", "udp", "icmp") or raw_ports != expected_ports:
             raise ValueError("quarantine protocol/ports incomplete")
         target = rule.get(endpoint)
         if (not isinstance(target, dict)

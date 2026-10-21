@@ -122,6 +122,25 @@ class FirewallStageATests(unittest.TestCase):
                 stage_a(f,"apply",CONFIRM)
             self.assertEqual(f.writes,[])
 
+    def test_provider_requires_explicit_icmp_port_zero_both_directions(self):
+        payload=required_firewall()
+        for direction in ("inbound_rules","outbound_rules"):
+            rules=payload[direction]
+            self.assertEqual(len(rules),3)
+            self.assertEqual({r["protocol"] for r in rules},{"tcp","udp","icmp"})
+            for rule in rules:
+                self.assertIn("ports",rule)
+                self.assertEqual(rule["ports"],
+                                 "0" if rule["protocol"]=="icmp" else "1-65535")
+
+    def test_missing_icmp_ports_in_provider_readback_is_not_verified(self):
+        for direction in ("inbound_rules","outbound_rules"):
+            fw=Fake().firewall
+            icmp=next(r for r in fw[direction] if r["protocol"]=="icmp")
+            del icmp["ports"]
+            with self.subTest(direction=direction),self.assertRaises(ValueError):
+                _check_firewall(fw)
+
     def test_incomplete_protocols_and_address_ranges_rejected(self):
         for kind in ("no_udp","no_ipv6","wrong_ports","duplicate","foreign_source"):
             obj=Fake().firewall
