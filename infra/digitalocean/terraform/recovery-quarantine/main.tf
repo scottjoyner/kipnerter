@@ -34,18 +34,45 @@ resource "digitalocean_firewall" "quarantine" {
   name = local.quarantine_name
   tags = [digitalocean_tag.quarantine.name]
 
-  # EXPLICIT deny across IPv4/IPv6 and every IP protocol/port.
-  # DigitalOcean combines allows from multiple attached firewalls;
-  # a rule-free firewall is insufficient if another allows traffic.
-  # Deny rules override those external allowances.
+  # Terraform provider only allows tcp/udp/icmp (not protocol=all).
+  # Explicit DENY overrides allowed traffic on other attached firewalls.
+  # Those same three protocols are all that DO firewalls can explicitly ALLOW.
   inbound_rule {
-    protocol         = "all"
+    protocol         = "tcp"
+    port_range       = "1-65535"
+    action           = "deny"
+    source_addresses = ["0.0.0.0/0", "::/0"]
+  }
+
+  inbound_rule {
+    protocol         = "udp"
+    port_range       = "1-65535"
+    action           = "deny"
+    source_addresses = ["0.0.0.0/0", "::/0"]
+  }
+
+  inbound_rule {
+    protocol         = "icmp"
     action           = "deny"
     source_addresses = ["0.0.0.0/0", "::/0"]
   }
 
   outbound_rule {
-    protocol              = "all"
+    protocol              = "tcp"
+    port_range            = "1-65535"
+    action                = "deny"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+
+  outbound_rule {
+    protocol              = "udp"
+    port_range            = "1-65535"
+    action                = "deny"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+
+  outbound_rule {
+    protocol              = "icmp"
     action                = "deny"
     destination_addresses = ["0.0.0.0/0", "::/0"]
   }

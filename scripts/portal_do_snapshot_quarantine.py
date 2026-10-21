@@ -41,20 +41,31 @@ def _deny_everything_rule(fw: dict, direction: str) -> None:
     key = "inbound_rules" if direction == "in" else "outbound_rules"
     endpoint = "sources" if direction == "in" else "destinations"
     rules = fw.get(key)
-    if not isinstance(rules, list) or len(rules) != 1:
-        raise ValueError("firewall must have exactly one explicit deny-all rule per direction")
-    rule = rules[0]
-    if (not isinstance(rule, dict) or rule.get("protocol") != "all" or
-            rule.get("action") != "deny" or
-            rule.get("ports") not in (None, "", "0", 0)):
-        raise ValueError("firewall must explicitly deny every IP protocol")
-    targets = rule.get(endpoint)
-    if (not isinstance(targets, dict) or
-            set(targets) != {"addresses"} or
-            not isinstance(targets.get("addresses"), list) or
-            set(targets["addresses"]) != {"0.0.0.0/0", "::/0"} or
-            len(targets["addresses"]) != 2):
-        raise ValueError("firewall deny-all must cover IPv4 and IPv6")
+    if not isinstance(rules, list) or len(rules) != 3:
+        raise ValueError("quarantine needs exactly TCP/UDP/ICMP deny rules")
+    seen = set()
+    for rule in rules:
+        if not isinstance(rule, dict):
+            raise ValueError("invalid firewall rule metadata")
+        protocol = rule.get("protocol")
+        if (protocol not in ("tcp", "udp", "icmp") or protocol in seen or
+                rule.get("action") != "deny"):
+            raise ValueError("firewall has allow, duplicate or unknown rule")
+        seen.add(protocol)
+        if (protocol in ("tcp", "udp") and
+                rule.get("ports") != "1-65535"):
+            raise ValueError("deny rule does not cover all TCP/UDP ports")
+        if protocol == "icmp" and rule.get("ports") not in (None, "", "0", 0):
+            raise ValueError("ICMP deny rule has unexpected ports")
+        targets = rule.get(endpoint)
+        if (not isinstance(targets, dict) or
+                set(targets) != {"addresses"} or
+                not isinstance(targets.get("addresses"), list) or
+                len(targets["addresses"]) != 2 or
+                set(targets["addresses"]) != {"0.0.0.0/0", "::/0"}):
+            raise ValueError("deny rule lacks IPv4 and IPv6 coverage")
+    if seen != {"tcp", "udp", "icmp"}:
+        raise ValueError("incomplete TCP/UDP/ICMP denial")
 
 
 def verify_readbacks(snapshot_response: dict, firewall_response: dict,

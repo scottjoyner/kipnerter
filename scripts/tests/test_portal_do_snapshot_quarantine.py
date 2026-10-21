@@ -13,6 +13,14 @@ from scripts.portal_do_snapshot_quarantine import (
 FIREWALL_UUID = "6e745ed6-4b77-4669-8b0d-4fc0da51f902"
 
 
+def deny_rules(endpoint):
+    return [{
+        "protocol": protocol, "action": "deny",
+        **({"ports": "1-65535"} if protocol in ("tcp", "udp") else {}),
+        endpoint: {"addresses": ["0.0.0.0/0", "::/0"]},
+    } for protocol in ("tcp", "udp", "icmp")]
+
+
 def fixture():
     image = {"image": {
         "id": SNAPSHOT_ID, "type": "snapshot", "status": "available",
@@ -22,14 +30,8 @@ def fixture():
     firewall = {"firewall": {
         "id": FIREWALL_UUID, "name": FIREWALL_NAME, "status": "succeeded",
         "tags": [RECOVERY_TAG],
-        "inbound_rules": [{
-            "protocol": "all", "ports": "0", "action": "deny",
-            "sources": {"addresses": ["0.0.0.0/0", "::/0"]},
-        }],
-        "outbound_rules": [{
-            "protocol": "all", "ports": "0", "action": "deny",
-            "destinations": {"addresses": ["0.0.0.0/0", "::/0"]},
-        }],
+        "inbound_rules": deny_rules("sources"),
+        "outbound_rules": deny_rules("destinations"),
         "droplet_ids": [], "pending_changes": [],
     }}
     droplets = {"droplets": [{
@@ -79,7 +81,7 @@ class QuarantineTests(unittest.TestCase):
                 fw["firewall"][field].append({
                     "protocol": "tcp", "ports": "1-65535", "action": "allow",
                 })
-                with self.assertRaisesRegex(ValueError, "firewall"):
+                with self.assertRaises(ValueError):
                     self.result(img, fw, droplets)
 
     def test_missing_explicit_deny_rule_rejected(self):
@@ -94,7 +96,7 @@ class QuarantineTests(unittest.TestCase):
             ("inbound_rules", "sources"),
             ("outbound_rules", "destinations"),
         ):
-            for mutation in ("omit_ipv6", "allow", "tcp_only", "partial_port",
+            for mutation in ("omit_ipv6", "allow", "unknown_protocol", "partial_port",
                              "untrusted_address"):
                 img, fw, droplets = fixture()
                 rule = fw["firewall"][direction][0]
@@ -102,8 +104,8 @@ class QuarantineTests(unittest.TestCase):
                     rule[sources]["addresses"] = ["0.0.0.0/0"]
                 elif mutation == "allow":
                     rule["action"] = "allow"
-                elif mutation == "tcp_only":
-                    rule["protocol"] = "tcp"
+                elif mutation == "unknown_protocol":
+                    rule["protocol"] = "gre"
                 elif mutation == "partial_port":
                     rule["ports"] = "443"
                 else:
@@ -111,6 +113,19 @@ class QuarantineTests(unittest.TestCase):
                 with self.subTest(direction=direction, mutation=mutation):
                     with self.assertRaises(ValueError):
                         self.result(img, fw, droplets)
+
+    def test_each_required_protocol_rule_must_be_present_once(self):
+        for direction in ("inbound_rules", "outbound_rules"):
+            for problem in ("missing_icmp", "duplicate_tcp"):
+                image, fw, droplets = fixture()
+                if problem == "missing_icmp":
+                    fw["firewall"][direction].pop()
+                else:
+                    fw["firewall"][direction][2] = copy.deepcopy(
+                        fw["firewall"][direction][0])
+                with self.subTest(direction=direction, problem=problem):
+                    with self.assertRaises(ValueError):
+                        self.result(image, fw, droplets)
 
     def test_firewall_with_unknown_status_tag_or_id_denied(self):
         for key, val in (
@@ -196,10 +211,13 @@ class QuarantineTests(unittest.TestCase):
         self.assertIn('resource "digitalocean_firewall" "quarantine"', tf)
         self.assertIn('prevent_destroy = true', tf)
         self.assertIn('tags = [digitalocean_tag.quarantine.name]', tf)
-        self.assertEqual(tf.count('action           = "deny"'), 1)
-        self.assertEqual(tf.count('action                = "deny"'), 1)
-        self.assertIn('protocol         = "all"', tf)
-        self.assertIn('protocol              = "all"', tf)
+        self.assertEqual(tf.count('action           = "deny"'), 3)
+        self.assertEqual(tf.count('action                = "deny"'), 3)
+        for protocol in ("tcp", "udp", "icmp"):
+            self.assertIn('protocol         = "' + protocol + '"', tf)
+            self.assertIn('protocol              = "' + protocol + '"', tf)
+        self.assertIn('port_range       = "1-65535"', tf)
+        self.assertIn('port_range            = "1-65535"', tf)
         self.assertIn('source_addresses = ["0.0.0.0/0", "::/0"]', tf)
         self.assertIn('destination_addresses = ["0.0.0.0/0", "::/0"]', tf)
 

@@ -53,9 +53,8 @@ provider for:
 - Snapshot image ID `250354430` (available, correct creation date,
   NYC3, min disk size not exceeding 80 GiB).
 - Firewall UUID, `status=succeeded`, exactly the unique quarantine
-  tag, no preexisting Droplet IDs or pending changes, exactly one
-  explicit IPv4+IPv6 all-protocol DENY rule inbound and outbound, and
-  **no ALLOW rules**.
+  tag, no preexisting Droplet IDs or pending changes, exactly three explicit IPv4+IPv6 rules in each direction:
+  TCP, UDP and ICMP, all \`action=deny\`, and **no ALLOW rules**.
 - Complete account Droplet inventory with tags. The active original
   production Droplet ID `593032509` and every other existing Droplet
   must **not** have the quarantine tag.
