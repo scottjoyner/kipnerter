@@ -117,6 +117,11 @@ jobs:
       - run: terraform fmt -check -recursive
       - run: terraform init -backend=false
       - run: terraform validate
+      - name: Validate separate recovery quarantine firewall (no apply)
+        run: |
+          terraform -chdir=recovery-quarantine init -backend=false -input=false
+          terraform -chdir=recovery-quarantine fmt -check
+          terraform -chdir=recovery-quarantine validate
 
   secrets:
     runs-on: ubuntu-latest
