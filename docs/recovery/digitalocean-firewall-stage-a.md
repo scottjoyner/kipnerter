@@ -34,8 +34,9 @@ Backend: `scripts/do_recovery_quarantine_firewall.py`.
 If a candidate firewall already exists, it must **exactly** match the
 immutable quarantine name/tag, include no Droplet IDs or pending changes,
 be in succeeded state, and have six IPv4/IPv6 **explicit DENY** rules:
-TCP 1-65535, UDP 1-65535, and ICMP, each inbound and outbound, and no
-extra allow rules. If any mismatch appears, the workflow fails HOLD
+TCP ports 1-65535, UDP ports 1-65535, and ICMP with the
+DigitalOcean-required explicit `ports="0"`, each inbound and outbound,
+and no extra allow rules. If any mismatch appears, the workflow fails HOLD
 without attempting changes.
 
 **Mode: apply-firewall.** Only runs after someone with the appropriate
