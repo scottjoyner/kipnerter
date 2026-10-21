@@ -1,0 +1,69 @@
+name: recovery-firewall-stage-a
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Inventory only, or create ONLY the isolated October 18 quarantine firewall"
+        required: true
+        type: choice
+        options:
+          - inventory
+          - apply-firewall
+        default: inventory
+      confirmation:
+        description: "For apply: APPLY_FIREWALL_ONLY_250354430_NO_DROPLET"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-digitalocean-quarantine-stage-a
+  cancel-in-progress: false
+
+jobs:
+  stage-a:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'scottjoyner'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Allow only exact operator-owned firewall action
+        env:
+          MODE: ${{ inputs.mode }}
+          APPROVAL: ${{ inputs.confirmation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$MODE" == "apply-firewall" ]]; then
+            [[ "$APPROVAL" == "APPLY_FIREWALL_ONLY_250354430_NO_DROPLET" ]]
+          else
+            [[ "$MODE" == "inventory" ]]
+            [[ -z "$APPROVAL" ]]
+          fi
+      - name: Verify recovery snapshot and provision firewall ONLY after explicit approval
+        env:
+          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+          MODE: ${{ inputs.mode }}
+          APPROVAL: ${{ inputs.confirmation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$MODE" == "inventory" ]]; then
+            python3 scripts/do_recovery_quarantine_firewall.py --mode inventory
+          else
+            python3 scripts/do_recovery_quarantine_firewall.py \
+              --mode apply --confirm "$APPROVAL"
+          fi
+      - name: Confirm no restore logic exists in this workflow
+        run: |
+          python3 -m unittest tests.test_do_recovery_quarantine_firewall -q
