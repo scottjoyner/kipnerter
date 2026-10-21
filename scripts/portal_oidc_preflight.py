@@ -5,13 +5,18 @@ urllib's default system trust roots. A failed check blocks release.
 """
 import json
 import os
+import re
 import urllib.request
 from urllib.parse import urlsplit
 
 MAX_METADATA_BYTES = 65536
+PRIVATE_TAILNET_PREVIEW_ORIGIN = "https://x1-370.tailcb8954.ts.net:8449"
+PRIVATE_PREVIEW_TSIDP_ISSUER = "https://kipnerter-idp-staging.tailcb8954.ts.net"
+TAILNET_DNS = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.ts\.net$")
 EXPECTED_ORIGINS = {
     "production": "https://kipnerter.com",
     "staging": "https://staging.kipnerter.com",
+    "tailnet-preview": PRIVATE_TAILNET_PREVIEW_ORIGIN,
 }
 
 
@@ -20,7 +25,7 @@ def _origin(value: str) -> str:
     if (
         url.scheme != "https" or url.username or url.password
         or url.query or url.fragment
-        or not url.hostname or not url.hostname.endswith(".ts.net")
+        or not url.hostname or TAILNET_DNS.fullmatch(url.hostname) is None
         or url.port not in (None, 443)
     ):
         raise ValueError("OIDC issuer must be a tailnet HTTPS URL")
@@ -47,20 +52,37 @@ def validate(issuer: str, callback_base: str, fetch=None, environment="productio
     expected = EXPECTED_ORIGINS.get(environment)
     if expected is None or callback_base != expected:
         raise ValueError("unexpected deployment-scoped OIDC callback origin")
+    if environment == "tailnet-preview" and origin != PRIVATE_PREVIEW_TSIDP_ISSUER:
+        raise ValueError("private preview OIDC issuer not the pinned staging IdP")
     discovery_url = origin + "/.well-known/openid-configuration"
     if fetch is None:
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                raise ValueError("OIDC discovery redirects forbidden")
+
+        def distinct_json_fields(pairs):
+            result = {}
+            for name, value in pairs:
+                if name in result:
+                    raise ValueError("duplicate OIDC discovery key")
+                result[name] = value
+            return result
+
         def fetch(url):
-            with urllib.request.urlopen(url, timeout=7) as reply:
-                if _origin(reply.geturl().split("/.well-known/")[0]) != origin:
-                    raise ValueError("OIDC discovery redirected away from issuer")
+            # No bearer tokens or client credentials; do not follow redirects
+            # from the fixed private IdP to an untrusted HTTP endpoint.
+            opener = urllib.request.build_opener(NoRedirect())
+            with opener.open(url, timeout=7) as reply:
+                if reply.geturl() != discovery_url or reply.status != 200:
+                    raise ValueError("OIDC discovery redirected or not successful")
                 body = reply.read(MAX_METADATA_BYTES + 1)
                 if len(body) > MAX_METADATA_BYTES:
                     raise ValueError("OIDC metadata exceeds size limit")
-                return json.loads(body)
+                return json.loads(body, object_pairs_hook=distinct_json_fields)
     metadata = fetch(discovery_url)
     if not isinstance(metadata, dict):
         raise ValueError("invalid OIDC discovery document")
-    if metadata.get("issuer", "").rstrip("/") != origin:
+    if metadata.get("issuer") != origin:
         raise ValueError("OIDC metadata issuer mismatch")
     for item in ("authorization_endpoint", "token_endpoint", "jwks_uri"):
         _check_endpoint(metadata.get(item), origin)

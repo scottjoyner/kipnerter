@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { validatedTsidpIssuer, validIdentityList, isTsidpRuntimeReady } from "../lib/tsidp-config.mjs";
+import { PRIVATE_PREVIEW_TSIDP_ISSUER, validatedTsidpIssuer, validIdentityList, isTsidpRuntimeReady } from "../lib/tsidp-config.mjs";
 
 const good = () => ({
   issuer: "https://idp.tailcb8954.ts.net",
@@ -18,8 +18,8 @@ test("valid root issuer and signed two-claim allowlist gates admission candidate
   assert.equal(isTsidpRuntimeReady(good()), true);
   assert.equal(isTsidpRuntimeReady({ ...good(), environment: "production",
     callbackOrigin: "https://kipnerter.com" }), true);
-  assert.equal(isTsidpRuntimeReady({ ...good(), environment: "tailnet-preview",
-    callbackOrigin: "https://x1-370.tailcb8954.ts.net:8449" }), true);
+  assert.equal(isTsidpRuntimeReady({ ...good(), issuer: PRIVATE_PREVIEW_TSIDP_ISSUER,
+    environment: "tailnet-preview", callbackOrigin: "https://x1-370.tailcb8954.ts.net:8449" }), true);
 });
 
 test("runtime rejects non-Tailscale, credentialed, redirected or pathful issuers", () => {
@@ -78,4 +78,32 @@ test("unconfigured identity remains off even when client identifier is set", () 
   const cfg = good();
   cfg.issuer = "";
   assert.equal(isTsidpRuntimeReady(cfg), false);
+});
+
+
+test("private preview must use the exact approved bootstrap issuer", () => {
+  const privatePreview = {
+    ...good(), issuer: PRIVATE_PREVIEW_TSIDP_ISSUER,
+    environment: "tailnet-preview",
+    callbackOrigin: "https://x1-370.tailcb8954.ts.net:8449",
+  };
+  assert.equal(isTsidpRuntimeReady(privatePreview), true);
+  for (const issuer of [
+    "https://idp.tailcb8954.ts.net",
+    "https://kipnerter-idp-staging.other-tailnet.ts.net",
+    "https://kipnerter-idp-staging.tailcb8954.ts.net.evil.test",
+    "https://kipnerter-idp-staging.tailcb8954.ts.net:8449",
+    "http://kipnerter-idp-staging.tailcb8954.ts.net",
+  ]) {
+    assert.equal(isTsidpRuntimeReady({ ...privatePreview, issuer }), false, issuer);
+  }
+  for (const callbackOrigin of [
+    "https://kipnerter.com",
+    "https://staging.kipnerter.com",
+    "https://x1-370.tailcb8954.ts.net",
+    "https://x1-370.tailcb8954.ts.net:8450",
+    "https://x1-370.tailcb8954.ts.net:8449/api/auth/callback/tailscale",
+  ]) {
+    assert.equal(isTsidpRuntimeReady({ ...privatePreview, callbackOrigin }), false, callbackOrigin);
+  }
 });

@@ -29,7 +29,11 @@ python3 -m pytest -q scripts/tests/test_portal_tsidp_bootstrap_readiness.py
 This script emits only boolean properties. It **never** prints enrollment URLs,
 credentials, JWTs, machine keys, policy content, user emails or subject IDs.
 Provider enrollment and discovery **do not** establish client registration,
-real-browser login or production release authorization. Those always remain
+real-browser login or production release authorization. After authorized
+bootstrap, additionally run the strict private callback + discovery check in
+`docs/portal/private-oidc-exact-issuer-preflight-20261021.md`. The issuer
+must exactly match `kipnerter-idp-staging.tailcb8954.ts.net`; any substituted
+Tailnet issuer or redirect is denied. Those always remain
 `false` in this report.
 
 ## Explicit tailnet administrator actions (not automated)

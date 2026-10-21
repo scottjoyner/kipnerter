@@ -2,6 +2,9 @@
 // live issuer reachability, TLS certificates, browser sessions or access grants.
 import { isConfiguredOrigin } from "./portal-origin.mjs";
 
+// Exact private issuer: preview callbacks must not trust an arbitrary ts.net IdP.
+export const PRIVATE_PREVIEW_TSIDP_ISSUER = "https://kipnerter-idp-staging.tailcb8954.ts.net";
+
 const EMAIL = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
 const DNS = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.ts\.net$/;
 
@@ -39,6 +42,7 @@ export function isTsidpRuntimeReady(config) {
   if (!config || typeof config !== "object") return false;
   const issuer = validatedTsidpIssuer(config.issuer);
   if (!issuer ||
+      (config.environment === "tailnet-preview" && issuer !== PRIVATE_PREVIEW_TSIDP_ISSUER) ||
       typeof config.clientId !== "string" || !config.clientId ||
       /[\r\n\x00]/.test(config.clientId) ||
       typeof config.clientSecret !== "string" || config.clientSecret.length < 16 ||
