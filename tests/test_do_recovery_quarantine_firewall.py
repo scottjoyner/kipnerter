@@ -142,6 +142,7 @@ class FirewallStageATests(unittest.TestCase):
         self.assertIn("workflow_dispatch:",workflow)
         self.assertIn("environment: production",workflow)
         self.assertIn("refs/heads/master",workflow)
+        self.assertIn("github.actor == 'scottjoyner'",workflow)
         self.assertIn("concurrency:",workflow)
         for forbidden in ("pull_request:", "push:", "terraform apply",
                           "droplet create","digitalocean_droplet"):

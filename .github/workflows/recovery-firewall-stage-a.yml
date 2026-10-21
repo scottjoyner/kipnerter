@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   stage-a:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && github.actor == 'scottjoyner'
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 10
