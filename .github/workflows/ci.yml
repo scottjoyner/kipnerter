@@ -48,6 +48,8 @@ jobs:
       KIPNERTER_SPATIAL_S3_SECRET_ACCESS_KEY: dddddddddddddddddddddddddddddddddddddddd
     steps:
       - uses: actions/checkout@v4
+      - name: Test owner-gated, firewall-only DR bootstrap (no network)
+        run: python3 -m unittest tests.test_do_recovery_quarantine_firewall -v
       - run: docker compose config --quiet
       - run: docker compose -f docker-compose.yml -f compose.dev.yml config --quiet
       - run: docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge config --quiet
