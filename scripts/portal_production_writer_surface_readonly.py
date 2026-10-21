@@ -83,6 +83,30 @@ def analyze(objects):
                     and (nets & shared[POSTGRES]))
     minio_peers=sorted(n for n,nets in shared.items() if n!=MINIO and MINIO in shared
                        and (nets & shared[MINIO]))
+    # Inspect *presence* of client-credential environment bindings only.
+    # Do NOT emit environment names or values, even on malformed fields.
+    # A configured credential does not prove server-side write privileges,
+    # effective admission, absence of other credentials, or durable fencing.
+    client_flags={}
+    for name,obj in names.items():
+        env=obj.get('Config',{}).get('Env')
+        if type(env) is not list or len(env)>256 or any(
+                type(e) is not str or '=' not in e or not e.partition('=')[0]
+                or len(e)>16384
+                for e in env):
+            raise ValueError('client credential binding inventory unavailable')
+        mapping={item.partition('=')[0]: bool(item.partition('=')[2]) for item in env}
+        if len(mapping)!=len(env):
+            raise ValueError('ambiguous environment name duplicates')
+        pg_configured=mapping.get('KIPNERTER_DATABASE_URL',False)
+        s3_configured=(mapping.get('KIPNERTER_S3_ACCESS_KEY_ID',False)
+                       and mapping.get('KIPNERTER_S3_SECRET_ACCESS_KEY',False))
+        client_flags[name]={
+            'postgres_client_credential_configured': bool(pg_configured),
+            'minio_client_credentials_configured': bool(s3_configured),
+        }
+    clients_with_db=sorted(n for n in pg_peers if client_flags[n]['postgres_client_credential_configured'])
+    clients_with_s3=sorted(n for n in minio_peers if client_flags[n]['minio_client_credentials_configured'])
     # Network access is a POTENTIAL path. This DOES NOT infer credentials,
     # write privileges, outstanding requests or writer admission receipts.
     findings={
@@ -96,6 +120,11 @@ def analyze(objects):
         'minio_image_pinned':MINIO in names,
         'postgres_network_client_candidates':pg_peers,
         'minio_network_client_candidates':minio_peers,
+        'postgres_network_peers_with_client_credentials':clients_with_db,
+        'minio_network_peers_with_client_credentials':clients_with_s3,
+        'storage_client_credential_presence_only':True,
+        'server_side_write_authorization_verified':False,
+        'other_storage_credential_paths_excluded':False,
         'postgres_spatial_internal_network_present':SPATIAL in shared.get(POSTGRES,set()),
         'minio_spatial_internal_network_present':SPATIAL in shared.get(MINIO,set()),
         'minio_frontend_network_present':FRONTEND in shared.get(MINIO,set()),
@@ -113,7 +142,11 @@ def analyze(objects):
         'release_gate':'NO_GO',
         'production_modified':False,
     }
-    if missing or extra or len(pg_peers)<1 or len(minio_peers)<1:
+    if missing or extra or len(pg_peers)<1 or len(minio_peers)<1 or (
+            'kipnerter-spatial-api-1' not in clients_with_db or
+            'kipnerter-spatial-worker-1' not in clients_with_db or
+            'kipnerter-spatial-api-1' not in clients_with_s3 or
+            'kipnerter-spatial-worker-1' not in clients_with_s3):
         findings['status']='HOLD_UNEXPECTED_WRITER_SURFACE'
     return findings
 

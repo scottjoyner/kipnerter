@@ -17,9 +17,13 @@ def fixture(*,extra=False):
         nets={w.FRONTEND:{}} if name in {'kipnerter-api-1','kipnerter-web-1','kipnerter-caddy-1'} else {w.SPATIAL:{}}
         if name in {'kipnerter-spatial-api-1',w.MINIO}:nets={w.FRONTEND:{},w.SPATIAL:{}}
         ident=w.IMAGE.get(name,'sha256:'+'a'*64)
+        client=(name in {'kipnerter-spatial-api-1','kipnerter-spatial-worker-1'})
+        configured=['KIPNERTER_DATABASE_URL=synthetic-db-url',
+                    'KIPNERTER_S3_ACCESS_KEY_ID=synthetic-access-key',
+                    'KIPNERTER_S3_SECRET_ACCESS_KEY=synthetic-secret'] if client else []
         output.append({'Id':f'{i+1:064x}','Name':'/'+name,'Image':ident,
                        'State':{'Running':True},'NetworkSettings':{'Networks':nets},
-                       'Config':{'Env':['DATABASE_PASSWORD=NEVER_OUTPUT','S3_SECRET_ACCESS_KEY=NEVER_OUTPUT']}})
+                       'Config':{'Env':['DATABASE_PASSWORD=NEVER_OUTPUT','S3_SECRET_ACCESS_KEY=NEVER_OUTPUT',*configured]}})
     return output
 
 
@@ -50,6 +54,10 @@ class WriterSurfaceSafety(unittest.TestCase):
         self.assertTrue(report['minio_frontend_network_present'])
         self.assertTrue(report['postgres_spatial_internal_network_present'])
         self.assertEqual(report['extra_unreviewed_containers'],[])
+        self.assertEqual(report['postgres_network_peers_with_client_credentials'],['kipnerter-spatial-api-1','kipnerter-spatial-worker-1'])
+        self.assertEqual(report['minio_network_peers_with_client_credentials'],['kipnerter-spatial-api-1','kipnerter-spatial-worker-1'])
+        self.assertFalse(report['server_side_write_authorization_verified'])
+        self.assertFalse(report['other_storage_credential_paths_excluded'])
         self.assertEqual(report['missing_expected_containers'],[])
         self.assertEqual(report['release_gate'],'NO_GO')
         for k in ('postgres_writes_fenced','minio_writes_fenced','storage_clients_admission_revoked',
@@ -64,6 +72,53 @@ class WriterSurfaceSafety(unittest.TestCase):
         self.assertIn('kipnerter-caddy-1',report['minio_network_client_candidates'])
         self.assertIn('kipnerter-web-1',report['minio_network_client_candidates'])
         self.assertIn('kipnerter-spatial-worker-1',report['postgres_network_client_candidates'])
+
+    def test_missing_client_secret_fails_closed(self):
+        for absent in ('KIPNERTER_DATABASE_URL','KIPNERTER_S3_SECRET_ACCESS_KEY',
+                       'KIPNERTER_S3_ACCESS_KEY_ID'):
+            with self.subTest(absent=absent):
+                items=fixture()
+                for obj in items:
+                    if obj['Name']=='/kipnerter-spatial-worker-1':
+                        obj['Config']['Env']=[e for e in obj['Config']['Env']
+                                              if not e.startswith(absent+'=')]
+                result=w.analyze(items)
+                self.assertEqual(result['status'],'HOLD_UNEXPECTED_WRITER_SURFACE')
+                self.assertFalse(result['safe_to_cutover'])
+
+    def test_empty_client_secret_fails_closed(self):
+        items=fixture()
+        for obj in items:
+            if obj['Name']=='/kipnerter-spatial-api-1':
+                obj['Config']['Env']=[e.partition('=')[0]+'=' if e.startswith('KIPNERTER_DATABASE_URL=') else e
+                                      for e in obj['Config']['Env']]
+        result=w.analyze(items)
+        self.assertEqual(result['status'],'HOLD_UNEXPECTED_WRITER_SURFACE')
+
+    def test_environment_values_are_not_printed(self):
+        items=fixture()
+        report=w.analyze(items)
+        raw=json.dumps(report)
+        for secret in ('synthetic-secret','synthetic-access-key','synthetic-db-url',
+                       'NEVER_OUTPUT','DATABASE_PASSWORD','S3_SECRET_ACCESS_KEY'):
+            self.assertNotIn(secret,raw)
+        self.assertTrue(report['storage_client_credential_presence_only'])
+        self.assertFalse(report['server_side_write_authorization_verified'])
+
+    def test_duplicate_environment_key_fails_closed(self):
+        items=fixture()
+        items[0]['Config']['Env']+=['DATABASE_PASSWORD=FAKE_OVERRIDE']
+        with self.assertRaisesRegex(ValueError,'duplicates'):
+            w.analyze(items)
+
+    def test_malformed_environment_fields_fail_closed(self):
+        for broken in (None,'string',[],['MISSING_EQUALS'],['=without_key'],
+                       ['KIPNERTER_DATABASE_URL='+'X'*20000]):
+            with self.subTest(broken=type(broken).__name__):
+                items=fixture()
+                items[0]['Config']['Env']=broken
+                if broken == []:continue # empty Env is legal on unrelated services
+                with self.assertRaises(ValueError):w.analyze(items)
 
     def test_unexpected_container_is_hold(self):
         report=w.analyze(fixture(extra=True))

@@ -51,6 +51,29 @@ names, volume contents or raw Docker inspection JSON are printed.**
 | Backend transactions and worker queues drained | **Not verified** |
 | Multi-service consistent checkpoint | **Not proven** |
 
+### Credential-binding follow-up (new, read-only; live verification pending)
+
+The verifier now also checks for *nonempty presence only* of the following
+container environment bindings: `KIPNERTER_DATABASE_URL` and the **pair**
+`KIPNERTER_S3_ACCESS_KEY_ID` + `KIPNERTER_S3_SECRET_ACCESS_KEY`.
+It emits only the names of network-connected containers that have these
+bindings, **never any variable values, connection strings or secrets**.
+The verifier fails closed if either spatial API or spatial worker lacks the
+expected pair of configured clients, if environment metadata is malformed,
+or if environment names appear twice. Presence cannot establish effective
+server-side write permission, exhaust all alternative credential paths,
+prove that a credential has been revoked, or drain in-flight writes.
+
+**IMPORTANT physical status as of the new revision:** the earlier live
+Docker network/topology inventory passed, but a subsequent production SSH
+request was **blocked by Tailscale's additional interactive authentication
+check** (no network or credential bypass was attempted). Therefore the new
+credential-presence flags have **not yet been physically verified in
+production**. The synthetic negative tests pass; do not interpret them as
+live attestation. Once authorized Tailscale SSH is reverified, rerun the
+same exact `--inspect-live` source readback before making any claim about
+real configured client bindings.
+
 The word **candidate** is intentional: sharing a Docker network demonstrates
 connectivity potential, not possession of write credentials or proof that a
 service actually writes. Conversely, an empty transaction list or unchanged
