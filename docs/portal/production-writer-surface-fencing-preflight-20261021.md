@@ -115,3 +115,56 @@ All machine output is deliberately `release_gate=NO_GO`,
 `safe_to_cutover=false`, regardless of a green inventory. Real Tailnet
 `tsidp` enrollment/OIDC browser acceptance and approved production managed
 release migration remain separate release blockers.
+
+## Alternate storage-access paths — offline negative controls (October 22)
+
+The network and container-environment checks above cannot detect a worker
+that directly accesses PostgreSQL/MinIO storage volumes through Docker mounts,
+uses a mounted Docker control socket, joins host networking, or runs in a
+privileged container. These are **independent potential bypass channels**
+that must be inventoried before any controlled writer quiescence.
+
+The strengthened read-only `portal_production_writer_surface_readonly.py`
+inspects additional bounded fields from the **same already-approved**
+`docker inspect --type=container` response; it does **not** add Docker
+commands, production SQL, S3 requests, SSH bypasses, state writes or container
+restarts. It verifies a complete structured runtime mount/namespace inventory
+for every running service, compares exact storage mount sources with the
+sources visible in non-storage containers, and flags Docker socket bindings,
+privileged execution, host networking and **all non-storage bind mounts** for
+operator review. An unrecognized/malformed volume or namespace entry fails
+closed. A storage mount also marked read-only is still counted as a potential
+path rather than asserted safe. Shared-host directory *ancestry* and
+side-channel paths cannot be proven absent from Docker inspect alone.
+
+Only **container names, bounded candidate counts, and boolean/enum status**
+are emitted. Neither mount `Source`/`Destination` nor actual volume names,
+Docker socket paths, environment values, SQL rows, or object names are included
+in receipts. The script marks any alternate path candidate
+`HOLD_UNEXPECTED_WRITER_SURFACE`, and always reports
+`noncontainer_external_writers_excluded=false`, `postgres_writes_fenced=false`,
+`minio_writes_fenced=false`, and `release_gate=NO_GO`. Even a clean Docker
+inventory is not proof that an external host, leaked credential, queued task
+or administrative process cannot write.
+
+Offline smoke command (no production or Docker access by default):
+
+```sh
+python3 -m scripts.portal_production_writer_surface_readonly
+python3 -m pytest -q scripts/tests/test_portal_production_writer_surface_readonly.py
+```
+
+**Physical production test remains outstanding:** the approved non-root
+`kipnerter@100.82.144.33` Tailnet SSH path requires the operator's
+interactive Tailscale check. Do **not** substitute direct SSH, forwarded
+ports, emergency Docker credentials, or an unapproved admin account. The
+previous October 21 live network topology witness is not a witness for the
+new mount/namespace checks; these require a fresh, independently approved
+read-only execution and response review after reauthentication.
+
+Before changing *any* writer permissions, map these candidates to actual
+PostgreSQL/S3 roles, container and noncontainer credentials, server-side
+revocation, active transactions, worker queues and admitted writes. Only then
+can a separately authorized maintenance plan design, simulate, and physically
+prove a joint write fence and externally signed high-water checkpoint.
+Production storage and Tailnet permissions are unchanged by this research.

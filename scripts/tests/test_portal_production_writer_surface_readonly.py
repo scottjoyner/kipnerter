@@ -23,7 +23,12 @@ def fixture(*,extra=False):
                     'KIPNERTER_S3_SECRET_ACCESS_KEY=synthetic-secret'] if client else []
         output.append({'Id':f'{i+1:064x}','Name':'/'+name,'Image':ident,
                        'State':{'Running':True},'NetworkSettings':{'Networks':nets},
-                       'Config':{'Env':['DATABASE_PASSWORD=NEVER_OUTPUT','S3_SECRET_ACCESS_KEY=NEVER_OUTPUT',*configured]}})
+                       'Config':{'Env':['DATABASE_PASSWORD=NEVER_OUTPUT','S3_SECRET_ACCESS_KEY=NEVER_OUTPUT',*configured]},
+                       'HostConfig':{'NetworkMode':'kipnerter_spatial_backend','Privileged':False},
+                       'Mounts':([
+                           {'Type':'volume','Source':('/var/lib/docker/volumes/'+name+'/_data'),
+                            'Destination':'/data','RW':True}]
+                         if name in {w.POSTGRES,w.MINIO} else [])})
     return output
 
 
@@ -66,6 +71,93 @@ class WriterSurfaceSafety(unittest.TestCase):
                   'safe_to_cutover','production_modified'):
             self.assertFalse(report[k],k)
         self.assertNotIn('NEVER_OUTPUT',json.dumps(report))
+
+    def test_expected_runtime_mount_shape_is_not_a_storage_write_fence(self):
+        output=w.analyze(fixture())
+        self.assertTrue(output['runtime_mount_namespace_inventory_complete'])
+        for field in ('direct_storage_mount_candidates','docker_control_socket_candidates',
+                      'host_network_candidates','privileged_runtime_candidates',
+                      'nonstorage_bind_mount_candidates'):
+            self.assertEqual(output[field],[])
+        self.assertFalse(output['noncontainer_external_writers_excluded'])
+        self.assertFalse(output['atomic_multi_service_checkpoint_proven'])
+
+    def test_shared_storage_volume_is_hold_and_source_path_never_printed(self):
+        items=fixture()
+        storage=next(x for x in items if x['Name']=='/'+w.MINIO)
+        worker=next(x for x in items if x['Name']=='/kipnerter-spatial-worker-1')
+        mount=dict(storage['Mounts'][0]);mount['Destination']='/mnt/other';mount['RW']=False
+        worker['Mounts'].append(mount)
+        output=w.analyze(items)
+        self.assertEqual(output['status'],'HOLD_UNEXPECTED_WRITER_SURFACE')
+        self.assertEqual(output['direct_storage_mount_candidates'],['kipnerter-spatial-worker-1'])
+        self.assertNotIn(mount['Source'],json.dumps(output))
+        self.assertFalse(output['minio_writes_fenced'])
+
+    def test_docker_socket_mount_is_critical_holding_candidate(self):
+        items=fixture()
+        worker=next(x for x in items if x['Name']=='/kipnerter-spatial-worker-1')
+        worker['Mounts'].append({'Type':'bind','Source':'/var/run/docker.sock',
+                                 'Destination':'/var/run/docker.sock','RW':True})
+        output=w.analyze(items)
+        self.assertEqual(output['status'],'HOLD_UNEXPECTED_WRITER_SURFACE')
+        self.assertEqual(output['docker_control_socket_candidates'],['kipnerter-spatial-worker-1'])
+        self.assertNotIn('/var/run/docker.sock',json.dumps(output))
+
+    def test_host_network_privileged_and_unknown_binds_are_hold(self):
+        for mutate,field in (
+            (lambda o:o['HostConfig'].update(NetworkMode='host'),'host_network_candidates'),
+            (lambda o:o['HostConfig'].update(Privileged=True),'privileged_runtime_candidates'),
+            (lambda o:o['Mounts'].append({'Type':'bind','Source':'/srv/secret/real-path',
+                                          'Destination':'/opt/access','RW':False}),
+             'nonstorage_bind_mount_candidates'),
+        ):
+            items=fixture()
+            worker=next(x for x in items if x['Name']=='/kipnerter-spatial-worker-1')
+            mutate(worker)
+            output=w.analyze(items)
+            self.assertEqual(output['status'],'HOLD_UNEXPECTED_WRITER_SURFACE')
+            self.assertIn('kipnerter-spatial-worker-1',output[field])
+            self.assertNotIn('/srv/secret/real-path',json.dumps(output))
+            self.assertFalse(output['safe_to_cutover'])
+
+    def test_privileged_or_host_mode_storage_services_are_hold(self):
+        for field,val,key in (('Privileged',True,'privileged_runtime_candidates'),
+                              ('NetworkMode','host','host_network_candidates')):
+            items=fixture()
+            storage=next(x for x in items if x['Name']=='/'+w.MINIO)
+            storage['HostConfig'][field]=val
+            report=w.analyze(items)
+            self.assertEqual(report['status'],'HOLD_UNEXPECTED_WRITER_SURFACE')
+            self.assertIn(w.MINIO,report[key])
+
+    def test_unknown_mounts_or_untrusted_runtime_metadata_are_denied(self):
+        for corrupt in (
+            lambda o:o.pop('Mounts'),
+            lambda o:o['Mounts'].append({'Type':'invalid','Source':'/tmp',
+                                          'Destination':'/data','RW':True}),
+            lambda o:o['Mounts'].append({'Type':'bind','Source':'/tmp',
+                                          'Destination':'../bad','RW':True}),
+            lambda o:o['Mounts'].append({'Type':'bind','Source':'/tmp',
+                                          'Destination':'/data','RW':'false'}),
+            lambda o:o.pop('HostConfig'),
+            lambda o:o['HostConfig'].update(NetworkMode=None),
+            lambda o:o['HostConfig'].update(Privileged='false'),
+        ):
+            items=fixture()
+            worker=next(x for x in items if x['Name']=='/kipnerter-spatial-worker-1')
+            corrupt(worker)
+            with self.subTest(corrupt=str(corrupt)),self.assertRaises((ValueError,TypeError)):
+                w.analyze(items)
+
+    def test_unexpected_shared_storage_identifiers_are_denied(self):
+        items=fixture()
+        storage=next(x for x in items if x['Name']=='/'+w.MINIO)
+        storage['Mounts'][0]['Source']='sensitive-secret-DO-NOT-PRINT'
+        other=next(x for x in items if x['Name']=='/'+w.POSTGRES)
+        other['Mounts'][0]['Source']=storage['Mounts'][0]['Source']
+        with self.assertRaisesRegex(ValueError,'ambiguous storage mount'):
+            w.analyze(items)
 
     def test_minio_frontend_exposes_multiple_potential_clients(self):
         report=w.analyze(fixture())
