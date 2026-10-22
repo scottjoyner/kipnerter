@@ -132,6 +132,7 @@ def analyze(objects):
     host_network_candidates = []
     privileged_runtime_candidates = []
     general_nonstorage_bind_mount_candidates = []
+    reviewed_readonly_nonstorage_bind_mounts = []
     for name, obj in names.items():
         mounts = obj.get('Mounts')
         host = obj.get('HostConfig')
@@ -156,7 +157,20 @@ def analyze(objects):
             if type(mount.get('RW')) is not bool:
                 raise ValueError('malformed runtime mount')
             if kind == 'bind' and name not in (POSTGRES, MINIO):
-                bind = True
+                # Physical 2026-10-22 review: Caddy's sole read-only config
+                # bind. The exemption is exact and never approves storage
+                # aliases, writable mounts, other paths, or release/cutover.
+                reviewed_caddy_config = (
+                    name == 'kipnerter-caddy-1'
+                    and source == '/opt/kipnerter/infra/caddy'
+                    and dest == '/etc/caddy'
+                    and mount['RW'] is False
+                    and not any(paths_overlap(source, storage)
+                                for storage in storage_mounts))
+                if reviewed_caddy_config:
+                    reviewed_readonly_nonstorage_bind_mounts.append(name)
+                else:
+                    bind = True
             # Read-only mounts still permit observing a storage volume; mark
             # candidates and HOLD instead of guessing they cannot write.
             if name not in (POSTGRES, MINIO) and any(
@@ -171,6 +185,7 @@ def analyze(objects):
     host_network_candidates = sorted(set(host_network_candidates))
     privileged_runtime_candidates = sorted(set(privileged_runtime_candidates))
     general_nonstorage_bind_mount_candidates = sorted(set(general_nonstorage_bind_mount_candidates))
+    reviewed_readonly_nonstorage_bind_mounts = sorted(set(reviewed_readonly_nonstorage_bind_mounts))
 
     # Inspect *presence* of client-credential environment bindings only.
     # Do NOT emit environment names or values, even on malformed fields.
@@ -218,6 +233,7 @@ def analyze(objects):
         'host_network_candidates':host_network_candidates,
         'privileged_runtime_candidates':privileged_runtime_candidates,
         'nonstorage_bind_mount_candidates':general_nonstorage_bind_mount_candidates,
+        'reviewed_readonly_nonstorage_bind_mounts':reviewed_readonly_nonstorage_bind_mounts,
         'noncontainer_external_writers_excluded':False,
         'server_side_write_authorization_verified':False,
         'other_storage_credential_paths_excluded':False,

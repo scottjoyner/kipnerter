@@ -154,7 +154,7 @@ python3 -m scripts.portal_production_writer_surface_readonly
 python3 -m pytest -q scripts/tests/test_portal_production_writer_surface_readonly.py
 ```
 
-**Physical production test remains outstanding:** the approved non-root
+**Historical October 21 preflight state (superseded by October 22 evidence below):** the approved non-root
 `kipnerter@100.82.144.33` Tailnet SSH path requires the operator's
 interactive Tailscale check. Do **not** substitute direct SSH, forwarded
 ports, emergency Docker credentials, or an unapproved admin account. The
@@ -188,3 +188,26 @@ introduced. Therefore bind-mount aliases through **symlinks, overlay layers,
 other mount namespaces, external clients and host-level root access remain
 unexcluded** and must be independently investigated before a durable fence
 can be claimed. No actual write-fencing operation occurs here.
+
+
+### Physically reviewed Caddy config bind (October 22)
+
+After Tailscale SSH was reauthorized, the approved non-root principal
+read back seven running production containers. Caddy has one non-storage
+bind from `/opt/kipnerter/infra/caddy` to `/etc/caddy` with
+`RW=false`. PostgreSQL and MinIO instead use their own distinct Docker
+volumes beneath `/var/lib/docker/volumes/`; no direct source-path
+overlap was observed. The Caddy host source resolved to itself as a directory
+at inspection time. This evidence classifies **that exact immutable Docker
+mount tuple only** as a reviewed configuration bind, not a storage writer
+candidate. An unexpected bind source, target, writable flag, or storage
+overlap remains a HOLD. The sanitized receipt lists a reviewed container
+name, never a mount path or credentials.
+
+This observation is **not** a durable filesystem-identity attestation:
+symlink changes, host writes, overlay aliases, external writers, future
+container redeploys and Docker metadata races are still unexcluded.
+The release gate remains `NO_GO`; writer credentials and admission have
+not been revoked, in-flight work was not drained, and a multi-service atomic
+checkpoint has not been proven. No production mutation or privilege
+relaxation is authorized by the reviewed mount classification.

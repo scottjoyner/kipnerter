@@ -82,6 +82,45 @@ class WriterSurfaceSafety(unittest.TestCase):
         self.assertFalse(output['noncontainer_external_writers_excluded'])
         self.assertFalse(output['atomic_multi_service_checkpoint_proven'])
 
+    def test_physically_reviewed_caddy_config_bind_is_nonstorage_only(self):
+        items=fixture()
+        caddy=next(x for x in items if x['Name']=='/kipnerter-caddy-1')
+        caddy['Mounts'].append({
+            'Type':'bind','Source':'/opt/kipnerter/infra/caddy',
+            'Destination':'/etc/caddy','RW':False})
+        report=w.analyze(items)
+        self.assertEqual(report['status'],'WRITER_SURFACE_READ_ONLY_OBSERVED_NOT_FENCED')
+        self.assertEqual(report['reviewed_readonly_nonstorage_bind_mounts'],
+                         ['kipnerter-caddy-1'])
+        self.assertEqual(report['nonstorage_bind_mount_candidates'],[])
+        self.assertFalse(report['postgres_writes_fenced'])
+        self.assertFalse(report['minio_writes_fenced'])
+        self.assertFalse(report['safe_to_cutover'])
+        self.assertEqual(report['release_gate'],'NO_GO')
+        self.assertNotIn('/opt/kipnerter/infra/caddy',json.dumps(report))
+
+    def test_caddy_config_exception_is_exact_and_fail_closed(self):
+        for attr,val in (
+            ('RW',True),
+            ('Source','/opt/kipnerter/infra/caddy-next'),
+            ('Source','/opt/kipnerter/infra/caddy/subdir'),
+            ('Source','/var/lib/docker'),
+            ('Destination','/etc/caddy/new'),
+            ('Destination','/var/run/docker.sock')):
+            with self.subTest(attr=attr,val=val):
+                items=fixture()
+                caddy=next(x for x in items if x['Name']=='/kipnerter-caddy-1')
+                mount={'Type':'bind','Source':'/opt/kipnerter/infra/caddy',
+                       'Destination':'/etc/caddy','RW':False}
+                mount[attr]=val
+                caddy['Mounts'].append(mount)
+                report=w.analyze(items)
+                self.assertEqual(report['status'],'HOLD_UNEXPECTED_WRITER_SURFACE')
+                self.assertIn('kipnerter-caddy-1',
+                              report['nonstorage_bind_mount_candidates'])
+                self.assertFalse(report['safe_to_cutover'])
+                self.assertEqual(report['release_gate'],'NO_GO')
+
     def test_shared_storage_volume_is_hold_and_source_path_never_printed(self):
         items=fixture()
         storage=next(x for x in items if x['Name']=='/'+w.MINIO)
