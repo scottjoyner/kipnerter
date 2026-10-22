@@ -15,6 +15,7 @@ class TsidpPolicyCandidateTests(unittest.TestCase):
     def test_checked_in_compose_tag_sts_and_reviewed_candidate(self):
         result = m.check()
         self.assertTrue(result['admin_ui_only'])
+        self.assertTrue(result['scoped_admin_https_443'])
         self.assertEqual(result['tag_owner'],'admin')
         for key in ('sts_authorized','live_tailnet_policy_verified',
                     'enrollment_authorized','production_deploy_authorized'):
@@ -55,7 +56,7 @@ class TsidpPolicyCandidateTests(unittest.TestCase):
                 m.inspect_policy(json.dumps(doc),'tag:tsidp')
 
     def test_duplicate_ts_grant_or_other_tagged_access_denied(self):
-        for grant in (m.EXPECTED,{'src':['autogroup:member'],
+        for grant in (m.EXPECTED,m.HTTPS_ADMIN,{'src':['autogroup:member'],
                                  'dst':['tag:tsidp'],'ip':['*']},
                       {'src':['autogroup:admin'],'dst':['tag:tsidp'],
                        'app':{'tailscale.com/cap/tsidp':[{'allow_admin_ui':True}]},
@@ -64,6 +65,20 @@ class TsidpPolicyCandidateTests(unittest.TestCase):
             doc['grants'].append(copy.deepcopy(grant))
             with self.subTest(grant=grant),self.assertRaises(ValueError):
                 m.inspect_policy(json.dumps(doc),'tag:tsidp')
+
+    def test_tls_transport_grant_cannot_expand_to_all_users_or_all_ports(self):
+        for changed in ({'src':['*']},{'dst':['*']},{'ip':['*']},
+                        {'ip':['tcp:80','tcp:443']},{'ip':['tcp:22']},
+                        {'src':['autogroup:member']}):
+            doc=copy.deepcopy(self.model)
+            grant=next(g for g in doc['grants'] if g==m.HTTPS_ADMIN)
+            grant.update(changed)
+            with self.subTest(changed=changed),self.assertRaises(ValueError):
+                m.inspect_policy(json.dumps(doc),'tag:tsidp')
+        doc=copy.deepcopy(self.model)
+        doc['grants'].remove(m.HTTPS_ADMIN)
+        with self.assertRaisesRegex(ValueError,'HTTPS'):
+            m.inspect_policy(json.dumps(doc),'tag:tsidp')
 
     def test_hujson_comments_do_not_break_url_literals_or_escaped_strings(self):
         example='{"url":"https://example.test/o//path", // this is removed\n"quoted":"text \\\" // still string"}'

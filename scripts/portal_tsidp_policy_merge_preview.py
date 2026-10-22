@@ -10,7 +10,7 @@ import json
 import sys
 from pathlib import Path
 from scripts.portal_tsidp_policy_candidate_check import (
-    MAX_BYTES, EXPECTED, duplicate_safe_dict, strip_line_comments,
+    MAX_BYTES, EXPECTED, HTTPS_ADMIN, duplicate_safe_dict, strip_line_comments,
 )
 
 
@@ -65,6 +65,9 @@ def preview(text):
     exact = sum(grant == EXPECTED for grant in grants)
     if exact > 1:
         raise ValueError('duplicate application grants')
+    scoped_https = sum(g == HTTPS_ADMIN for g in grants)
+    if scoped_https > 1:
+        raise ValueError('duplicate administrator HTTPS transport grant')
     related = [g for g in grants if 'tailscale.com/cap/tsidp' in g.get('app', {})
                or ('tag:tsidp' in g.get('dst', []) and 'app' in g)]
     if any(grant != EXPECTED for grant in related):
@@ -81,8 +84,12 @@ def preview(text):
         'purpose': 'tsidp_offline_policy_merge_preview',
         'proposed_add_tag_owner': current_owner is None,
         'proposed_add_admin_ui_grant': exact == 0,
+        'proposed_add_admin_https_443_grant': scoped_https == 0,
         'patch_tag_owner': {'tag:tsidp': ['autogroup:admin']} if current_owner is None else {},
         'patch_app_grant': EXPECTED if exact == 0 else None,
+        'patch_admin_https_grant': HTTPS_ADMIN if scoped_https == 0 else None,
+        'scoped_admin_https_443_grant_present': scoped_https == 1,
+        'approved_nonadmin_browser_https_access_verified': False,
         'broad_network_grant_observed': network_everything,
         'funnel_available_to_all_members': funnel_everyone,
         'existing_grants_count': len(grants),

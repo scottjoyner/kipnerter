@@ -43,7 +43,13 @@
       "ip": ["tcp:22", "tcp:443"]
     },
     {
-      // Admin UI / private OIDC client registration ONLY. No STS grant or IP wildcard.
+      // Only Tailnet administrators may reach the private tsidp HTTPS UI.
+      "src": ["autogroup:admin"],
+      "dst": ["tag:tsidp"],
+      "ip": ["tcp:443"]
+    },
+    {
+      // Separate UI capability; grants no dynamic registration or STS tokens.
       "src": ["autogroup:admin"],
       "dst": ["tag:tsidp"],
       "app": {

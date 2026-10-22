@@ -28,6 +28,9 @@ class PolicyMergePreviewTests(unittest.TestCase):
         report = m.preview(USER_LIKE_POLICY)
         self.assertFalse(report['proposed_add_tag_owner'])
         self.assertTrue(report['proposed_add_admin_ui_grant'])
+        self.assertTrue(report['proposed_add_admin_https_443_grant'])
+        self.assertEqual(report['patch_admin_https_grant'],m.HTTPS_ADMIN)
+        self.assertFalse(report['approved_nonadmin_browser_https_access_verified'])
         self.assertEqual(report['patch_app_grant'], m.EXPECTED)
         self.assertEqual(report['patch_tag_owner'], {})
         self.assertTrue(report['broad_network_grant_observed'])
@@ -41,6 +44,7 @@ class PolicyMergePreviewTests(unittest.TestCase):
         report = m.preview(src)
         self.assertEqual(report['patch_tag_owner'], {'tag:tsidp':['autogroup:admin']})
         self.assertEqual(report['patch_app_grant'], m.EXPECTED)
+        self.assertEqual(report['patch_admin_https_grant'],m.HTTPS_ADMIN)
 
     def test_exact_grant_already_present_causes_no_added_grant(self):
         doc=json.loads(m.skip_trailing_commas(m.strip_line_comments(USER_LIKE_POLICY)))
@@ -50,6 +54,18 @@ class PolicyMergePreviewTests(unittest.TestCase):
         self.assertFalse(report['proposed_add_admin_ui_grant'])
         self.assertEqual(report['existing_grants_count'], 2)
         self.assertTrue(report['broad_network_grant_observed'])
+
+    def test_admin_tls_grant_present_removes_only_that_patch(self):
+        d=json.loads(m.skip_trailing_commas(m.strip_line_comments(USER_LIKE_POLICY)))
+        d['grants'].append(copy.deepcopy(m.HTTPS_ADMIN))
+        out=m.preview(json.dumps(d))
+        self.assertFalse(out['proposed_add_admin_https_443_grant'])
+        self.assertIsNone(out['patch_admin_https_grant'])
+        self.assertEqual(out['patch_app_grant'],m.EXPECTED)
+        self.assertFalse(out['approved_nonadmin_browser_https_access_verified'])
+        d['grants'].append(copy.deepcopy(m.HTTPS_ADMIN))
+        with self.assertRaisesRegex(ValueError,'duplicate'):
+            m.preview(json.dumps(d))
 
     def test_other_tag_ownership_and_any_privileged_capability_require_review(self):
         d=json.loads(m.skip_trailing_commas(m.strip_line_comments(USER_LIKE_POLICY)))
