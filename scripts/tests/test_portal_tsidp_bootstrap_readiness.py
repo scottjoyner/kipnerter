@@ -1,5 +1,6 @@
 """Synthetic offline negative controls for private tsidp enrollment witness."""
 import copy
+import io
 import json
 import unittest
 from pathlib import Path
@@ -7,7 +8,7 @@ from unittest.mock import patch
 
 from scripts.portal_tsidp_bootstrap_readiness import (
     CONTAINER, DNS_NAME, IMAGE, IMAGE_DIGEST, ORIGIN, PROJECT,
-    check_compose, check_runtime, discovery_valid, enrolled, inspect,
+    check_compose, check_runtime, discovery_valid, enrolled, inspect, fetch_discovery,
 )
 
 
@@ -147,6 +148,76 @@ class BootstrapSafetyTests(unittest.TestCase):
             with self.subTest(key=key,value=value):
                 item=discovery_fixture();item[key]=value
                 self.assertFalse(discovery_valid(item,url))
+
+    def test_discovery_fetch_is_exact_https_and_never_redirects(self):
+        discovery=ORIGIN+"/.well-known/openid-configuration"
+        raw=json.dumps(discovery_fixture()).encode()
+        class Response:
+            status=200
+            def __init__(self, body, effective_url=discovery):
+                self.body=io.BytesIO(body)
+                self.effective_url=effective_url
+            def __enter__(self):return self
+            def __exit__(self, *args):return False
+            def read(self, size):return self.body.read(size)
+            def geturl(self):return self.effective_url
+        class Opener:
+            def __init__(self, response):self.response=response
+            def open(self,url,timeout=8):
+                self_seen.append((url,timeout))
+                return self.response
+        self_seen=[]
+        result=fetch_discovery(discovery,opener_factory=lambda handler:Opener(Response(raw)))
+        self.assertEqual(result,discovery_fixture())
+        self.assertEqual(self_seen,[(discovery,8)])
+        for url in ("https://evil.ts.net/.well-known/openid-configuration",
+                    "http://"+DNS_NAME+"/.well-known/openid-configuration",
+                    ORIGIN+"/authorize", discovery+"?bad=1"):
+            with self.subTest(url=url),self.assertRaisesRegex(ValueError,"unapproved"):
+                fetch_discovery(url,opener_factory=lambda handler:(_ for _ in ()).throw(AssertionError("opened URL")))
+        for response in (Response(raw,ORIGIN+"/not-the-discovery-url"),
+                         Response(raw,"https://untrusted.example/discovery"),
+                         Response(b'x' * (65536+1)),
+                         Response(b'[]'),
+                         Response(b'{"issuer":"'+ORIGIN.encode()+b'","issuer":"'+ORIGIN.encode()+b'"}')):
+            with self.subTest(effective_url=response.effective_url),self.assertRaises((ValueError,TypeError)):
+                result=fetch_discovery(discovery,opener_factory=lambda handler:Opener(response))
+                if not isinstance(result,dict):raise ValueError("not discovery object")
+
+    def test_discovery_rejects_redirect_at_http_handler(self):
+        def controlled(handler):
+            with self.assertRaisesRegex(ValueError,"redirect denied"):
+                handler.redirect_request(None,None,302,"Found",{},
+                                         "https://malicious.example/collect")
+            class Opener:
+                def open(self,*args,**kwargs):
+                    raise ValueError("denied by local test")
+            return Opener()
+        with self.assertRaisesRegex(ValueError,"denied by local test"):
+            fetch_discovery(ORIGIN+"/.well-known/openid-configuration",opener_factory=controlled)
+
+    def test_enrolled_but_discovery_failure_stays_no_go(self):
+        peer={"HostName":"kipnerter-idp-staging","Online":True,"Tags":["tag:tsidp"]}
+        with patch("scripts.portal_tsidp_bootstrap_readiness.safe_json_command",
+                   side_effect=[compose_fixture(),[runtime_fixture()],{"Peer":{"one":peer}}]), \
+             patch("scripts.portal_tsidp_bootstrap_readiness.fetch_discovery",side_effect=ValueError("redirect denied")):
+            result=inspect()
+        self.assertTrue(result["tailnet_enrolled"])
+        self.assertFalse(result["oidc_discovery_valid"])
+        self.assertFalse(result["oidc_client_registered"])
+        self.assertFalse(result["browser_login_verified"])
+        self.assertEqual(result["release_gate"],"NO_GO")
+
+    def test_enrolled_with_valid_discovery_cannot_promote_client_or_browser(self):
+        peer={"HostName":"kipnerter-idp-staging","Online":True,"Tags":["tag:tsidp"]}
+        with patch("scripts.portal_tsidp_bootstrap_readiness.safe_json_command",
+                   side_effect=[compose_fixture(),[runtime_fixture()],{"Peer":{"one":peer}}]), \
+             patch("scripts.portal_tsidp_bootstrap_readiness.fetch_discovery",return_value=discovery_fixture()):
+            result=inspect()
+        self.assertTrue(result["oidc_discovery_valid"])
+        for key in ("oidc_client_registered","browser_login_verified", "staging_deploy_authorized", "production_deploy_authorized"):
+            self.assertFalse(result[key])
+        self.assertEqual(result["release_gate"],"NO_GO")
 
     def test_never_promotes_bootstrap_to_client_or_public_release(self):
         with patch("scripts.portal_tsidp_bootstrap_readiness.safe_json_command",side_effect=[compose_fixture()]):
