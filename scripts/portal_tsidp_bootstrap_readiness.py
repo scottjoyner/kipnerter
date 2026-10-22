@@ -134,6 +134,38 @@ def discovery_valid(metadata, response_url):
     return True
 
 
+
+def fetch_discovery(url, *, opener_factory=urllib.request.build_opener):
+    """Only request our pinned IdP discovery URL; never follow redirects.
+
+    Enrolment and TLS are separate prerequisites. This request sends no
+    tokens or client secrets and never accepts duplicate metadata keys.
+    """
+    expected = ORIGIN + "/.well-known/openid-configuration"
+    if url != expected:
+        raise ValueError("unapproved private IdP discovery URL")
+
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            raise ValueError("IdP discovery redirect denied")
+
+    def unique_keys(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate discovery JSON field")
+            result[key] = value
+        return result
+
+    opener = opener_factory(NoRedirect())
+    with opener.open(url, timeout=8) as response:
+        if response.status != 200 or response.geturl() != expected:
+            raise ValueError("unexpected IdP discovery response")
+        content = response.read(MAX_JSON + 1)
+        if len(content) > MAX_JSON:
+            raise ValueError("oversized IdP discovery response")
+        return json.loads(content, object_pairs_hook=unique_keys)
+
 def safe_json_command(*args):
     raw = subprocess.check_output(args, timeout=10, stderr=subprocess.DEVNULL)
     if len(raw) > 2 * 1024 * 1024:
@@ -167,10 +199,7 @@ def inspect(offline=False):
     if result["tailnet_enrolled"]:
         try:
             url = ORIGIN + "/.well-known/openid-configuration"
-            with urllib.request.urlopen(url, timeout=8) as response:
-                content = response.read(MAX_JSON + 1)
-                if len(content) <= MAX_JSON and response.status == 200:
-                    result["oidc_discovery_valid"] = discovery_valid(json.loads(content), response.geturl())
+            result["oidc_discovery_valid"] = discovery_valid(fetch_discovery(url), url)
         except (OSError, ValueError, TypeError, KeyError, urllib.error.URLError):
             pass
     return result
