@@ -7,7 +7,8 @@
     "tag:assistx": ["autogroup:admin"],
     "tag:sophia": ["autogroup:admin"],
     "tag:models": ["autogroup:admin"],
-    "tag:graph": ["autogroup:admin"]
+    "tag:graph": ["autogroup:admin"],
+    "tag:tsidp": ["autogroup:admin"]
   },
 
   "grants": [
@@ -40,6 +41,20 @@
       "src": ["tag:kipnerter-ci"],
       "dst": ["tag:kipnerter-prod"],
       "ip": ["tcp:22", "tcp:443"]
+    },
+    {
+      // Only Tailnet administrators may reach the private tsidp HTTPS UI.
+      "src": ["autogroup:admin"],
+      "dst": ["tag:tsidp"],
+      "ip": ["tcp:443"]
+    },
+    {
+      // Separate UI capability; grants no dynamic registration or STS tokens.
+      "src": ["autogroup:admin"],
+      "dst": ["tag:tsidp"],
+      "app": {
+        "tailscale.com/cap/tsidp": [{"allow_admin_ui": true}]
+      }
     }
   ],
 
