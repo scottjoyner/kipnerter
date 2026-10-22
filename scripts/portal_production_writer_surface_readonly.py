@@ -83,6 +83,71 @@ def analyze(objects):
                     and (nets & shared[POSTGRES]))
     minio_peers=sorted(n for n,nets in shared.items() if n!=MINIO and MINIO in shared
                        and (nets & shared[MINIO]))
+    # Secondary write paths can bypass the advertised Postgres/S3 network
+    # endpoints. Read Docker runtime mounts and namespace privileges, not only
+    # environment credential-name hints. Never emit mount Sources, Destinations,
+    # volume names, device paths, or security options into JSON receipts.
+    storage_mounts = set()
+    for storage in (POSTGRES, MINIO):
+        if storage not in names:
+            continue
+        item = names[storage]
+        mounts = item.get('Mounts')
+        if not isinstance(mounts, list) or len(mounts) > 128:
+            raise ValueError('storage mount inventory unavailable')
+        for m in mounts:
+            if not isinstance(m, dict) or m.get('Type') not in ('volume', 'bind'):
+                raise ValueError('unrecognized storage mount identity')
+            key = (m.get('Type'), m.get('Source'))
+            if (not isinstance(key[1], str) or not key[1] or len(key[1]) > 4096
+                    or key in storage_mounts):
+                raise ValueError('ambiguous storage mount identity')
+            storage_mounts.add(key)
+
+    direct_storage_mount_candidates = []
+    docker_control_socket_candidates = []
+    host_network_candidates = []
+    privileged_runtime_candidates = []
+    general_nonstorage_bind_mount_candidates = []
+    for name, obj in names.items():
+        mounts = obj.get('Mounts')
+        host = obj.get('HostConfig')
+        if not isinstance(mounts, list) or len(mounts) > 128 or not isinstance(host, dict):
+            raise ValueError('runtime mount and namespace inventory unavailable')
+        if (not isinstance(host.get('NetworkMode'), str)
+                or not isinstance(host.get('Privileged'), bool)):
+            raise ValueError('runtime namespace and privilege state unavailable')
+        # A privileged or host-network *storage service* is itself a bypass
+        # candidate; do not exclude storage roles from namespace checks.
+        if host['NetworkMode'] == 'host':
+            host_network_candidates.append(name)
+        if host['Privileged']:
+            privileged_runtime_candidates.append(name)
+        bind = False
+        for mount in mounts:
+            if not isinstance(mount, dict) or mount.get('Type') not in ('volume', 'bind'):
+                raise ValueError('unrecognized runtime mount identity')
+            kind, source, dest = mount.get('Type'), mount.get('Source'), mount.get('Destination')
+            if (not isinstance(source, str) or not source or len(source) > 4096
+                    or not isinstance(dest, str) or not dest.startswith('/')
+                    or len(dest) > 4096 or type(mount.get('RW')) is not bool):
+                raise ValueError('malformed runtime mount')
+            if kind == 'bind' and name not in (POSTGRES, MINIO):
+                bind = True
+            # Read-only mounts still permit observing a storage volume; mark
+            # candidates and HOLD instead of guessing they cannot write.
+            if name not in (POSTGRES, MINIO) and (kind, source) in storage_mounts:
+                direct_storage_mount_candidates.append(name)
+            if dest in ('/var/run/docker.sock', '/run/docker.sock'):
+                docker_control_socket_candidates.append(name)
+        if bind:
+            general_nonstorage_bind_mount_candidates.append(name)
+    direct_storage_mount_candidates = sorted(set(direct_storage_mount_candidates))
+    docker_control_socket_candidates = sorted(set(docker_control_socket_candidates))
+    host_network_candidates = sorted(set(host_network_candidates))
+    privileged_runtime_candidates = sorted(set(privileged_runtime_candidates))
+    general_nonstorage_bind_mount_candidates = sorted(set(general_nonstorage_bind_mount_candidates))
+
     # Inspect *presence* of client-credential environment bindings only.
     # Do NOT emit environment names or values, even on malformed fields.
     # A configured credential does not prove server-side write privileges,
@@ -123,6 +188,13 @@ def analyze(objects):
         'postgres_network_peers_with_client_credentials':clients_with_db,
         'minio_network_peers_with_client_credentials':clients_with_s3,
         'storage_client_credential_presence_only':True,
+        'runtime_mount_namespace_inventory_complete':True,
+        'direct_storage_mount_candidates':direct_storage_mount_candidates,
+        'docker_control_socket_candidates':docker_control_socket_candidates,
+        'host_network_candidates':host_network_candidates,
+        'privileged_runtime_candidates':privileged_runtime_candidates,
+        'nonstorage_bind_mount_candidates':general_nonstorage_bind_mount_candidates,
+        'noncontainer_external_writers_excluded':False,
         'server_side_write_authorization_verified':False,
         'other_storage_credential_paths_excluded':False,
         'postgres_spatial_internal_network_present':SPATIAL in shared.get(POSTGRES,set()),
@@ -146,7 +218,10 @@ def analyze(objects):
             'kipnerter-spatial-api-1' not in clients_with_db or
             'kipnerter-spatial-worker-1' not in clients_with_db or
             'kipnerter-spatial-api-1' not in clients_with_s3 or
-            'kipnerter-spatial-worker-1' not in clients_with_s3):
+            'kipnerter-spatial-worker-1' not in clients_with_s3 or
+            direct_storage_mount_candidates or docker_control_socket_candidates or
+            host_network_candidates or privileged_runtime_candidates or
+            general_nonstorage_bind_mount_candidates):
         findings['status']='HOLD_UNEXPECTED_WRITER_SURFACE'
     return findings
 
