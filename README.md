@@ -1,9 +1,19 @@
 # Kipnerter
 
 <!-- repo-entrypoint-guide:start -->
-> **Start here:** Kipnerter exposes public web/API functionality while keeping private fleet models and data systems behind controlled adapters. Read [Architecture](#architecture), [Repository layout](#repository-layout), and [Local development](#local-development) before configuring external services.
-> 
-> **Readiness:** Domain plans and architecture descriptions are not proof of DNS cutover, authenticated gateway behavior, or physical iPhone acceptance. Verify every external entry point and release gate against the deployed version before advertising it as live.
+## Repository guide
+
+**Start here:** Kipnerter exposes public web/API functionality while keeping private fleet models and data systems behind controlled adapters. Read [Architecture](#architecture), [Repository layout](#repository-layout), and [Local development](#local-development) before configuring external services.
+
+**Readiness:** Domain plans and architecture descriptions are not proof of DNS cutover, authenticated gateway behavior, or physical iPhone acceptance. Verify every external entry point and release gate against the deployed version before advertising it as live.
+
+### Find your way
+
+- [Domains](#domains)
+- [Architecture](#architecture)
+- [Repository layout](#repository-layout)
+- [Local development](#local-development)
+- [Current foundation scope](#current-foundation-scope)
 <!-- repo-entrypoint-guide:end -->
 
 
