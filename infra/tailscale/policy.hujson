@@ -7,7 +7,8 @@
     "tag:assistx": ["autogroup:admin"],
     "tag:sophia": ["autogroup:admin"],
     "tag:models": ["autogroup:admin"],
-    "tag:graph": ["autogroup:admin"]
+    "tag:graph": ["autogroup:admin"],
+    "tag:tsidp": ["autogroup:admin"]
   },
 
   "grants": [
@@ -40,6 +41,14 @@
       "src": ["tag:kipnerter-ci"],
       "dst": ["tag:kipnerter-prod"],
       "ip": ["tcp:22", "tcp:443"]
+    },
+    {
+      // Admin UI / private OIDC client registration ONLY. No STS grant or IP wildcard.
+      "src": ["autogroup:admin"],
+      "dst": ["tag:tsidp"],
+      "app": {
+        "tailscale.com/cap/tsidp": [{"allow_admin_ui": true}]
+      }
     }
   ],
 
