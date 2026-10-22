@@ -8,6 +8,7 @@ Only runs on the existing qualified x1-370 observer with --execute.
 from __future__ import annotations
 import argparse
 import json
+import re
 import socket
 import sys
 import urllib.error
@@ -16,7 +17,8 @@ from scripts import portal_tsidp_bootstrap_readiness as bootstrap
 
 HOST = 'x1-370'
 PRIVATE_ORIGIN = 'https://x1-370.tailcb8954.ts.net:8449'
-LIVE_APP_REVISION = '3a1b00ea76a3ec968f4caca282a6909670941216'
+# Current known CI-green private preview. Operator must still supply a SHA.
+LIVE_APP_REVISION = '4601684b67320e4ccc6c4fa981ed41687f95d288'
 MAX_JSON = 8192
 
 
@@ -61,11 +63,17 @@ def private_get(path: str, *, opener_factory=urllib.request.build_opener) -> tup
         return status,result
 
 
-def collect() -> dict:
+def collect(expected_revision: str) -> dict:
+    # Bind every execution to the immutable deployed revision, never trust
+    # whichever SHA the live server returns as its own approval.
+    if (type(expected_revision) is not str or
+            re.fullmatch(r'[a-f0-9]{40}', expected_revision) is None or
+            expected_revision == '0'*40):
+        raise ValueError('explicit exact 40-hex Git SHA required')
     if socket.gethostname()!=HOST:
         raise ValueError('only x1-370 may qualify private OIDC activation')
     rev_status,release = private_get('/api/release')
-    if rev_status!=200 or release!={'source':'kipnerter-web','revision':LIVE_APP_REVISION}:
+    if rev_status!=200 or release!={'source':'kipnerter-web','revision':expected_revision}:
         raise ValueError('private portal is not serving qualified exact app revision')
     chat_status,_ = private_get('/chat')
     provider_status,_ = private_get('/api/auth/providers')
@@ -100,6 +108,8 @@ def collect() -> dict:
     return {
         'status':'PRIVATE_ACTIVATION_OBSERVED_NOT_AUTHORIZED',
         'private_revision_verified':True,
+        'operator_expected_revision':expected_revision,
+        'expected_revision_independently_ci_attested':False,
         'private_chat_http_200':True,
         'private_provider_http_status':provider_status,
         'private_nodes_http_status':nodes_status,
@@ -120,13 +130,15 @@ def collect() -> dict:
 def main() -> int:
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--execute',action='store_true')
+    parser.add_argument('--expected-revision',default=None,
+                        help='explicit immutable 40-hex deployment SHA, independently reviewed')
     args=parser.parse_args()
     if not args.execute:
         print(json.dumps({'status':'DRY_RUN_NO_NETWORK_OR_DOCKER','release_gate':'NO_GO',
                           'safe_to_cutover':False},sort_keys=True))
         return 3
     try:
-        result=collect()
+        result=collect(args.expected_revision)
         code=0
     except (ValueError,TypeError,KeyError,UnicodeError,OSError,
             json.JSONDecodeError,urllib.error.URLError) as exc:

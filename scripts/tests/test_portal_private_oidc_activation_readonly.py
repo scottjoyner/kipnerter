@@ -38,6 +38,41 @@ def result_path(auth=503,nodes=503,chat=200):
 
 
 class PrivateActivationSafety(unittest.TestCase):
+    def test_execute_requires_explicit_expected_sha_without_ever_accessing_network(self):
+        out=io.StringIO()
+        with patch('sys.argv',['activation','--execute']), \
+             patch.object(m,'private_get',side_effect=AssertionError('network accessed')), \
+             redirect_stdout(out):
+            self.assertEqual(m.main(),2)
+        result=json.loads(out.getvalue())
+        self.assertEqual(result['status'],'HOLD')
+        self.assertEqual(result['release_gate'],'NO_GO')
+
+    def test_wrong_revision_or_invalid_operator_sha_never_accepts_live_preview(self):
+        bad=['',None,'0'*40,'A'*40,'g'*40,'a'*39,'https://github.com/repo']
+        for sha in bad:
+            with self.subTest(sha=sha),patch.object(m,'private_get',
+                  side_effect=AssertionError('preview read on untrusted SHA')):
+                with self.assertRaises(ValueError):m.collect(sha)
+        with patch.object(m.socket,'gethostname',return_value=m.HOST), \
+             patch.object(m,'private_get',side_effect=result_path()), \
+             patch.object(m.bootstrap,'inspect',side_effect=AssertionError('bootstrap called')):
+            with self.assertRaisesRegex(ValueError,'qualified exact'):
+                m.collect('f'*40)
+
+    def test_valid_new_expected_revision_must_match_actual_server_response(self):
+        other='f'*40
+        with patch.object(m.socket,'gethostname',return_value=m.HOST), \
+             patch.object(m,'private_get',side_effect=(
+                 lambda path: (200,{'source':'kipnerter-web','revision':other})
+                 if path=='/api/release' else result_path()(path))), \
+             patch.object(m.bootstrap,'inspect',return_value=bootstrap()):
+            out=m.collect(other)
+        self.assertTrue(out['private_revision_verified'])
+        self.assertEqual(out['operator_expected_revision'],other)
+        self.assertFalse(out['expected_revision_independently_ci_attested'])
+        self.assertFalse(out['safe_to_cutover'])
+
     def test_dry_run_cannot_reach_network(self):
         out=io.StringIO()
         with patch('sys.argv',['activation']),patch.object(m,'collect',side_effect=AssertionError('unexpected')),redirect_stdout(out):
@@ -46,13 +81,13 @@ class PrivateActivationSafety(unittest.TestCase):
 
     def test_nonapproved_host_cannot_query_preview_or_docker(self):
         with patch.object(m.socket,'gethostname',return_value='kipnerter-prod-01'),patch.object(m,'private_get',side_effect=AssertionError('unexpected')):
-            with self.assertRaisesRegex(ValueError,'only x1-370'):m.collect()
+            with self.assertRaisesRegex(ValueError,'only x1-370'):m.collect(m.LIVE_APP_REVISION)
 
     def test_success_unenrolled_always_no_go(self):
         with patch.object(m.socket,'gethostname',return_value=m.HOST), \
              patch.object(m,'private_get',side_effect=result_path()), \
              patch.object(m.bootstrap,'inspect',return_value=bootstrap()):
-            r=m.collect()
+            r=m.collect(m.LIVE_APP_REVISION)
         self.assertEqual(r['next_action'],'ADMIN_ENROLL_TSIDP')
         self.assertEqual(r['private_provider_http_status'],503)
         self.assertEqual(r['release_gate'],'NO_GO')
@@ -68,7 +103,7 @@ class PrivateActivationSafety(unittest.TestCase):
             with self.subTest(step=expected),patch.object(m.socket,'gethostname',return_value=m.HOST), \
                  patch.object(m,'private_get',side_effect=result_path(auth=code,nodes=503)), \
                  patch.object(m.bootstrap,'inspect',return_value=b):
-                r=m.collect()
+                r=m.collect(m.LIVE_APP_REVISION)
             self.assertEqual(r['next_action'],expected)
             self.assertFalse(r['real_browser_login_verified'])
             self.assertFalse(r['safe_to_cutover'])
@@ -78,7 +113,7 @@ class PrivateActivationSafety(unittest.TestCase):
             with self.subTest(auth=auth,nodes=nodes),patch.object(m.socket,'gethostname',return_value=m.HOST), \
                  patch.object(m,'private_get',side_effect=result_path(auth=auth,nodes=nodes)), \
                  patch.object(m.bootstrap,'inspect',return_value=bootstrap()):
-                with self.assertRaises(ValueError):m.collect()
+                with self.assertRaises(ValueError):m.collect(m.LIVE_APP_REVISION)
 
     def test_wrong_revision_and_failed_chat_denied(self):
         incorrect=lambda path:((200,{'source':'kipnerter-web','revision':'unapproved'})
@@ -87,7 +122,7 @@ class PrivateActivationSafety(unittest.TestCase):
             with patch.object(m.socket,'gethostname',return_value=m.HOST), \
                  patch.object(m,'private_get',side_effect=get), \
                  patch.object(m.bootstrap,'inspect',return_value=bootstrap()):
-                with self.assertRaises(ValueError):m.collect()
+                with self.assertRaises(ValueError):m.collect(m.LIVE_APP_REVISION)
 
     def test_invalid_bootstrap_flags_or_claimed_authority_denied(self):
         checks=[{'compose_safe':False},{'runtime_isolated':False},
@@ -101,7 +136,7 @@ class PrivateActivationSafety(unittest.TestCase):
             with self.subTest(changes=change),patch.object(m.socket,'gethostname',return_value=m.HOST), \
                  patch.object(m,'private_get',side_effect=result_path()), \
                  patch.object(m.bootstrap,'inspect',return_value=item):
-                with self.assertRaises(ValueError):m.collect()
+                with self.assertRaises(ValueError):m.collect(m.LIVE_APP_REVISION)
 
     def test_private_routes_fixed_allowlist(self):
         with self.assertRaises(ValueError):m.private_get('https://evil.example/collect')
@@ -138,7 +173,7 @@ class PrivateActivationSafety(unittest.TestCase):
 
     def test_error_detail_not_exposed_in_cli_output(self):
         out=io.StringIO()
-        with patch('sys.argv',['activation','--execute']), \
+        with patch('sys.argv',['activation','--execute','--expected-revision',m.LIVE_APP_REVISION]), \
              patch.object(m,'collect',side_effect=ValueError('private credential and token')), \
              redirect_stdout(out):
             self.assertEqual(m.main(),2)

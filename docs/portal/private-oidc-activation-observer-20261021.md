@@ -18,7 +18,8 @@ python3 -m scripts.portal_private_oidc_activation_readonly
 
 # Explicit observer; only already-approved private GET routes and existing
 # read-only Docker/Tailscale enrollment+discovery checker may run.
-python3 -m scripts.portal_private_oidc_activation_readonly --execute
+python3 -m scripts.portal_private_oidc_activation_readonly --execute \
+  --expected-revision 4601684b67320e4ccc6c4fa981ed41687f95d288
 
 # Local negative-control tests (no live network or storage):
 python3 -m pytest -q scripts/tests/test_portal_private_oidc_activation_readonly.py
@@ -26,13 +27,23 @@ python3 -m pytest -q scripts/tests/test_portal_private_oidc_activation_readonly.
 
 The checker pins the known private origin
 `https://x1-370.tailcb8954.ts.net:8449` and already-qualified preview web
-revision `3a1b00ea76a3ec968f4caca282a6909670941216`. It refuses HTTP
+revision supplied explicitly by the operator as a 40-character immutable
+Git SHA (currently `4601684b67320e4ccc6c4fa981ed41687f95d288`).
+The expected SHA must be independently checked against the intended GitHub
+CI-green revision; this tool verifies a match but does **not** attest CI on
+its own. Missing, malformed, zero or mismatched revision input denies
+**before** bootstrap acceptance or promotion. It refuses HTTP
 redirects, unexpected release JSON, wrong revision, denied chat page,
 unexpected authentication exposure, or a non-isolated bootstrap. It makes no
 request to a public service, private credential endpoint, or production
 storage. It prints only bounded HTTP status codes and boolean readiness
 flags. It does not print container environment values, secrets, browser
 cookies, email addresses, or enrollment auth tokens.
+
+This explicit SHA binding avoids stale local checkout defaults following a
+preview promotion while preserving deny-on-mismatch. After every preview
+upgrade, provide the new reviewed expected SHA; never accept the remote
+server's self-reported revision as the approval source.
 
 The first outstanding prerequisite is exposed as `next_action`, but
 `client_registration_independently_verified`, `real_browser_login_verified`,
