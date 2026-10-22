@@ -1,0 +1,87 @@
+name: Kipnerter 1.7 One-Shot Protected Local State Snapshot
+
+on:
+  push:
+    branches:
+      - release/17-protected-state-snapshot-20261019
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-17-protected-local-state-snapshot-once
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    if: >-
+      ${{ github.repository == 'scottjoyner/kipnerter' &&
+          github.actor == github.repository_owner &&
+          contains(github.event.head_commit.message, '[ios17-protected-snapshot-once]') }}
+    name: Protected PostgreSQL dump plus provisional live MinIO archive
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 18
+    steps:
+      - name: Check out owner-marked reviewed snapshot source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Negative controls, parsing, and restricted scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest scripts.tests.test_portal_state_snapshot_once -q
+          python3 -m py_compile scripts/portal_state_snapshot_once.py
+          grep -Fq 'SOURCE_SHA = "ad4cffe6e1fe6c659d97e48a96d220f2f0543c55"' \
+            scripts/portal_state_snapshot_once.py
+          ! grep -Eq 'docker (rm|rmi|stop|restart)|minio admin|ALTER TABLE' \
+            scripts/portal_state_snapshot_once.py
+      - name: Join authorized production Tailscale CI identity
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+      - name: Require exactly one approved production Tailnet host
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="$(tailscale status --json |
+            python3 scripts/portal_deploy_target.py --environment production)"
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]]
+          tailscale ping --timeout=8s "$TARGET" >/dev/null
+          tailscale ssh "kipnerter@$TARGET" \
+            'set -eu; test "$(id -un)" = kipnerter;
+             test -d /home/kipnerter/.local/state/kipnerter-release/verified/ad4cffe6e1fe6c659d97e48a96d220f2f0543c55;
+             docker compose version >/dev/null'
+          echo "address=$TARGET" >> "$GITHUB_OUTPUT"
+      - name: Perform exactly one protected live-source data copy, no service writes
+        shell: bash
+        env:
+          TARGET: ${{ steps.target.outputs.address }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]]
+          # The script writes only new 0600 files under the nonroot deployment
+          # account's private HOME. pg_dump is read-only. docker cp reads the
+          # live MinIO directory; its consistency is NOT independently proven.
+          cat scripts/portal_state_snapshot_once.py |
+            timeout 480 tailscale ssh "kipnerter@$TARGET" 'python3 -'
+      - name: Record scope and independent restore HOLD
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "### Kipnerter 1.7 private backup attempt"
+            echo "- PostgreSQL logical dump and raw MinIO copy: **locally captured**"
+            echo "- SHA-256 verified and Postgres archive TOC parsed: **yes**"
+            echo "- PostgreSQL restore into isolated disposable database: **not yet**"
+            echo "- S3/API-level point-in-time MinIO restore: **not yet**"
+            echo "- Off-host encrypted custodian copy and independent approval: **not yet**"
+            echo "- Production web/API/DB/MinIO services or live volumes mutated: **none**"
+            echo "- Public portal/gateway cutover: **HOLD**"
+          } >> "$GITHUB_STEP_SUMMARY"

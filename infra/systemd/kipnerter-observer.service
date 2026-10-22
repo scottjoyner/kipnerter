@@ -1,0 +1,17 @@
+[Unit]
+Description=Kipnerter read-only Tailscale and agent session observer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/kipnerter-observer
+Environment=PYTHONPATH=%h/.local/share/kipnerter-observer
+EnvironmentFile=%h/.config/kipnerter-observer/observer.env
+ExecStart=/usr/bin/python3 -m app.tailnet_observer
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=default.target

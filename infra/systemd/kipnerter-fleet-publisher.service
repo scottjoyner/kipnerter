@@ -1,0 +1,10 @@
+[Unit]
+Description=Kipnerter read-only AssistX fleet inventory snapshot publisher
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/.local/share/kipnerter-observer
+ExecStart=/usr/bin/python3 %h/.local/share/kipnerter-observer/refresh_assistx_fleet_snapshot.py
+UMask=0077

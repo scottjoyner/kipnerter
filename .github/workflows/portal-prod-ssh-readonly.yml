@@ -1,0 +1,76 @@
+name: Kipnerter production tailnet SSH qualification (read only)
+
+on:
+  push:
+    branches:
+      - ci/portal-prod-ssh-readonly-20261019
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-production-ssh-readonly-20261019
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    if: >-
+      ${{ github.repository == 'scottjoyner/kipnerter' &&
+          github.actor == github.repository_owner &&
+          contains(github.event.head_commit.message, '[portal-prod-ssh-readonly]') }}
+    name: Qualify the intended deployment principal without changing prod
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 12
+    steps:
+      - name: Checkout approved deployment target selector
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Assert legacy layout negative controls
+        run: python3 -m unittest scripts.tests.test_portal_prod_layout_inventory -q
+      - name: Join tailnet with deployment CI tag
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+      - name: Resolve unique production-tagged target
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="$(tailscale status --json |
+            python3 scripts/portal_deploy_target.py --environment production)"
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]]
+          printf '%s' "$TARGET" > "$RUNNER_TEMP/qualified-production-target"
+          chmod 600 "$RUNNER_TEMP/qualified-production-target"
+          echo "unique-production-tagged-target=yes"
+      - name: Read-only production Compose, storage and rollback-layout inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="$(cat "$RUNNER_TEMP/qualified-production-target")"
+          cat scripts/portal_prod_layout_inventory.py | \
+            timeout 25 tailscale ssh "kipnerter@$TARGET" 'python3 -'
+      - name: Prove CI principal read-only SSH to managed server
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="$(cat "$RUNNER_TEMP/qualified-production-target")"
+          tailscale ping --timeout=8s "$TARGET" >/dev/null
+          timeout 20 tailscale ssh "kipnerter@$TARGET" \
+            'set -eu; test "$(id -un)" = kipnerter; hostname >/dev/null;
+             test -d /opt/kipnerter;
+             if test -L /opt/kipnerter/current; then echo managed_release_symlink=yes;
+             else echo managed_release_symlink=no; fi;
+             docker compose version >/dev/null; echo docker_compose_access=yes'
+          echo "intended-deployment-ssh-readonly=success"
+          {
+            echo "### Kipnerter production CI principal qualification"
+            echo ""
+            echo "- Target: uniquely online with exclusive production role tag"
+            echo "- Non-root Tailscale SSH and read-only docker compose version: verified"
+            echo "- Authentication/restore/secret readiness and deployment: **not validated here**"
+            echo "- Production files, containers, keys and volumes modified: **none**"
+          } >> "$GITHUB_STEP_SUMMARY"

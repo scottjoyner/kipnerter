@@ -1,0 +1,22 @@
+staging.kipnerter.com {
+    encode zstd gzip
+    reverse_proxy web:3000
+}
+
+staging-api.kipnerter.com {
+    encode zstd gzip
+
+    @spatial_api path /v1/* /health/live /health/ready /version
+    handle @spatial_api {
+        reverse_proxy spatial-api:8000
+    }
+
+    @spatial_artifacts path /kipnerter-artifacts/*
+    handle @spatial_artifacts {
+        reverse_proxy spatial-minio:9000
+    }
+
+    handle {
+        reverse_proxy api:8000
+    }
+}

@@ -1,0 +1,6 @@
+# Overlay ONLY for an independently tagged staging node. Never deploy this
+# Caddy site configuration onto the production fleet host.
+services:
+  caddy:
+    volumes:
+      - ./infra/caddy/Caddyfile.staging:/etc/caddy/Caddyfile:ro

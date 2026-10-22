@@ -1,11 +1,14 @@
 import asyncio
 import os
+import re
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .gateway import proxy_request, public_routes, service_health
+from .control_plane import router as control_plane_router
 from .registry import models, services
 
 app = FastAPI(
@@ -13,6 +16,8 @@ app = FastAPI(
     version="0.3.0",
     description="Public API gateway for Kipnerter web, iOS, AssistX, Sophia, research, ingestion, and MCP services.",
 )
+
+app.include_router(control_plane_router)
 
 origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if o.strip()]
 app.add_middleware(
@@ -32,6 +37,17 @@ def health() -> dict:
         "environment": os.getenv("KIPNERTER_ENV", "development"),
         "time": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@app.get("/api/v1/release", tags=["system"])
+def release_revision():
+    revision = os.getenv("KIPNERTER_RELEASE_SHA", "")
+    if not re.fullmatch(r"[a-f0-9]{40}", revision):
+        return JSONResponse(status_code=503, content={"status": "unavailable"})
+    return JSONResponse(
+        content={"source": "kipnerter-api", "revision": revision},
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
 
 
 @app.get("/ready", tags=["system"])

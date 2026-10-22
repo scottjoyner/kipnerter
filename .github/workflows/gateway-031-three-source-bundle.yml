@@ -1,0 +1,112 @@
+name: Kipnerter three-source gateway release bundle witness
+
+on:
+  push:
+    branches:
+      - release/gateway-031-third-source-provenance-20261019
+    paths:
+      - .github/workflows/gateway-031-three-source-bundle.yml
+      - scripts/portal_release_bundle.py
+      - tests/test_portal_gateway_three_source_bundle.py
+      - compose.gateway-031.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gateway-031-three-source-immutable-bundle
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    if: ${{ github.repository == 'scottjoyner/kipnerter' && github.actor == github.repository_owner }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout first-party portal platform exact source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Checkout spatial state backend pinned source
+        uses: actions/checkout@v4
+        with:
+          repository: scottjoyner/kipnerter-api
+          ref: 3490c05ce529b9d8775e9c99f358bb95481331f5
+          path: spatial-api
+          token: ${{ secrets.KIPNERTER_API_REPO_TOKEN }}
+          persist-credentials: false
+      - name: Checkout independent 0.3.1 gateway pinned source
+        uses: actions/checkout@v4
+        with:
+          repository: scottjoyner/kipnerter-api
+          ref: 88fcebbcbf951e966996c778321a6cfaaeae2298
+          path: gateway-api
+          token: ${{ secrets.KIPNERTER_API_REPO_TOKEN }}
+          persist-credentials: false
+      - name: Confirm all three immutable repository heads
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C spatial-api rev-parse HEAD)" = "3490c05ce529b9d8775e9c99f358bb95481331f5"
+          test "$(git -C gateway-api rev-parse HEAD)" = "88fcebbcbf951e966996c778321a6cfaaeae2298"
+          test -f gateway-api/Dockerfile
+          test -f compose.gateway-031.yml
+          test ! -e spatial-api/.env
+          test ! -e gateway-api/.env
+      - name: Run synthetic legacy and three-source negative controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest tests.test_portal_gateway_three_source_bundle tests.test_portal_release_bundle tests.test_gateway031_compose_overlay -q
+      - name: Construct, reproduce and verify three-source bundle (no prod)
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          ROOT="$RUNNER_TEMP/gateway031-v2-bundle"
+          mkdir -m 700 "$ROOT"
+          SPATIAL_SHA="$(git -C spatial-api rev-parse HEAD)"
+          GATEWAY_SHA="$(git -C gateway-api rev-parse HEAD)"
+          for suffix in a b; do
+            python3 scripts/portal_release_bundle.py build \
+              --platform-root . --spatial-root spatial-api --gateway-root gateway-api \
+              --platform-sha "$GITHUB_SHA" --spatial-sha "$SPATIAL_SHA" \
+              --gateway-sha "$GATEWAY_SHA" --archive "$ROOT/$suffix.tgz"
+            python3 scripts/portal_release_bundle.py verify \
+              --platform-sha "$GITHUB_SHA" --spatial-sha "$SPATIAL_SHA" \
+              --gateway-sha "$GATEWAY_SHA" --archive "$ROOT/$suffix.tgz"
+          done
+          cmp "$ROOT/a.tgz" "$ROOT/b.tgz"
+          DIGEST="$(sha256sum "$ROOT/a.tgz" | cut -d' ' -f1)"
+          python3 scripts/portal_release_bundle.py stage \
+            --platform-sha "$GITHUB_SHA" --spatial-sha "$SPATIAL_SHA" \
+            --gateway-sha "$GATEWAY_SHA" --archive "$ROOT/a.tgz" \
+            --archive-sha256 "$DIGEST" --revisions-root "$ROOT/privately-verified"
+          python3 - "$ROOT" "$GITHUB_SHA" "$GATEWAY_SHA" <<'PY'
+          import json,sys
+          from pathlib import Path
+          root,platform_sha,gateway_sha=sys.argv[1:]
+          directory=Path(root)/"privately-verified"/platform_sha
+          receipt=json.loads((directory/".portal-staged.json").read_text())
+          assert receipt["gateway_api_sha"] == gateway_sha
+          assert (directory/"gateway-api/Dockerfile").is_file()
+          assert (directory/"compose.gateway-031.yml").is_file()
+          assert (directory/"spatial-api/Dockerfile").is_file()
+          assert not (directory/".env").exists()
+          print("THREE_SOURCE_BUNDLE_VERIFIED_AND_STAGED_IN_EPHEMERAL_RUNNER")
+          PY
+          # No artifact upload (repository Actions storage quota); no deployment.
+          rm -rf -- "$ROOT"
+      - name: Record explicit release boundary
+        shell: bash
+        if: success()
+        run: |
+          {
+            echo "### Three-source gateway 0.3.1 provenance"
+            echo "Portal, spatial and API gateway checked out at distinct immutable Git SHAs."
+            echo "v2 deterministic bundle and independent verifier/staging: **PASS**"
+            echo "Production assets, Postgres, MinIO and running gateway changed: **NO**"
+            echo "Independent volume restore, OIDC and cutover approval: **NOT VERIFIED**"
+          } >> "$GITHUB_STEP_SUMMARY"

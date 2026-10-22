@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [master, main, "agent/**"]
+    branches: [master, main, "agent/**", "feat/unified-fleet-portal-20261017"]
   pull_request:
 
 permissions:
@@ -36,8 +36,34 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: npm install
+      - run: npm ci --no-audit --no-fund
+      - run: npm audit --omit=dev --audit-level=moderate
+      - run: node --test tests/*.test.mjs
       - run: npm run build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Exercise real NextAuth / BFF / API / SSE against isolated fixtures
+        run: |
+          python3 -m pip install -r ../api/requirements.txt
+          python3 ../../scripts/portal_e2e_smoke.py
+          python3 ../../scripts/portal_e2e_smoke.py --staging
+      - name: Verify anonymous portal is visible and telemetry fails closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run start -- --port 3012 >/tmp/kipnerter-web-ci.log 2>&1 &
+          PID=$!
+          trap 'kill "$PID" 2>/dev/null || true' EXIT
+          for attempt in {1..25}; do
+            if curl --fail --silent --max-time 2 http://127.0.0.1:3012/chat >/tmp/kipnerter-chat.html; then break; fi
+            sleep 1
+          done
+          grep -q 'PRIVATE AI WORKSPACE' /tmp/kipnerter-chat.html
+          [[ $(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3012/api/auth/providers) = 503 ]]
+          [[ $(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3012/api/portal/live) = 503 ]]
+          [[ $(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3012/api/portal/traces) = 503 ]]
+          [[ $(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3012/api/release) = 503 ]]
 
   containers:
     runs-on: ubuntu-latest
@@ -51,11 +77,35 @@ jobs:
       - name: Test owner-gated, firewall-only DR bootstrap (no network)
         run: python3 -m unittest tests.test_do_recovery_quarantine_firewall -v
       - run: docker compose config --quiet
+      - name: Verify stateless fleet preview cannot bind public ports or stateful volumes
+        env:
+          KIPNERTER_ENV: staging
+          NEXTAUTH_URL: https://staging.kipnerter.com
+        run: |
+          set -o pipefail
+          docker compose -p kipnerter-fleet-preview -f docker-compose.yml -f compose.fleet-preview.yml config --format json | python3 scripts/portal_fleet_preview_preflight.py
       - run: docker compose -f docker-compose.yml -f compose.dev.yml config --quiet
       - run: docker compose -f docker-compose.yml -f compose.spatial.yml --profile edge config --quiet
+      - run: docker compose -f docker-compose.yml -f compose.spatial.yml -f compose.staging.yml --profile edge config --quiet
       - run: python3 -m py_compile scripts/spatial-smoke.py
+      - run: python3 -m unittest discover -s tests -v
+      - name: Verify release-script recovery safety regression controls
+        run: python3 -m unittest discover -s scripts/tests -v
+      - name: Verify deterministic stateless web/API-only source artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          HEAD_SHA="$(git rev-parse HEAD)"
+          python3 scripts/portal_stateless_bundle.py build --root . --sha "$HEAD_SHA" --out /tmp/kipnerter-stateless-ci.tgz
+          python3 scripts/portal_stateless_bundle.py verify --archive /tmp/kipnerter-stateless-ci.tgz --sha "$HEAD_SHA"
+          python3 scripts/portal_stateless_bundle.py build --root . --sha "$HEAD_SHA" --out /tmp/kipnerter-stateless-ci-repeat.tgz
+          cmp /tmp/kipnerter-stateless-ci.tgz /tmp/kipnerter-stateless-ci-repeat.tgz
+      - run: python3 -m py_compile scripts/portal_oidc_preflight.py scripts/verify_portal_release.py scripts/portal_release_backup.py scripts/portal_release_bundle.py scripts/portal_atomic_release.py scripts/portal_deploy_target.py
       - run: sh -n scripts/spatial-worker-proof.sh
+      - run: bash -n scripts/install-telemetry-observer.sh
+      - run: python3 -m py_compile apps/api/app/tailnet_observer.py apps/api/app/agent_sessions_observer.py apps/api/app/trace_snapshot_observer.py scripts/refresh_assistx_trace_snapshot.py apps/api/app/assistx_fleet_observer.py apps/api/app/runtime_catalog_observer.py apps/api/app/fleet_runtime_observer.py scripts/refresh_fleet_runtime_snapshot.py scripts/refresh_assistx_fleet_snapshot.py
       - run: docker run --rm -v "$PWD/infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2 caddy validate --config /etc/caddy/Caddyfile
+      - run: docker run --rm -v "$PWD/infra/caddy/Caddyfile.staging:/etc/caddy/Caddyfile:ro" caddy:2 caddy validate --config /etc/caddy/Caddyfile
       - run: docker compose build
 
   terraform:
@@ -69,6 +119,11 @@ jobs:
       - run: terraform fmt -check -recursive
       - run: terraform init -backend=false
       - run: terraform validate
+      - name: Validate separate recovery quarantine firewall (no apply)
+        run: |
+          terraform -chdir=recovery-quarantine init -backend=false -input=false
+          terraform -chdir=recovery-quarantine fmt -check
+          terraform -chdir=recovery-quarantine validate
 
   secrets:
     runs-on: ubuntu-latest

@@ -1,0 +1,32 @@
+# EXPLICIT OPT-IN ONLY. Do not include this file in existing production
+# Compose commands until exact gateway source, rollback and OIDC are approved.
+# gateway-api/ must be an independently SHA-verified checkout of PR #122:
+# 88fcebbcbf951e966996c778321a6cfaaeae2298.
+#
+# Existing Caddy and Next.js proxy api:8000; override the 0.3.1 image's
+# default port 8080 rather than changing the active web routing contract.
+services:
+  api:
+    build:
+      context: ./gateway-api
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+    environment:
+      KIPNERTER_GATEWAY_BEARER_TOKEN: ${KIPNERTER_GATEWAY_TOKEN:?Explicit portal owner gateway token required}
+      KIPNERTER_LOCATION_HMAC_SECRET: ${KIPNERTER_LOCATION_HMAC_SECRET:?Dedicated location HMAC secret required}
+      KIPNERTER_DB_PATH: /data/kipnerter-api.sqlite3
+      KIPNERTER_RELEASE_SHA: ${KIPNERTER_GATEWAY_SOURCE_SHA:?Independently checked-out API 0.3.1 Git commit required}
+    expose:
+      - "8000"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16777216
+    volumes:
+      - gateway_location_events:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  gateway_location_events:

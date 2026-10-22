@@ -17,6 +17,20 @@ def test_health():
     assert response.json()['status'] == 'ok'
 
 
+def test_release_requires_exact_build_identity(monkeypatch):
+    monkeypatch.delenv("KIPNERTER_RELEASE_SHA", raising=False)
+    response = client.get("/api/v1/release")
+    assert response.status_code == 503
+    sha = "b" * 40
+    monkeypatch.setenv("KIPNERTER_RELEASE_SHA", sha)
+    response = client.get("/api/v1/release")
+    assert response.status_code == 200
+    assert response.json() == {"source": "kipnerter-api", "revision": sha}
+    assert response.headers["cache-control"].startswith("no-store")
+    monkeypatch.setenv("KIPNERTER_RELEASE_SHA", "main")
+    assert client.get("/api/v1/release").status_code == 503
+
+
 def test_ready():
     response = client.get('/ready')
     assert response.status_code == 200
@@ -61,12 +75,12 @@ def test_service_registry_does_not_expose_private_base_url(monkeypatch):
     assert 'tailnet' not in str(service).lower()
 
 
-def test_sophia_uses_root_health_surface(monkeypatch):
+def test_sophia_uses_liveness_health_surface(monkeypatch):
     clear_services(monkeypatch)
     monkeypatch.setenv('SOPHIA_BASE_URL', 'http://sophia.tailnet:8765')
     response = client.get('/api/v1/services')
     assert response.status_code == 200
-    assert response.json()['services'][0]['health_path'] == '/'
+    assert response.json()['services'][0]['health_path'] == '/healthz'
 
 
 def test_lmstudio_discovery_redacts_private_url(monkeypatch):

@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   inspect-staging:
-    if: ${{ github.repository == 'scottjoyner/kipnerter' && github.actor == github.repository_owner }}
+    if: ${{ github.repository == 'scottjoyner/kipnerter' && github.actor == github.repository_owner && github.ref == 'refs/heads/master' }}
     environment: staging
     runs-on: ubuntu-latest
     timeout-minutes: 12
