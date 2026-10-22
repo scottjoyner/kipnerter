@@ -168,3 +168,23 @@ revocation, active transactions, worker queues and admitted writes. Only then
 can a separately authorized maintenance plan design, simulate, and physically
 prove a joint write fence and externally signed high-water checkpoint.
 Production storage and Tailnet permissions are unchanged by this research.
+
+### Nested bind-mount alias hardening (October 22 follow-up)
+
+Exact Docker storage source equality is insufficient. An apparently separate
+bind mount of `/var/lib/docker`, or of a child directory beneath a storage
+volume, can expose the same PostgreSQL/MinIO files without sharing the exact
+Docker volume `Source` string. The verifier now performs **path-component-aware
+ancestor, descendant and exact-source comparison** across both `bind` and
+`volume` mount types. A read-only alias is still a potential data access
+channel and remains HOLD. Similar string prefixes that are not filesystem
+ancestors, such as `.../_data-other`, do *not* count as the same source.
+
+The verifier never normalizes untrusted `/../`, `/./`, duplicate-slash,
+relative, trailing-slash or NUL-containing paths into an apparently trusted
+source. It rejects ambiguous metadata and leaves the release gate closed.
+No filesystem symlink resolution, remote file reads or Docker operations are
+introduced. Therefore bind-mount aliases through **symlinks, overlay layers,
+other mount namespaces, external clients and host-level root access remain
+unexcluded** and must be independently investigated before a durable fence
+can be claimed. No actual write-fencing operation occurs here.

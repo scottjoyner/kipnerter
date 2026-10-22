@@ -31,6 +31,28 @@ SPATIAL='kipnerter_spatial_backend'
 FRONTEND='kipnerter_frontend'
 
 
+def verified_mount_path(value):
+    """Fail closed on ambiguous paths without reading remote filesystem state.
+
+    This deliberately does not resolve symlinks; Docker metadata alone cannot
+    establish absence of a symlink/overlay alias to live storage.
+    """
+    if (type(value) is not str or not value.startswith('/') or len(value)>4096
+            or '\x00' in value or value != '/' and (
+                '//' in value or value.endswith('/') or
+                any(part in ('.','..') for part in value.split('/')))):
+        raise ValueError('untrusted runtime mount path')
+    return value
+
+
+def paths_overlap(left, right):
+    """Exact/ancestor/descendant paths; no substring-prefix false matches."""
+    left=verified_mount_path(left)
+    right=verified_mount_path(right)
+    return (left == right or left == '/' or right == '/' or
+            left.startswith(right+'/') or right.startswith(left+'/'))
+
+
 def safe_docker(argv,*,runner=subprocess.run):
     if (not argv or argv[0]!='docker' or not
             (argv==['docker','ps','--no-trunc','-q'] or
@@ -98,11 +120,12 @@ def analyze(objects):
         for m in mounts:
             if not isinstance(m, dict) or m.get('Type') not in ('volume', 'bind'):
                 raise ValueError('unrecognized storage mount identity')
-            key = (m.get('Type'), m.get('Source'))
-            if (not isinstance(key[1], str) or not key[1] or len(key[1]) > 4096
-                    or key in storage_mounts):
+            source=verified_mount_path(m.get('Source'))
+            # Different mount types can nevertheless map to the same physical
+            # storage path; type-independent comparison rejects both aliases.
+            if source in storage_mounts:
                 raise ValueError('ambiguous storage mount identity')
-            storage_mounts.add(key)
+            storage_mounts.add(source)
 
     direct_storage_mount_candidates = []
     docker_control_socket_candidates = []
@@ -128,15 +151,16 @@ def analyze(objects):
             if not isinstance(mount, dict) or mount.get('Type') not in ('volume', 'bind'):
                 raise ValueError('unrecognized runtime mount identity')
             kind, source, dest = mount.get('Type'), mount.get('Source'), mount.get('Destination')
-            if (not isinstance(source, str) or not source or len(source) > 4096
-                    or not isinstance(dest, str) or not dest.startswith('/')
-                    or len(dest) > 4096 or type(mount.get('RW')) is not bool):
+            verified_mount_path(source)
+            verified_mount_path(dest)
+            if type(mount.get('RW')) is not bool:
                 raise ValueError('malformed runtime mount')
             if kind == 'bind' and name not in (POSTGRES, MINIO):
                 bind = True
             # Read-only mounts still permit observing a storage volume; mark
             # candidates and HOLD instead of guessing they cannot write.
-            if name not in (POSTGRES, MINIO) and (kind, source) in storage_mounts:
+            if name not in (POSTGRES, MINIO) and any(
+                    paths_overlap(source, storage) for storage in storage_mounts):
                 direct_storage_mount_candidates.append(name)
             if dest in ('/var/run/docker.sock', '/run/docker.sock'):
                 docker_control_socket_candidates.append(name)
