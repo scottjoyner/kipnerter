@@ -11,6 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MAX_BYTES = 2 * 1024 * 1024
 PROJECT = "kipnerter-fleet-preview"
+# Exact, private Tailscale Serve origin; all other origins remain rejected.
+TAILNET_PREVIEW_ORIGIN = "https://x1-370.tailcb8954.ts.net:8449"
 
 
 def validate(model):
@@ -63,9 +65,12 @@ def validate(model):
     api_env = api.get("environment")
     if not isinstance(web_env, dict) or not isinstance(api_env, dict):
         raise ValueError("invalid environment")
-    if (web_env.get("KIPNERTER_ENV") != "staging"
-            or api_env.get("KIPNERTER_ENV") != "staging"
-            or web_env.get("NEXTAUTH_URL") != "https://staging.kipnerter.com"
+    mode = web_env.get("KIPNERTER_ENV")
+    allowed_modes = {"staging": "https://staging.kipnerter.com",
+                     "tailnet-preview": TAILNET_PREVIEW_ORIGIN}
+    if (mode not in allowed_modes
+            or api_env.get("KIPNERTER_ENV") != mode
+            or web_env.get("NEXTAUTH_URL") != allowed_modes[mode]
             or web_env.get("KIPNERTER_INTERNAL_API_URL") != "http://api:8000"):
         raise ValueError("preview has crossed origin or environment boundary")
     if api_env.get("FLEET_MONITOR_BASE_URL") and not str(api_env["FLEET_MONITOR_BASE_URL"]).startswith("https://"):

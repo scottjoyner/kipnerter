@@ -18,6 +18,8 @@ test("valid root issuer and signed two-claim allowlist gates admission candidate
   assert.equal(isTsidpRuntimeReady(good()), true);
   assert.equal(isTsidpRuntimeReady({ ...good(), environment: "production",
     callbackOrigin: "https://kipnerter.com" }), true);
+  assert.equal(isTsidpRuntimeReady({ ...good(), environment: "tailnet-preview",
+    callbackOrigin: "https://x1-370.tailcb8954.ts.net:8449" }), true);
 });
 
 test("runtime rejects non-Tailscale, credentialed, redirected or pathful issuers", () => {
@@ -67,6 +69,8 @@ test("runtime refuses invalid client credentials, callback and environment", () 
     ["callbackOrigin", "https://kipnerter.com"],
     ["callbackOrigin", "http://staging.kipnerter.com"],
     ["environment", "unknown"],
+    ["environment", "preview"],
+    ["callbackOrigin", "https://x1-370.tailcb8954.ts.net:8449"],
   ]) assert.equal(isTsidpRuntimeReady({ ...good(), [key]: value }), false, key);
 });
 

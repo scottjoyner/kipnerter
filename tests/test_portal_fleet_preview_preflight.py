@@ -38,6 +38,32 @@ class StatelessPreviewTests(unittest.TestCase):
         self.assertFalse(report["contains_persistent_storage"])
         self.assertEqual(report["services"], ["api", "web"])
 
+    def test_opt_in_private_tailnet_preview_exact_origin_only(self):
+        x = fixture()
+        x["services"]["web"]["environment"].update(
+            KIPNERTER_ENV="tailnet-preview",
+            NEXTAUTH_URL="https://x1-370.tailcb8954.ts.net:8449")
+        x["services"]["api"]["environment"]["KIPNERTER_ENV"] = "tailnet-preview"
+        report = validate(x)
+        self.assertFalse(report["deployment_authorized"])
+        self.assertFalse(report["oidc_real_login_verified"])
+        self.assertFalse(report["publicly_routable"])
+        for bad in (
+            "https://staging.kipnerter.com", "https://kipnerter.com",
+            "http://x1-370.tailcb8954.ts.net:8449",
+            "https://x1-370.tailcb8954.ts.net:8449/",
+            "https://evil.tailcb8954.ts.net:8449",
+            "https://x1-370.tailcb8954.ts.net",
+            "https://x1-370.tailcb8954.ts.net:8443",
+        ):
+            with self.subTest(bad=bad):
+                x["services"]["web"]["environment"]["NEXTAUTH_URL"] = bad
+                with self.assertRaises(ValueError): validate(x)
+        x["services"]["web"]["environment"]["NEXTAUTH_URL"] = (
+            "https://x1-370.tailcb8954.ts.net:8449")
+        x["services"]["api"]["environment"]["KIPNERTER_ENV"] = "staging"
+        with self.assertRaises(ValueError): validate(x)
+
     def test_rejects_unexpected_stateful_services_or_volumes(self):
         for key in ("spatial-minio", "spatial-postgres", "caddy", "malicious"):
             x = fixture()
