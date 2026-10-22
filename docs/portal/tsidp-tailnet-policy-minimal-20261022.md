@@ -17,7 +17,21 @@ The repository candidate `infra/tailscale/policy.hujson` now declares:
 }
 ```
 
-In its **existing** `grants` array it adds **only** an application capability:
+In its **existing** `grants` array it adds one **admin-only HTTPS network grant**
+for connecting to the private IdP UI, plus a *separate* restricted UI app
+capability. App capabilities do **not** by themselves establish IP/TCP
+reachability when a permissive Tailnet-wide network grant is later removed:
+
+```json
+{
+  "src": ["autogroup:admin"],
+  "dst": ["tag:tsidp"],
+  "ip": ["tcp:443"]
+}
+```
+
+The independent IdP client-management capability is:
+
 
 ```json
 {
@@ -29,7 +43,7 @@ In its **existing** `grants` array it adds **only** an application capability:
 }
 ```
 
-These two snippets are **additive fragments**, not a valid stand-alone full
+These three snippets are **additive fragments**, not a valid stand-alone full
 Tailnet policy. Preserve the live policy's `ssh`, existing `tagOwners`,
 `grants`, and any existing groups, hosts, posture and approval rules. Do not
 copy this repository's entire `infra/tailscale/policy.hujson` into the admin
@@ -43,8 +57,12 @@ console validates the resulting *whole* policy.
 an authorized tag-owning account to approve the fresh interactive Tailscale
 machine login for `kipnerter-idp-staging`. The admin UI capability is a
 separate authorization required for restricted client registration later.
-The capability deliberately omits `users`, `resources`, `ip`, `extraClaims`,
-and `includeInUserInfo`; no STS authority is requested. Keep Funnel off for
+The application capability deliberately omits `users`, `resources`, `ip`,
+`extraClaims`, and `includeInUserInfo`; no STS authority is requested.
+The separate network grant is limited to administrators on TCP 443.
+Additional browser users may require independently approved, *scoped* HTTPS
+network access to the IdP. Do not add arbitrary users or all-member access
+by default, or claim that this admin-only example completes browser login. Keep Funnel off for
 the IdP and retain private Tailnet-only access.
 
 ## Important live policy risk
@@ -66,7 +84,8 @@ python3 -m pytest -q scripts/tests/test_portal_tsidp_policy_candidate_check.py
 
 The checker parses only the repository's restricted JSON-with-line-comments
 format. It checks one exact `tag:tsidp` administrator tag owner, one narrowly
-scoped app grant, absence of wildcard network access in the *candidate*, and
+scoped app grant, exact admin-to-IdP TCP/443 grant, absence of wildcard
+network access in the *candidate*, and
 an STS-disabled Compose. It never reads the live Tailscale policy, talks to an
 IdP, modifies Docker, accepts browser auth or authorizes deployment. It always
 reports `live_tailnet_policy_verified=false` and `release_gate=NO_GO`.
@@ -134,11 +153,12 @@ python3 -m pytest -q scripts/tests/test_portal_tsidp_policy_merge_preview.py
 
 The merge-preview tool reads the supplied file **once, locally**, parses
 JSON with `//` line comments and trailing commas, rejects duplicate keys,
-and emits only a minimal proposed `tagOwners` addition and/or exact admin-UI
-app grant. It **does not output the full policy or any user identities**;
+and emits only the missing `tagOwners`, exact admin-UI app capability
+and admin-only TCP/443 network fragments. It **does not output the full policy or any user identities**;
 existing SSH/grant/Funnel rules remain untouched. If the tag already exists
 with administrator ownership (as in the operator's last reported policy),
-it proposes **only the admin-UI grant**. Custom tag owners, pre-existing
+it proposes the admin-UI grant **and**, if not already present, the
+separate narrowly scoped admin HTTPS grant. Custom tag owners, pre-existing
 conflicting IdP capabilities, duplicate keys, malformed syntax or unsupported
 HuJSON result in review/HOLD rather than a guessed patch. It reports warnings
 if a blanket `src=* / dst=* / ip=*` grant or member-wide Funnel eligibility

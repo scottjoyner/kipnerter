@@ -15,6 +15,10 @@ POLICY = ROOT / "infra/tailscale/policy.hujson"
 COMPOSE = ROOT / "infra/tailscale/tsidp-preview.compose.yml"
 EXPECTED = {"src": ["autogroup:admin"], "dst": ["tag:tsidp"],
             "app": {"tailscale.com/cap/tsidp": [{"allow_admin_ui": True}]}}
+# HTTPS transport and the application-level UI capability are independent.
+# Do not silently depend on a permissive '*' network grant for reachability.
+HTTPS_ADMIN = {"src": ["autogroup:admin"], "dst": ["tag:tsidp"],
+               "ip": ["tcp:443"]}
 MAX_BYTES = 131072
 
 
@@ -69,17 +73,20 @@ def inspect_policy(raw: str, requested_tag: str) -> dict:
     if not isinstance(tag_owners, dict) or tag_owners.get(requested_tag) != ["autogroup:admin"]:
         raise ValueError("requested device tag has no exact admin owner")
     grants = model.get("grants", [])
-    if not isinstance(grants, list) or sum(1 for g in grants if g == EXPECTED) != 1:
-        raise ValueError("narrow admin-only tsidp capability missing or duplicated")
+    if (not isinstance(grants, list) or
+            sum(1 for g in grants if g == EXPECTED) != 1 or
+            sum(1 for g in grants if g == HTTPS_ADMIN) != 1):
+        raise ValueError("required narrow tsidp HTTPS transport / UI capability missing or duplicated")
     if any(isinstance(g, dict) and (requested_tag in g.get("dst", []) or
                                   "tailscale.com/cap/tsidp" in g.get("app", {}))
-           and g != EXPECTED for g in grants):
+           and g not in (EXPECTED, HTTPS_ADMIN) for g in grants):
         raise ValueError("unexpected extra tsidp capability or network access")
     if any(isinstance(g, dict) and (g.get("src") == ["*"] or g.get("dst") == ["*"])
            and g.get("ip") == ["*"] for g in grants):
         raise ValueError("candidate must not contain blanket allow-all network access")
     return {"purpose": "tsidp_repo_candidate_only", "tag_owner": "admin",
-            "admin_ui_only": True, "sts_authorized": False,
+            "admin_ui_only": True, "scoped_admin_https_443": True,
+            "sts_authorized": False,
             "live_tailnet_policy_verified": False, "enrollment_authorized": False,
             "production_deploy_authorized": False, "release_gate": "NO_GO"}
 
