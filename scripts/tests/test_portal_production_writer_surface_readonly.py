@@ -94,6 +94,55 @@ class WriterSurfaceSafety(unittest.TestCase):
         self.assertNotIn(mount['Source'],json.dumps(output))
         self.assertFalse(output['minio_writes_fenced'])
 
+    def test_storage_parent_and_child_bind_aliases_hold_even_if_readonly(self):
+        for changed in ('/var/lib/docker',
+                        '/var/lib/docker/volumes/kipnerter-spatial-minio-1/_data/subdir',
+                        '/var/lib/docker/volumes'):
+            items=fixture()
+            worker=next(o for o in items if o['Name']=='/kipnerter-spatial-worker-1')
+            worker['Mounts'].append({'Type':'bind','Source':changed,
+                                     'Destination':'/mnt/private','RW':False})
+            with self.subTest(source_kind=changed.rsplit('/',1)[-1]):
+                report=w.analyze(items)
+                self.assertEqual(report['status'],'HOLD_UNEXPECTED_WRITER_SURFACE')
+                self.assertIn('kipnerter-spatial-worker-1',report['direct_storage_mount_candidates'])
+                self.assertNotIn(changed,json.dumps(report))
+                self.assertFalse(report['minio_writes_fenced'])
+
+    def test_nonoverlapping_prefix_is_not_misclassified_as_shared_storage(self):
+        original='/var/lib/docker/volumes/kipnerter-spatial-minio-1/_data'
+        similar=original+'-unrelated'
+        self.assertFalse(w.paths_overlap(original,similar))
+        items=fixture()
+        worker=next(o for o in items if o['Name']=='/kipnerter-spatial-worker-1')
+        worker['Mounts'].append({'Type':'bind','Source':similar,
+                                 'Destination':'/mnt/not-the-same','RW':False})
+        result=w.analyze(items)
+        self.assertEqual(result['direct_storage_mount_candidates'],[])
+        # A new bind mount still demands operator review independently.
+        self.assertEqual(result['status'],'HOLD_UNEXPECTED_WRITER_SURFACE')
+
+    def test_untrusted_mount_path_segments_fail_closed(self):
+        for source in ('relative/path','/var//lib/docker','/var/lib/../docker',
+                       '/var/lib/./docker','/var/lib/docker/','/var/lib/\x00docker',
+                       '/var/lib/docker/../secrets'):
+            items=fixture()
+            worker=next(o for o in items if o['Name']=='/kipnerter-spatial-worker-1')
+            worker['Mounts'].append({'Type':'bind','Source':source,
+                                     'Destination':'/mnt/safe','RW':True})
+            with self.subTest(source_kind=source[:10]),self.assertRaisesRegex(ValueError,'untrusted runtime mount path'):
+                w.analyze(items)
+
+    def test_shared_storage_type_alias_still_hold(self):
+        items=fixture()
+        storage=next(o for o in items if o['Name']=='/'+w.MINIO)
+        worker=next(o for o in items if o['Name']=='/kipnerter-spatial-worker-1')
+        worker['Mounts'].append({'Type':'bind','Source':storage['Mounts'][0]['Source'],
+                                 'Destination':'/mnt/alternate','RW':True})
+        report=w.analyze(items)
+        self.assertIn('kipnerter-spatial-worker-1',report['direct_storage_mount_candidates'])
+        self.assertEqual(report['status'],'HOLD_UNEXPECTED_WRITER_SURFACE')
+
     def test_docker_socket_mount_is_critical_holding_candidate(self):
         items=fixture()
         worker=next(x for x in items if x['Name']=='/kipnerter-spatial-worker-1')
@@ -153,7 +202,7 @@ class WriterSurfaceSafety(unittest.TestCase):
     def test_unexpected_shared_storage_identifiers_are_denied(self):
         items=fixture()
         storage=next(x for x in items if x['Name']=='/'+w.MINIO)
-        storage['Mounts'][0]['Source']='sensitive-secret-DO-NOT-PRINT'
+        storage['Mounts'][0]['Source']='/protected/sensitive-secret-DO-NOT-PRINT'
         other=next(x for x in items if x['Name']=='/'+w.POSTGRES)
         other['Mounts'][0]['Source']=storage['Mounts'][0]['Source']
         with self.assertRaisesRegex(ValueError,'ambiguous storage mount'):
