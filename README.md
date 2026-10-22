@@ -1,5 +1,12 @@
 # Kipnerter
 
+<!-- repo-entrypoint-guide:start -->
+> **Start here:** Kipnerter exposes public web/API functionality while keeping private fleet models and data systems behind controlled adapters. Read [Architecture](#architecture), [Repository layout](#repository-layout), and [Local development](#local-development) before configuring external services.
+> 
+> **Readiness:** Domain plans and architecture descriptions are not proof of DNS cutover, authenticated gateway behavior, or physical iPhone acceptance. Verify every external entry point and release gate against the deployed version before advertising it as live.
+<!-- repo-entrypoint-guide:end -->
+
+
 Kipnerter is the public web and API control plane for the Kipnerter ecosystem: the companion web experience for `kipnerter-ios`, the public interface for Sophia and AssistX, and the gateway for research, ingestion, embeddings, MCP tools, and private model infrastructure.
 
 ## Domains
