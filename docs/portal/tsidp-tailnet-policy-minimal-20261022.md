@@ -86,3 +86,35 @@ write-fenced PostgreSQL/MinIO recovery and independent custody pass.
 Reference: [Tailscale tsidp](https://tailscale.com/docs/features/tsidp),
 [policy file syntax](https://tailscale.com/docs/reference/syntax/policy-file),
 [device tags](https://tailscale.com/docs/features/tags).
+
+## Redacted physical enrollment diagnosis (no browser login URL in output)
+
+Run the read-only operator check on `x1-370` whenever the staging IdP
+appears stuck at a Tailscale login prompt:
+
+```sh
+python3 -m scripts.portal_tsidp_enrollment_diagnostic
+python3 -m pytest -q scripts/tests/test_portal_tsidp_enrollment_diagnostic.py
+```
+
+The helper only reads Docker's exact container metadata and up to 80 log
+lines **since its current start**. It verifies the pinned image, non-root
+user, no exposed ports, read-only root filesystem, dropped capabilities,
+restricted network/volume and resource limits. It emits **only structured
+boolean and enum fields**, and never prints a login URL, access key,
+container environment secret or raw error content. Docker writes tsidp
+prompts to stderr, which is inspected safely in memory.
+
+`AWAITING_INTERACTIVE_ADMIN_APPROVAL` means the current container has a
+fresh interactive enrollment challenge, **not** that the live policy or
+operator's tag ownership has been verified. `TAG_ASSIGNMENT_REJECTED`
+indicates the tag owner or approving identity needs rechecking after the
+failed browser attempt. `CONTAINER_STOPPED` or `UNKNOWN_HOLD` require a
+separate operator investigation; the diagnostic never restarts containers.
+A running IdP without a visible challenge is `ENROLLMENT_STATE_UNCONFIRMED`:
+check its tagged Tailnet peer and HTTPS discovery before making claims.
+
+**No diagnostic state is an authorization grant.** Only independently
+approved browser login and negative acceptance tests can qualify private
+OIDC access. `release_gate` is always `NO_GO` here, independently of
+production recovery and data-custody requirements.
