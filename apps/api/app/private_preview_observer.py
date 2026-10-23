@@ -4,8 +4,8 @@ import os
 import stat
 from datetime import datetime, timezone
 
-RECEIPT = Path("/home/scott/.local/state/kipnerter-preview-promotions/ee93905/status.json")
-SHA = "ee93905bea286a18c9a10d5704068e6be5c86604"
+RECEIPT = Path("/home/scott/.local/state/kipnerter-preview-promotions/339210f/status.json")
+SHA = "339210f30cbb8afde8d9ef212352ec055735058c"
 TRUE_FIELDS = ("api_image_verified", "web_image_verified", "deployed_sha_matches",
                "funnel_disabled", "private_route_correct", "rollback_available")
 FALSE_FIELDS = ("auth_qualified", "production_release_authorized", "production_modified")

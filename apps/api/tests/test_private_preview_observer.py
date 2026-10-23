@@ -16,7 +16,7 @@ def write(tmp_path,d):
     p=tmp_path/"status.json";p.write_text(json.dumps(d));p.chmod(0o600);return p
 def test_good(tmp_path):
     d=projection(write(tmp_path,record()),now=NOW)
-    assert d["revision"]=="ee93905bea286a18c9a10d5704068e6be5c86604"
+    assert d["revision"]=="339210f30cbb8afde8d9ef212352ec055735058c"
     assert d["deployment"]=="ONLINE_AUTH_BLOCKED" and d["auth_qualified"] is False
     assert "do-not-return" not in json.dumps(d)
 @pytest.mark.parametrize("name,value",[("rollback_available",False),("funnel_disabled",False),
