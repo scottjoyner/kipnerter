@@ -1,17 +1,18 @@
 import { getServerSession } from "next-auth";
 import { authOptions, authReady, isAllowed } from "./auth";
 import { readBoundedPortalSection } from "./portal-projection.mjs";
+import { privateJson } from "./private-response.mjs";
 
 const SECTIONS = new Set(["overview", "nodes", "models", "traces", "sessions"]);
 export async function readPortal(section) {
-  if (!SECTIONS.has(section)) return Response.json({ error: "not found" }, { status: 404 });
-  if (!authReady) return Response.json({ error: "identity not configured" }, { status: 503 });
+  if (!SECTIONS.has(section)) return privateJson({ error: "not found" }, 404);
+  if (!authReady) return privateJson({ error: "identity not configured" }, 503);
   const session = await getServerSession(authOptions);
   if (!isAllowed(session?.user?.email, session?.user?.id)) {
-    return Response.json({ error: "authentication required" }, { status: 401 });
+    return privateJson({ error: "authentication required" }, 401);
   }
   const token = process.env.KIPNERTER_GATEWAY_TOKEN;
-  if (!token) return Response.json({ error: "gateway not configured" }, { status: 503 });
+  if (!token) return privateJson({ error: "gateway not configured" }, 503);
   const origin = process.env.KIPNERTER_INTERNAL_API_URL || "http://api:8000";
   try {
     const target = new URL(`/api/v1/control-plane/${section}`, origin);
@@ -20,8 +21,8 @@ export async function readPortal(section) {
       cache: "no-store", signal: AbortSignal.timeout(9000),
     });
     const data = await readBoundedPortalSection(section, reply);
-    return Response.json(data, { headers: { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" } });
+    return privateJson(data);
   } catch {
-    return Response.json({ error: "control plane unavailable" }, { status: 502 });
+    return privateJson({ error: "control plane unavailable" }, 502);
   }
 }

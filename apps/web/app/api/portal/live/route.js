@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth";
 import { authOptions, authReady, isAllowed } from "../../../../lib/auth";
 import { abortableDelay } from "../../../../lib/stream-utils.mjs";
+import { privateJson } from "../../../../lib/private-response.mjs";
 import { readSanitizedControlPlaneSnapshot } from "../../../../lib/portal-stream-snapshot.mjs";
 
 export const dynamic = "force-dynamic";
@@ -12,17 +13,17 @@ const LIFETIME_MS = 120000;
 let openStreams = 0;
 
 export async function GET(request) {
-  if (!authReady) return Response.json({ error: "identity not configured" }, { status: 503 });
+  if (!authReady) return privateJson({ error: "identity not configured" }, 503);
   const session = await getServerSession(authOptions);
   if (!isAllowed(session?.user?.email, session?.user?.id)) {
-    return Response.json({ error: "authentication required" }, { status: 401 });
+    return privateJson({ error: "authentication required" }, 401);
   }
   const token = process.env.KIPNERTER_GATEWAY_TOKEN;
-  if (!token) return Response.json({ error: "gateway not configured" }, { status: 503 });
+  if (!token) return privateJson({ error: "gateway not configured" }, 503);
   if (openStreams >= MAX_STREAMS) {
-    return Response.json({ error: "stream capacity reached" }, {
-      status: 429, headers: { "Retry-After": "15" },
-    });
+    const denial = privateJson({ error: "stream capacity reached" }, 429);
+    denial.headers.set("Retry-After", "15");
+    return denial;
   }
   // The private container DNS name is never returned to the browser.
   const origin = process.env.KIPNERTER_INTERNAL_API_URL || "http://api:8000";
@@ -70,6 +71,7 @@ export async function GET(request) {
     headers: {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "private, no-store, no-transform",
+      "Vary": "Cookie",
       "X-Accel-Buffering": "no",
       "X-Content-Type-Options": "nosniff",
     },

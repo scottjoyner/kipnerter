@@ -5,8 +5,10 @@ at application startup in addition to the existing operator preflight:
 
 - Issuer is a root `https://<host>.<tailnet>.ts.net` origin, with no userinfo,
   query, fragment, unexpected port or URL path.
-- Only the exact selected `production` or `staging` callback origin is
-  accepted; either environment incorrectly pointing at the other is denied.
+- Only the exact selected `production`, `staging` or `tailnet-preview` callback origin is
+  accepted; cross-environment callback origins are denied. Private preview also
+  pins the issuer to `https://kipnerter-idp-staging.tailcb8954.ts.net`,
+  never an arbitrary Tailscale issuer.
 - OIDC client ID/secret and JWT secret are present, bounded, and contain no
   CR/LF/NUL; the JWT secret must contain at least 32 characters.
 - Both email and signed tsidp subject allowlists are nonempty, properly
