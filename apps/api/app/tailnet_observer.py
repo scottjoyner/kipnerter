@@ -17,6 +17,7 @@ from .trace_snapshot_observer import recent_traces
 from .assistx_fleet_observer import inventory
 from .runtime_catalog_observer import read_catalog
 from .fleet_runtime_observer import observations
+from .private_preview_observer import projection as private_preview_projection
 
 
 def sample():
@@ -106,7 +107,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
             return self._reply(200, {"status": "ok"})
-        if self.path not in ("/v1/nodes", "/v1/sessions", "/v1/integrations", "/v1/traces", "/v1/assistx-fleet", "/v1/runtime-catalog", "/v1/fleet-runtime"):
+        if self.path not in ("/v1/nodes", "/v1/sessions", "/v1/integrations", "/v1/traces", "/v1/assistx-fleet", "/v1/runtime-catalog", "/v1/fleet-runtime", "/v1/private-preview"):
             return self._reply(404, {"error": "not found"})
         secret = os.environ.get("FLEET_MONITOR_TOKEN", "")
         supplied = self.headers.get("Authorization", "")
@@ -121,6 +122,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/v1/assistx-fleet": inventory,
                 "/v1/runtime-catalog": read_catalog,
                 "/v1/fleet-runtime": observations,
+                "/v1/private-preview": private_preview_projection,
             }
             return self._reply(200, data[self.path]())
         except (OSError, subprocess.SubprocessError, ValueError, TypeError, UnicodeError):
