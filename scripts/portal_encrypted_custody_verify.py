@@ -23,7 +23,9 @@ def run(cmd,timeout=20):
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
-def remote_ciphertext_hashes():
+def remote_ciphertext_hashes(host):
+    if host not in ("xwing", "beelink"):
+        raise ValueError("unapproved backup replica host")
     # Standalone read-only verification; no production-backup module imports.
     if not REMOTE.startswith(".local/state/kipnerter-private-backups/") or ".." in REMOTE:
         raise ValueError("untrusted receipt ID")
@@ -32,15 +34,15 @@ def remote_ciphertext_hashes():
             f"p=Path.home()/{REMOTE!r}\n"
             "assert p.is_dir() and p.stat().st_uid==os.geteuid() and not p.stat().st_mode & 0o077\n"
             "out={}\n"
-            "for name in ('postgresql.cms','minio.cms','manifest.json'):\n"
+             "for name in ('postgresql.cms','minio.cms','manifest.json','manifest.sig'):\n"
             " f=p/name\n"
             " assert f.is_file() and f.stat().st_uid==os.geteuid() and not f.stat().st_mode & 0o077\n"
             " out[name]=hashlib.sha256(f.read_bytes()).hexdigest()\n"
             "print(json.dumps(out,sort_keys=True))\n")
     reply=subprocess.run(['ssh','-oBatchMode=yes','-oStrictHostKeyChecking=yes',
-         '-oConnectTimeout=8','xwing','python3 -'],input=source.encode(),capture_output=True,timeout=20,check=True)
+         '-oConnectTimeout=8',host,'python3 -'],input=source.encode(),capture_output=True,timeout=20,check=True)
     result=json.loads(reply.stdout)
-    if set(result)!={'postgresql.cms','minio.cms','manifest.json'}:
+    if set(result)!={'postgresql.cms','minio.cms','manifest.json','manifest.sig'}:
         raise ValueError('untrusted remote inventory')
     return result
 
@@ -59,11 +61,13 @@ def verified():
     if (not stat.S_ISDIR(directory.st_mode) or directory.st_uid != os.geteuid()
             or directory.st_mode & 0o077):
         raise ValueError("recovery witness root must be owner-private")
-    actual=remote_ciphertext_hashes()
-    if (actual["postgresql.cms"]!=PG_CIPHER_SHA or
-            actual["minio.cms"]!=MINIO_CIPHER_SHA or
-            actual["manifest.json"]!=MANIFEST_SHA):
-        raise ValueError("stored ciphertext or manifest changed")
+    for host in ("xwing", "beelink"):
+        actual=remote_ciphertext_hashes(host)
+        if (actual["postgresql.cms"]!=PG_CIPHER_SHA or
+                actual["minio.cms"]!=MINIO_CIPHER_SHA or
+                actual["manifest.json"]!=MANIFEST_SHA or
+                actual["manifest.sig"]!=SIGNATURE_SHA):
+            raise ValueError("stored ciphertext or signed receipt changed on "+host)
     verify_public_certificate()
     public=ROOT/"lenovo-signing-pub.pem"
     pub_stat=os.lstat(public)
@@ -98,7 +102,8 @@ def verified():
         raise ValueError("Lenovo private keys not verified")
     return {"classification":"SIGNED_ENCRYPTED_COPY_VERIFIED_NOT_ATOMIC",
             "receipt_id":ID,"ciphertext_sha256_verified":True,
-            "manifest_signature_verified":True,"remote_keys_present_and_private":True,
+            "manifest_signature_verified":True,"replicas_verified":2,
+            "beelink_replica_verified":True,"remote_keys_present_and_private":True,
             "plaintext_residue_not_checked_by_this_probe":True,
             "independent_administrative_custody":False,
             "cross_service_point_in_time_consistent":False,

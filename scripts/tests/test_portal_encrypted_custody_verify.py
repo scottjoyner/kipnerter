@@ -27,14 +27,15 @@ class EncryptedCustodyControls(unittest.TestCase):
             with self.subTest(value=value), patch.object(m.subprocess, "run") as proc:
                 proc.return_value.stdout = value
                 with self.assertRaises((ValueError, TypeError)):
-                    m.remote_ciphertext_hashes()
+                    m.remote_ciphertext_hashes("xwing")
 
     def test_remote_hash_lookup_uses_fixed_host_and_read_only_stdin(self):
         content=json.dumps({"postgresql.cms":m.PG_CIPHER_SHA,
-            "minio.cms":m.MINIO_CIPHER_SHA,"manifest.json":m.MANIFEST_SHA}).encode()
+            "minio.cms":m.MINIO_CIPHER_SHA,"manifest.json":m.MANIFEST_SHA,
+            "manifest.sig":m.SIGNATURE_SHA}).encode()
         with patch.object(m.subprocess, "run") as proc:
             proc.return_value.stdout=content
-            result=m.remote_ciphertext_hashes()
+            result=m.remote_ciphertext_hashes("xwing")
         self.assertEqual(result["postgresql.cms"],m.PG_CIPHER_SHA)
         args=proc.call_args.args[0]
         self.assertEqual(args[-2:],["xwing","python3 -"])
@@ -53,6 +54,25 @@ class EncryptedCustodyControls(unittest.TestCase):
                 with self.assertRaises(ValueError) as caught:
                     m.verified()
                 self.assertIn("stored ciphertext",str(caught.exception))
+
+    def test_unknown_host_denied_before_process(self):
+        with patch.object(m.subprocess,"run",side_effect=AssertionError("must not SSH")):
+            with self.assertRaises(ValueError):
+                m.remote_ciphertext_hashes("prod")
+
+    def test_second_replica_drift_fails_before_signature_read(self):
+        good={"postgresql.cms":m.PG_CIPHER_SHA,
+              "minio.cms":m.MINIO_CIPHER_SHA,"manifest.json":m.MANIFEST_SHA,
+              "manifest.sig":m.SIGNATURE_SHA}
+        altered={**good, "manifest.sig":"0"*64}
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);root.chmod(0o700)
+            with patch.object(m,"ROOT",root), patch.object(m,"remote_ciphertext_hashes",side_effect=[good,altered]) as mock:
+                with patch.object(m,"verify_public_certificate",side_effect=AssertionError("must not verify")):
+                    with self.assertRaises(ValueError) as c:
+                        m.verified()
+            self.assertIn("beelink",str(c.exception))
+            self.assertEqual([x.args[0] for x in mock.call_args_list],["xwing","beelink"])
 
     def test_invalid_public_cert_denied(self):
         with tempfile.TemporaryDirectory() as temp:

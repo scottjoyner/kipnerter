@@ -2,7 +2,7 @@
 
 **Status: SIGNED_ENCRYPTED_COPY_VERIFIED_NOT_ATOMIC. Production release remains NO_GO.**
 
-The script scripts/portal_encrypted_custody_verify.py verifies the fixed October 23, 2026 signed recovery receipt from x1-370. It reads ciphertext hashes from xwing, verifies the detached Ed25519 manifest signature against the pinned Lenovo signing public key, validates the pinned RSA recipient certificate, and confirms protected signing/decryption key files remain on Lenovo.
+The script scripts/portal_encrypted_custody_verify.py verifies the fixed October 23, 2026 signed recovery receipt from x1-370. It reads exact ciphertext/manifest/signature hashes independently from xwing **and Beelink**, verifies the detached Ed25519 manifest signature against the pinned Lenovo signing public key, validates the pinned RSA recipient certificate, and confirms protected signing/decryption key files remain on Lenovo.
 
 Operator use: python3 scripts/portal_encrypted_custody_verify.py
 Offline tests: python3 -m pytest -q scripts/tests/test_portal_encrypted_custody_verify.py
