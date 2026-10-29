@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@huggingface/transformers": "4.3.2",
     "next": "16.4.2",
     "next-auth": "4.24.15",
     "react": "19.1.9",
