@@ -236,3 +236,38 @@ The gateway draft now supports explicit `disableThinking: true` and
 prior defaults. This is a server-configuration choice, never a client-supplied
 tool or model override. Production web gateway key provisioning and live
 end-to-end HTTPS generation remain incomplete.
+
+## Private operator fleet discovery and admission labels
+
+The private, authenticated `/chat` workspace now has a
+**Detect fleet LFM3 workers** action backed by
+`GET /api/chat/fleet-status`. It examines at most 16 *explicitly
+configured*, private-address endpoints concurrently; it never scans
+arbitrary Tailnet peers, loads models, or performs model generation.
+The endpoint requires an allowlisted NextAuth operator session,
+coalesces in-flight checks and caches read-only status for 15 seconds.
+No private URL, bearer value, or raw upstream error is returned.
+
+Worker states are intentionally evidence-specific:
+
+| State | Meaning |
+| --- | --- |
+| `missing-credential` | The server cannot authenticate to this configured node; no request is made |
+| `unavailable` | Model discovery did not establish exact matching LFM3 availability |
+| `catalog-listed` | OpenAI-compatible catalog advertises the exact alias, but loaded weights and generation are unproven |
+| `loaded` | LM Studio native catalog reports an actual loaded matching model instance |
+| `served` | A successful nonempty generation was observed *in this web process* within the last hour |
+
+These are deliberately not distributed, signed availability receipts.
+Successful inference through another web instance or an SSH-local
+research canary does not magically mark this Next.js process as
+`served`. Static worker roles (`interactive` GPU-first versus
+`overflow` CPU) and model identity remain independently enforced by
+the request router. All status traffic is private and read-only.
+
+Latest local exact-source validation of the new discovery route and
+tests: **97/97 Node tests PASS** and Next.js optimized build PASS.
+Public kipnerter.com remains on its prior deployment with the
+chat-completion endpoint returning HTTP 404, while the reviewed
+localhost-only staging container is unchanged and fails closed at 503
+without protected model credentials.
