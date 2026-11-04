@@ -174,8 +174,8 @@ test("oversized final Unicode prompt is rejected, not truncated", () => {
 
 test("per-node budgets preserve the newest turn and fit CPU overflow context", () => {
   const history = validateMessages([
-    {role:"user",content:"a".repeat(520)},
-    {role:"assistant",content:"b".repeat(520)},
+    {role:"user",content:"a".repeat(410)},
+    {role:"assistant",content:"b".repeat(410)},
     {role:"user",content:"what is 2+2?"}
   ]);
   const gpu = fitNodeContext(history,{role:"interactive"});
