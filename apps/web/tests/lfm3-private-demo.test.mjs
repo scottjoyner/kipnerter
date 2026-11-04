@@ -72,3 +72,23 @@ test("Docker metadata inspector validates container identity and outputs no secr
   assert.equal(captured[2], DEMO_CONTAINER);
   assert.throws(() => inspectPrivateDemoContainer(DEMO_CONTAINER + ";whoami", {exec}), /unexpected/);
 });
+
+test("single-worker demo compose cannot advertise a public socket or fabricate a 3-worker release", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("../../../deploy/lfm3/compose.demo-rx480.yml", import.meta.url), "utf8");
+  assert.match(source, /127\.0\.0\.1:3356:3000/);
+  assert.match(source, /create_host_path: false/);
+  assert.match(source, /read_only: true/);
+  assert.match(source, /restart: "no"/);
+  assert.match(source, /external: true/);
+  assert.doesNotMatch(source, /(?:^|\n)\s+-\s*["']?0\.0\.0\.0:/);
+  assert.doesNotMatch(source, /Bearer\s+[A-Za-z0-9]+/);
+  const raw = source.match(/KIPNERTER_LFM3_ENDPOINTS:\s*>-\s*\n\s*(\[[^\n]+\])/);
+  assert.ok(raw, "explicit JSON roster required");
+  const nodes = JSON.parse(raw[1]);
+  assert.equal(nodes.length, 1);
+  assert.equal(nodes[0].name, "rx480");
+  assert.equal(nodes[0].model, "lfm3-1.7b-rx480");
+  assert.equal(nodes[0].credentialEnv, "KIPNERTER_LFM3_TOKEN_RX480");
+  assert.equal(nodes[0].baseUrl, "http://100.78.106.121:19176");
+});

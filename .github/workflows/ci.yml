@@ -88,6 +88,11 @@ jobs:
       - name: Test owner-gated, firewall-only DR bootstrap (no network)
         run: python3 -m unittest tests.test_do_recovery_quarantine_firewall -v
       - run: docker compose config --quiet
+      - name: Parse loopback-only single-worker LFM3 demo manifest without creating secrets
+        env:
+          KIPNERTER_LFM3_DEMO_IMAGE: lfm3-demo-parse-only:local
+          KIPNERTER_LFM3_SECRET_DIR: /nonexistent/kipnerter-demo-secrets
+        run: docker compose -f deploy/lfm3/compose.demo-rx480.yml config --quiet
       - name: Verify stateless fleet preview cannot bind public ports or stateful volumes
         env:
           KIPNERTER_ENV: staging
