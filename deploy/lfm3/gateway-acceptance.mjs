@@ -100,7 +100,7 @@ export async function runGatewayAcceptance({
     const valid = payload?.model === EXPECTED_MODEL &&
       typeof payload.reply === "string" &&
       payload.reply.trim().length > 0 &&
-      /\\b4\\b/.test(payload.reply);
+      /\b4\b/.test(payload.reply);
     if (!valid) return { decision: "FAIL", gate: "wrong-model-or-reply" };
     return {
       decision: "PASS", gate: "authenticated-staged-chat",
@@ -115,13 +115,13 @@ export async function runGatewayAcceptance({
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const [container, url] = process.argv.slice(2);
   if (!container || !url) {
-    process.stderr.write("Usage: node gateway-acceptance.mjs <stage-container> <http://127.0.0.1:33xx>\\n");
+    process.stderr.write("Usage: node gateway-acceptance.mjs <stage-container> <http://127.0.0.1:33xx>\n");
     process.exitCode = 2;
   } else {
     const result = await runGatewayAcceptance({
       url, inspectSecrets: () => inspectStagedSecretMounts(container),
     });
-    process.stdout.write(JSON.stringify(result) + "\\n");
+    process.stdout.write(JSON.stringify(result) + "\n");
     process.exitCode = result.decision === "PASS" ? 0 : result.decision === "HOLD" ? 3 : 2;
   }
 }
