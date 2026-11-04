@@ -9,6 +9,7 @@ services:
     # or published port, and no other bridge container can forge client-IP.
     network_mode: "container:kipnerter-caddy-1"
     restart: "no"
+    user: "101:101"
     read_only: true
     cap_drop:
       - ALL
@@ -26,5 +27,5 @@ services:
         bind:
           create_host_path: false
     tmpfs:
-      - /tmp:rw,nosuid,nodev,size=16m
-      - /var/cache/nginx:rw,nosuid,nodev,size=16m
+      - /tmp:rw,nosuid,nodev,size=16m,mode=1777
+      - /var/cache/nginx:rw,nosuid,nodev,size=16m,mode=1777
