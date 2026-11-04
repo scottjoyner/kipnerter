@@ -1,0 +1,32 @@
+# Dedicated SINGLE-WORKER private staging demo; deliberately not a public release.
+# The real multi-node production acceptance remains independent and unchanged.
+# Never start without an approved root-owned secret mount and immutable image review.
+services:
+  kipnerter-lfm3-demo-rx480:
+    image: ${KIPNERTER_LFM3_DEMO_IMAGE:?Pin an approved exact-head staging image digest}
+    container_name: kipnerter-lfm3-demo-rx480
+    restart: "no"
+    ports:
+      - "127.0.0.1:3356:3000"
+    networks:
+      - kipnerter_frontend
+    cpus: 0.75
+    mem_limit: 512m
+    memswap_limit: 640m
+    pids_limit: 150
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      KIPNERTER_ENV: staging
+      KIPNERTER_LFM3_ENDPOINTS: >-
+        [{"name":"rx480","baseUrl":"http://100.78.106.121:19176","model":"lfm3-1.7b-rx480","adapter":"openai","role":"interactive","maxInflight":1,"maxOutputTokens":256,"credentialEnv":"KIPNERTER_LFM3_TOKEN_RX480"}]
+    volumes:
+      - type: bind
+        source: ${KIPNERTER_LFM3_SECRET_DIR:?Approved root-only directory required}
+        target: /run/secrets/kipnerter-lfm3
+        read_only: true
+        bind:
+          create_host_path: false
+networks:
+  kipnerter_frontend:
+    external: true
