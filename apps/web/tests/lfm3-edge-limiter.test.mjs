@@ -74,15 +74,15 @@ test("offline limiter acceptance refuses mutable or uncached images and never ac
 test("offline Caddy-to-Nginx spoof test refuses unpinned images and network exposure", () => {
   assert.match(chain, /KIPNERTER_LFM3_EDGE_IMAGE/);
   assert.match(chain, /KIPNERTER_LFM3_CADDY_IMAGE/);
-  assert.match(chain, /docker image inspect "\\$nginx_image" "\\$caddy_image"/);
+  assert.match(chain, /docker image inspect "\$nginx_image" "\$caddy_image"/);
   assert.doesNotMatch(chain, /docker pull |\s--publish\b|\s-p\s+\d+:\d+/);
   assert.match(chain, /--network none/);
-  assert.match(chain, /--network "container:\\$caddy"/);
+  assert.match(chain, /--network "container:\$caddy"/);
   assert.match(chain, /trap cleanup EXIT/);
   assert.match(chain, /header_up X-Real-IP \{remote_host\}/);
   assert.match(chain, /header_up X-Forwarded-For \{remote_host\}/);
   assert.match(chain, /SPOOFED_HEADER_ATTEMPT_/);
-  assert.match(chain, /4\|5\) \[\[ "\\$code" == 429 \]\]/);
+  assert.match(chain, /4\|5\) \[\[ "\$code" == 429 \]\]/);
   assert.match(chain, /preview\.kipnerter\.com/);
   assert.match(chain, /No public route, real model, token or gateway contacted/);
 });
