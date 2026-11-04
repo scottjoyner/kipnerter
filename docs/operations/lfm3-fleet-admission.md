@@ -182,3 +182,36 @@ The TestFlight workflow additionally requires a **live** correct-model
 HTTPS response before upload. As the public route is still 404,
 TestFlight upload remains **HOLD**, even though simulator validation passes.
 
+
+## Production-secret mounting contract (new web security gate)
+
+The later web draft adds `apps/web/lib/lfm3-credentials.mjs`.
+Per-node API keys can be provided through a **read-only Docker bind mount**
+instead of readable-by-inspection container environment values. The
+server-owned, fixed file locations inside the container are:
+
+- `/run/secrets/kipnerter-lfm3/rx480.key`
+- `/run/secrets/kipnerter-lfm3/optiplex.key`
+- `/run/secrets/kipnerter-lfm3/r9700.key` (only after real generation admission)
+
+Each key must be a regular, non-symlink file, accessible only to its
+owning user (0400 or 0600), and between 16 and 2048 bytes. The runtime
+uses no client-provided paths. A present but invalid key **fails closed**;
+it cannot be bypassed by an environment fallback. If the file is absent,
+the pre-existing per-node environment-secret reference is still supported
+for compatibility; file mounts are preferred.
+
+Provision these files only through the **approved secrets-management
+process**. Do not print tokens, commit them, send them to an iOS client, or
+put token values directly in a container's command line. After obtaining
+authorized, host-local provisioning, a reviewed Docker configuration may
+mount the protected host directory at the fixed container path with
+`read_only: true` (or Docker `--mount` with `readonly`).
+Perform a model-catalog check and a bounded **real generation** through the
+staging web API before any public Caddy cutover.
+
+The code and tests for locked-down file mounts are newer than the
+`5370ec1` localhost staging image. Rebuild and replace the **staging**
+image from a green exact-head commit before final release acceptance.
+The existing production container, Caddy routes and Apple distribution
+remain unchanged at this gate.
