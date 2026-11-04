@@ -1,0 +1,30 @@
+# UNAPPLIED EDGE LIMITER. This is not a public deployment instruction.
+# Operator must verify immutable image digest, Caddy namespace ownership,
+# the current canonical public Caddyfile, and approved rollback first.
+services:
+  kipnerter-lfm3-edge-limiter:
+    image: ${KIPNERTER_LFM3_EDGE_IMAGE:?Approved immutable nginx digest is required}
+    container_name: kipnerter-lfm3-edge-limiter
+    # Loopback in the EXISTING Caddy network namespace: no bridge listener
+    # or published port, and no other bridge container can forge client-IP.
+    network_mode: "container:kipnerter-caddy-1"
+    restart: "no"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    cpus: 0.25
+    mem_limit: 96m
+    memswap_limit: 128m
+    pids_limit: 32
+    volumes:
+      - type: bind
+        source: ${KIPNERTER_LFM3_EDGE_CONFIG:?Approved read-only nginx.conf path is required}
+        target: /etc/nginx/nginx.conf
+        read_only: true
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=16m
+      - /var/cache/nginx:rw,nosuid,nodev,size=16m
