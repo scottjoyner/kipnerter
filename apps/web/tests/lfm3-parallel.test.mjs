@@ -145,16 +145,20 @@ test("preassigned GPUs use an unused OptiPlex CPU spare when one GPU fails", asy
   assert.equal(calls.filter(x=>x.prompt.includes("Answer this question using")).length,1);
 });
 test("three perspectives preassign distinct GPU/GPU/CPU hosts without collisions", async () => {
-  const third={...nodes[0],name:"three-optiplex",role:"overflow",
+  // Use independent state keys: a prior negative test deliberately leaves a
+  // different worker in circuit-breaker cooldown.
+  const gpu1={...nodes[0],name:"three-r9700",role:"interactive"};
+  const gpu2={...nodes[1],name:"three-rx480",role:"interactive"};
+  const cpu={...nodes[0],name:"three-optiplex",role:"overflow",
     baseUrl:"http://100.69.158.114:19176"};
   const {fetchImpl}=transport();
   const result=await runParallelLFM3Research({
-    ...args,authorized:true,nodes:[...nodes,third],
+    ...args,authorized:true,nodes:[gpu1,gpu2,cpu],
     subtasks:["Analyze throughput","Analyze memory","Analyze operational risk"],
     fetchImpl
   });
   assert.equal(result.status,200);
-  assert.deepEqual(result.workerRuntimes,["parallel-alpha","parallel-beta","three-optiplex"]);
+  assert.deepEqual(result.workerRuntimes,["three-r9700","three-rx480","three-optiplex"]);
 });
 test("a busy GPU is not assigned to another parallel task, CPU can fill its slot", async () => {
   const first={...nodes[0],name:"busy-preassign-r9700",role:"interactive"};
