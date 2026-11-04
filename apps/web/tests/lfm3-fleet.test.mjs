@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { endpointConfig, isLoaded, completeFleetChat, validateMessages } from "../lib/lfm3-fleet.mjs";
+import { endpointConfig, isLoaded, completeFleetChat, validateMessages, fitNodeContext } from "../lib/lfm3-fleet.mjs";
 
 const node = { name: "joyner", baseUrl: "http://100.83.215.83:1234", model: "liquid/lfm3-1.7b-q4", adapter: "lmstudio", maxInflight: 2 };
 const body = [{ role: "user", content: "Hello" }];
@@ -170,4 +170,42 @@ test("only recent contiguous conversation turns reach small LFM3 inference conte
 });
 test("oversized final Unicode prompt is rejected, not truncated", () => {
   assert.throws(() => validateMessages([{ role: "user", content: "界".repeat(3000) }]), /context budget/);
+});
+
+test("per-node budgets preserve the newest turn and fit CPU overflow context", () => {
+  const history = validateMessages([
+    {role:"user",content:"a".repeat(520)},
+    {role:"assistant",content:"b".repeat(520)},
+    {role:"user",content:"what is 2+2?"}
+  ]);
+  const gpu = fitNodeContext(history,{role:"interactive"});
+  const cpu = fitNodeContext(history,{role:"overflow"});
+  assert.equal(gpu.at(-1).content,"what is 2+2?");
+  assert.equal(cpu.at(-1).content,"what is 2+2?");
+  assert.ok(gpu.length > cpu.length, "GPU can preserve more context than CPU");
+  assert.ok(new TextEncoder().encode(cpu.map(m=>m.content).join("")).length < 900);
+});
+test("CPU must not silently truncate a latest turn larger than its context budget", () => {
+  const messages=validateMessages([{role:"user",content:"x".repeat(1000)}]);
+  assert.equal(fitNodeContext(messages,{role:"overflow"}),null);
+  assert.equal(fitNodeContext(messages,{role:"interactive"}).at(-1).content.length,1000);
+});
+test("long GPU conversation may fail over to CPU only with fitting recent turns", async () => {
+  const gpu={...node,name:"long-gpu",baseUrl:"http://100.78.106.121:19176",role:"interactive"};
+  const cpu={...node,name:"long-cpu",baseUrl:"http://100.69.158.114:19176",role:"overflow"};
+  let cpuBody;
+  const fetchImpl=async (url,options)=>{
+    if(url.includes("100.78.106.121"))throw Error("offline");
+    if(url.endsWith("/api/v1/models"))return Response.json({models:[{key:node.model,type:"llm",loaded_instances:[{id:node.model}]}]});
+    cpuBody=JSON.parse(options.body);
+    return Response.json({choices:[{message:{content:"4"}}]});
+  };
+  const history=Array.from({length:8},(_,i)=>({role:i%2?"assistant":"user",content:"turn-"+i+" "+"z".repeat(350)}));
+  history.push({role:"user",content:"Answer 2+2."});
+  const result=await completeFleetChat(history,{nodes:[gpu,cpu],fetchImpl});
+  assert.equal(result.status,200);
+  assert.equal(result.runtime,"long-cpu");
+  assert.equal(cpuBody.messages.at(-1).content,"Answer 2+2.");
+  assert.ok(cpuBody.messages.length < history.length);
+  assert.equal(cpuBody.max_tokens,256);
 });
