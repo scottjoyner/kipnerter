@@ -1,0 +1,20 @@
+[Unit]
+Description=Kipnerter dedicated LFM3-1.7B inference (RX480 Vulkan0, Tailnet-only)
+After=network-online.target
+[Service]
+Type=simple
+ExecStartPre=/home/scott/.local/libexec/kipnerter/lfm3-rx480-preflight.sh
+Environment=LD_LIBRARY_PATH=/home/scott/lfm3-research/build-vulkan/bin
+ExecStart=/home/scott/lfm3-research/build-vulkan/bin/llama-server --model /home/scott/lfm3-research/gguf/LFM3-1.7B-QAD-Q4_0.gguf --alias lfm3-1.7b-rx480 --host 100.78.106.121 --port 19176 --device Vulkan0 --n-gpu-layers 99 --ctx-size 2048 --parallel 1 --threads 3 --threads-batch 3 --batch-size 128 --ubatch-size 64 --api-key-file /home/scott/.config/kipnerter/lfm3-rx480.key --offline --no-webui
+Restart=on-failure
+RestartSec=15s
+TimeoutStartSec=45s
+MemoryMax=4G
+TasksMax=128
+CPUQuota=250%
+Nice=10
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+[Install]
+WantedBy=default.target
