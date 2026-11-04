@@ -1,7 +1,7 @@
 # Kipnerter public home chat: LFM3-1.7B fleet
 
 ## Scope and boundaries
-- Public `/` is a conversational UI. Authenticated `/chat` remains a separate **read-only** fleet console.
+- Public `/` and `/chat` share the same LFM3-1.7B conversational UI and `POST /api/chat/completions` contract. Authenticated `/fleet` remains a separate **read-only** fleet console; its private portal API access checks are unchanged.
 - The Next.js server, not the browser, calls private, explicitly configured fleet nodes over the Tailnet. No client-supplied URLs, model IDs, credentials, or tool definitions.
 - This initial slice is **model-only** text chat. It does NOT invoke Hermes or any shell/tool, auto-load model weights, deploy services, expose SensorGraft data, or change production.
 - Fail closed if no verified LFM3-1.7B instance responds. Never substitute Ornith, LFM2.5 or a catalog-only entry.

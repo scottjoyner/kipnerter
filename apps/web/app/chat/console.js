@@ -142,7 +142,7 @@ export default function FleetConsole({ email }) {
         <div className="sidebar-status"><span className="pulse" />Private fleet · authenticated</div>
         <div className="sidebar-identity"><span className="avatar">{email[0]?.toUpperCase()}</span>
           <span className="identity-name">{email}<small>Authorized operator</small></span></div>
-        <a className="signout-link" href="/api/auth/signout?callbackUrl=%2Fchat">Sign out ↗</a>
+        <a className="signout-link" href="/api/auth/signout?callbackUrl=%2Ffleet">Sign out ↗</a>
       </div>
     </aside>
     <main className="portal-main">

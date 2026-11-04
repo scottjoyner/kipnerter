@@ -128,7 +128,7 @@ h1 { font-size: clamp(3rem, 8vw, 6.8rem); line-height: .94; letter-spacing: -.05
 .chat-compose-send:not(:disabled):hover { background: #c1ddff; }
 @media (max-width: 600px) { .fleet-chat-message.question, .fleet-chat-message.answer { margin: 0; } }
 
-/* Public fleet-model home chat. Private /chat fleet console retains independent authentication. */
+/* Public fleet-model home chat. Private /fleet console retains independent authentication. */
 .public-chat { min-height:100dvh; display:flex; flex-direction:column; background:radial-gradient(circle at 50% 0%,#152541 0%,#0a0e17 48%); }
 .public-chat-header { min-height:70px; display:flex; align-items:center; justify-content:space-between; gap:20px; padding:16px clamp(20px,5vw,68px); border-bottom:1px solid #233049; }
 .public-chat-header nav a { color:#aebedf; font-size:13px; }

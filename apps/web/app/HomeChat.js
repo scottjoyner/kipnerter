@@ -49,7 +49,8 @@ export default function HomeChat() {
     <header className="public-chat-header">
       <a className="public-chat-brand" href="/">K<span>·</span> KIPNERTER</a>
       <nav aria-label="Kipnerter navigation">
-        <a href="/chat">Private fleet console</a>
+        <a href="/chat">Chat</a>
+        <a href="/fleet">Private fleet console</a>
       </nav>
     </header>
     <section className="public-chat-main" aria-label="LFM3 conversation">
