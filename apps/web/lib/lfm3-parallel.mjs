@@ -1,12 +1,41 @@
 // Model-only bounded fan-out for a *trusted*, authenticated orchestrator.
 // Not imported by anonymous home chat and never performs tool execution.
-import { completeFleetChat, DISPLAY_MODEL, fleetRuntimeSnapshot } from "./lfm3-fleet.mjs";
+import { completeFleetChat, DISPLAY_MODEL, fleetRuntimeSnapshot, fitNodeContext, validateMessages } from "./lfm3-fleet.mjs";
 
 const limit = (value, maximum) => typeof value === "string" &&
   value.trim().length > 0 && value.length <= maximum;
 function physicalHost(node) {
   try { return new URL(node.baseUrl).hostname.toLowerCase(); }
   catch { return null; }
+}
+
+// A response can succeed on every worker but fail during synthesis if 2–3
+// long excerpts plus the user question overflow the small local model context.
+// Allocate one equal Unicode-safe excerpt budget and check the *actual*
+// configured node limits before spending another generation request.
+export function fitResearchSynthesis(question, workers, nodes) {
+  const prefix = "Answer this question using independent LFM3 summaries. " +
+    "Do not claim external verification or tool use. Note uncertainty or disagreement." +
+    "\\nQuestion: " + question + "\\n";
+  const excerpts = workers.map(worker => Array.from(worker.reply.trim()));
+  const compose = length => prefix + excerpts.map((text, i) =>
+    "Worker " + (i + 1) + ": " + text.slice(0, length).join("")).join("\\n");
+  const fits = text => {
+    try {
+      const payload = validateMessages([{ role: "user", content: text }]);
+      return nodes.some(node => fitNodeContext(payload, node) !== null);
+    } catch { return false; }
+  };
+  // Require enough actual content for each independent perspective, but fail
+  // closed rather than publishing an answer based on empty summaries.
+  if (!fits(compose(24))) return null;
+  let low = 24, high = 450;
+  while (low < high) {
+    const midpoint = Math.ceil((low + high) / 2);
+    if (fits(compose(midpoint))) low = midpoint;
+    else high = midpoint - 1;
+  }
+  return compose(low);
 }
 
 
@@ -85,14 +114,12 @@ export async function runParallelLFM3Research({
       new Set(physicalRuntimes).size !== workers.length) {
     return { status: 503, error: "Distinct LFM3 workers were not available for independent research." };
   }
-  const excerpts = workers.map((worker, i) =>
-    "Worker " + (i + 1) + " (" + subtasks[i] + "): " + worker.reply.slice(0, 450));
+  const synthesis = fitResearchSynthesis(question, workers, nodes);
+  if (!synthesis) {
+    return { status: 413, error: "Question and independent LFM3 summaries exceed the available synthesis context." };
+  }
   const composed = await completeFleetChat([
-    { role: "user", content: [
-      "Answer this question using the independent LFM3 research summaries. ",
-      "Do not claim external verification or tool use. Note uncertainty or disagreement.",
-      "\nQuestion: " + question, "\n" + excerpts.join("\n"),
-    ].join("") },
+    { role: "user", content: synthesis },
   ], { ...options, nodes });
   if (composed.status !== 200) {
     return { status: 503, error: "LFM3 synthesis unavailable." };
