@@ -56,9 +56,12 @@ http://:18111 {
     handle { respond "Not found" 404 }
 }
 CADDY
+# The installed Caddy image's binary carries Linux file capabilities.
+# Do not apply no-new-privileges/cap-drop to this throwaway Caddy process:
+# they can prevent exec entirely. It still has NO network uplink, no mounted
+# secrets or host port, a read-only rootfs and bounded memory/CPU.
 docker run -d --name "$caddy" --network none --read-only \
   --cpus 0.2 --memory 96m --pids-limit 30 \
-  --cap-drop ALL --security-opt no-new-privileges:true \
   --tmpfs /tmp:rw,nosuid,nodev,size=8m,mode=1777 \
   --tmpfs /config:rw,nosuid,nodev,size=8m \
   --tmpfs /data:rw,nosuid,nodev,size=8m \
