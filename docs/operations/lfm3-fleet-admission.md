@@ -10,10 +10,10 @@ evidence of a public kipnerter.com deployment or TestFlight release.
 | Joyner / R9700 | Vulkan1 research instance, proxied by rootless `socat` | `100.83.215.83:19176` | `lfm3-1.7b-research` | HEALTH / AUTH PASS; complete authenticated answer still to verify |
 | Deathstar / RX 480 | Dedicated Vulkan0 llama.cpp, QAD-Q4_0 | `100.78.106.121:19176` | `lfm3-1.7b-rx480` | HEALTH / AUTH PASS; localhost canary returned a correct nonempty answer |
 | OptiPlex | Dedicated CPU-only AVX2 llama.cpp, Q4_K_M | `100.69.158.114:19176` | `lfm3-1.7b-optiplex` | HEALTH / AUTH PASS; localhost canary returned a correct nonempty answer |
-| Lenovo | LFM3 GGUF and CPU research benchmark only | none | none | HOLD: older installed server does not recognize LFM3 |
+| Lenovo | LFM3 Q4_K_M GGUF and rebuilt CPU llama.cpp server | none | none | HOLD: slow system-disk I/O prevented timely model startup; canary stopped |
 | x1-370 | Existing locally loaded workhorse models | unchanged | n/a | Preserve local work; do not require node for public chat |
 
-All three newly installed listeners are **Tailnet-bound** rather than publicly
+Lenovo's legacy LM Studio server rejected the LFM3 architecture. A compatible\nCPU research server was rebuilt without installing system packages, but model\nstartup was observed in kernel block-I/O wait: only ~108 MB had been read after\n39 seconds. Its local canary was terminated cleanly, existing listeners were\nunchanged, and **no Lenovo service was admitted**. Address disk throughput or\nmodel staging on faster media before retrying. Beelink, Destroyer and xwing\nalso contain LFM3 artifacts, but were not admitted because of current workload\nand RAM constraints.\n\nAll three newly installed listeners are **Tailnet-bound** rather than publicly
 internet-bound. Model listing without a bearer token returned HTTP 401 on each.
 These checks confirm that an ingress exists and rejects missing credentials;
 they do **not** prove end-to-end generation through the public gateway. The
