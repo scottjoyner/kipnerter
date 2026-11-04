@@ -92,7 +92,22 @@ export function validateMessages(messages) {
     return { role: m.role, content: m.content.trim() };
   });
   if (clean.at(-1).role !== "user") throw new Error("last message must be user");
-  return [{ role: "system", content: SYSTEM_PROMPT }, ...clean];
+  // A dozen individually valid messages can exceed a 1536-token CPU slot.
+  // Keep the newest contiguous turns within a conservative UTF-8 byte budget;
+  // never silently truncate the latest user prompt.
+  const budgetBytes = 5000;
+  const recent = [];
+  let used = 0;
+  for (let i = clean.length - 1; i >= 0; i--) {
+    const cost = new TextEncoder().encode(clean[i].content).byteLength + 24;
+    if (used + cost > budgetBytes) {
+      if (!recent.length) throw new Error("last message exceeds LFM3 context budget");
+      break;
+    }
+    recent.unshift(clean[i]);
+    used += cost;
+  }
+  return [{ role: "system", content: SYSTEM_PROMPT }, ...recent];
 }
 export async function completeFleetChat(messages, {
   nodes, fetchImpl = fetch, token = "", resolveToken = null, signal,
