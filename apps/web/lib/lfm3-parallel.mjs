@@ -39,11 +39,13 @@ export async function runParallelLFM3Research({
   // A simultaneous worker can fail over onto a node that just completed
   // another perspective. Reject duplicate runtime provenance rather than
   // presenting two outputs from one node as independent analyses.
+  const physicalRuntimes = workers.map(result => {
+    const match = nodes.find(node => node.name === result.runtime);
+    return match ? physicalHost(match) : null;
+  });
   if (new Set(workers.map(result => result.runtime)).size !== workers.length ||
-      new Set(workers.map(result => {
-        const match = nodes.find(node => node.name === result.runtime);
-        return match ? physicalHost(match) : null;
-      })).size !== workers.length) {
+      physicalRuntimes.some(host => !host) ||
+      new Set(physicalRuntimes).size !== workers.length) {
     return { status: 503, error: "Distinct LFM3 workers were not available for independent research." };
   }
   const excerpts = workers.map((worker, i) =>
