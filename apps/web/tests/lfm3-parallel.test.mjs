@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { runParallelLFM3Research } from "../lib/lfm3-parallel.mjs";
+import { runParallelLFM3Research, fitResearchSynthesis } from "../lib/lfm3-parallel.mjs";
 import { completeFleetChat } from "../lib/lfm3-fleet.mjs";
 
 const model = "lfm3-1.7b-research";
@@ -194,4 +194,64 @@ test("a busy GPU is not assigned to another parallel task, CPU can fill its slot
     release();
     await holding;
   }
+});
+
+test("long independent responses are budgeted before synthesis without losing the question", async () => {
+  const first={...nodes[0],name:"context-long-gpu-one",role:"interactive"};
+  const second={...nodes[1],name:"context-long-gpu-two",role:"interactive"};
+  const calls=[];
+  const question="Evaluate a detailed scientific comparison of three candidate systems";
+  const fetchImpl=async (url,options)=>{
+    if(url.endsWith("/v1/models"))return Response.json({data:[{id:model}]});
+    const prompt=JSON.parse(options.body).messages.at(-1).content;
+    calls.push(prompt);
+    const answer=prompt.startsWith("Answer this question using")
+      ? "The results agree, with some uncertainty."
+      : "Compute and compare. ".repeat(105);
+    return Response.json({choices:[{message:{content:answer}}]});
+  };
+  const result=await runParallelLFM3Research({
+    ...args,authorized:true,question,nodes:[first,second],fetchImpl
+  });
+  assert.equal(result.status,200);
+  assert.equal(calls.length,3);
+  const synthesis=calls.at(-1);
+  assert.match(synthesis,/Answer this question using/);
+  assert.ok(synthesis.includes(question));
+  assert.match(synthesis,/Worker 1:/);
+  assert.match(synthesis,/Worker 2:/);
+  assert.ok(synthesis.length < 1100, "must use limited synthesis budget");
+  assert.equal((synthesis.match(/Worker /g)||[]).length,2);
+});
+
+test("three large UTF8 research summaries fit one configured GPU synthesis context", async () => {
+  const workers=Array.from({length:3},()=>({
+    reply:"scientific perspective 🌎🔬 corroborating ".repeat(40)
+  }));
+  const cpu={...nodes[0],name:"synthesis-overflow-cpu",role:"overflow"};
+  const gpu={...nodes[0],name:"synthesis-gpu",role:"interactive"};
+  const question="Q ".repeat(140);
+  const synthesis=fitResearchSynthesis(question,workers,[cpu,gpu]);
+  assert.ok(synthesis, "synthesis should cap snippets against a real GPU context");
+  assert.ok(synthesis.includes(question));
+  assert.equal((synthesis.match(/Worker /g)||[]).length,3);
+  assert.ok(Buffer.byteLength(synthesis,"utf8") < 1100);
+  assert.equal(synthesis.includes("�"),false, "never split Unicode surrogate pairs");
+});
+
+test("unfit synthesis returns a clear context error, not an invented complete answer", async () => {
+  const first={...nodes[0],name:"synthesis-unfit-one",role:"interactive"};
+  const second={...nodes[1],name:"synthesis-unfit-two",role:"interactive"};
+  let completions=0;
+  const fetchImpl=async (url,opts)=>{
+    if(url.endsWith("/v1/models"))return Response.json({data:[{id:model}]});
+    completions++;
+    return Response.json({choices:[{message:{content:"Safe worker output"}}]});
+  };
+  const question="Z".repeat(690);
+  const result=await runParallelLFM3Research({...args,authorized:true,question,
+    nodes:[first,second],fetchImpl});
+  assert.notEqual(result.status,200);
+  assert.equal(completions,2,"must not issue a synthesis model call if it cannot fit");
+  assert.match(result.error,/synthesis context/);
 });
