@@ -1,13 +1,23 @@
 import { completeFleetChat, endpointConfig } from "../../../../lib/lfm3-fleet.mjs";
 import { boundedJson } from "../../../../lib/stream-utils.mjs";
+import { isIP } from "node:net";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const perClient = new Map();
+export function canonicalClientIp(request) {
+  // This route is reached only through the Caddy reverse proxy in production.
+  // The final hop of X-Forwarded-For is the proxy-appended remote address;
+  // never trust a caller-supplied X-Real-IP or the spoofable first XFF entry.
+  // Caddy must continue to overwrite/append the canonical remote IP.
+  const chain = request.headers.get("x-forwarded-for") || "";
+  const last = chain.split(",").at(-1)?.trim() || "";
+  return isIP(last) ? last : "unknown";
+}
 function allowed(request) {
-  // Defense in depth only. Enforce canonical IP rate limits and bot protection at Caddy.
-  const client = (request.headers.get("x-real-ip") || request.headers.get("x-forwarded-for") || "unknown").split(",")[0].trim().slice(0, 90);
+  // Process-local defense in depth; ingress must retain canonical-IP limits.
+  const client = canonicalClientIp(request);
   if (perClient.size > 5000) perClient.clear();
   const now = Date.now();
   const current = perClient.get(client);
