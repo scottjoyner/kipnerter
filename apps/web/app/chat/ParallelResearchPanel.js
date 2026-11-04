@@ -8,7 +8,30 @@ export default function ParallelResearchPanel() {
   const [busy, setBusy] = useState(false);
   const [answer, setAnswer] = useState(null);
   const [error, setError] = useState("");
+  const [workers, setWorkers] = useState(null);
+  const [checking, setChecking] = useState(false);
   const controller = useRef(null);
+
+  async function inspectFleet() {
+    if (checking || busy) return;
+    setChecking(true);
+    setError("");
+    try {
+      const response = await fetch("/api/chat/fleet-status", {
+        method: "GET", credentials: "same-origin", cache: "no-store",
+      });
+      const payload = await response.json();
+      if (!response.ok || !Array.isArray(payload.workers)) {
+        throw new Error(payload.error || "Fleet model discovery unavailable.");
+      }
+      setWorkers(payload.workers);
+    } catch (reason) {
+      setWorkers(null);
+      setError(reason.message || "Fleet model discovery failed.");
+    } finally {
+      setChecking(false);
+    }
+  }
 
   async function research(event) {
     event.preventDefault();
@@ -46,6 +69,21 @@ export default function ParallelResearchPanel() {
         <p>Opt-in · two independent fleet-model analyses, followed by synthesis. Requires an authorized operator session.</p>
       </div>
       <span className="state-badge">MODEL ONLY</span>
+    </div>
+    <div style={{ marginBottom: 14 }}>
+      <button type="button" onClick={inspectFleet} disabled={checking || busy}>
+        {checking ? "Checking model catalogs…" : "Detect fleet LFM3 workers"}
+      </button>
+      {workers && <div role="status" aria-live="polite" style={{ marginTop: 9 }}>
+        <strong>Configured workers</strong>
+        {workers.length === 0 ? <p>No LFM3 workers are configured.</p> : <ul>
+          {workers.map(item => <li key={item.name}>
+            <strong>{item.name}</strong> · {item.role === "overflow" ? "CPU / overflow" : "Interactive"} · {item.state}
+            {item.lastSuccessAt ? " · Served a request in this app process" : ""}
+          </li>)}
+        </ul>}
+        <small>Catalog-listed is not proof of loaded weights or successful generation.</small>
+      </div>}
     </div>
     <form onSubmit={research}>
       <label htmlFor="parallel-lfm3-question">Research question</label>
