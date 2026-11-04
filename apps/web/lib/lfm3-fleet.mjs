@@ -58,7 +58,8 @@ export function isLoaded(entry, node) {
 export async function endpointReady(node, { fetchImpl = fetch, token = "", signal } = {}) {
   const path = node.adapter === "lmstudio" ? "/api/v1/models" : "/v1/models";
   const res = await fetchImpl(node.baseUrl + path, {
-    method: "GET", headers: headers(token), signal: fetchSignal(signal, 3000), cache: "no-store",
+    method: "GET", headers: headers(token), signal: fetchSignal(signal, 3000),
+    redirect: "error", cache: "no-store",
   });
   const doc = await boundedJson(res, 128000);
   if (node.adapter === "lmstudio") return Array.isArray(doc.models) && doc.models.some(m => isLoaded(m, node));
@@ -157,6 +158,9 @@ export async function completeFleetChat(messages, {
       if (!fitted) continue; // This node cannot hold the latest user turn.
       const upstream = await fetchImpl(node.baseUrl + "/v1/chat/completions", {
         method: "POST", signal: fetchSignal(signal, attemptMs),
+        // Never follow a model-server redirect to an unapproved host with
+        // private fleet payloads or credentials.
+        redirect: "error",
         headers: { ...headers(nodeToken), "Content-Type": "application/json" },
         body: JSON.stringify({ model: node.model, messages: fitted, stream: false,
           max_tokens: node.role === "overflow" ? 256 : 512,
