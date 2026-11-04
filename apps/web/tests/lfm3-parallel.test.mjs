@@ -254,3 +254,100 @@ test("CPU-only oversized research preflights synthesis before burning model requ
   assert.equal(requests,0,"must not issue catalog or generation calls if synthesis cannot fit");
   assert.match(result.error,/synthesis context/);
 });
+
+const shortTimeouts = { totalMs: 120, fanoutMs: 25, spareMs: 25, synthesisMs: 25 };
+async function waitForAbort(signal) {
+  if (signal.aborted) return;
+  await new Promise(resolve => signal.addEventListener("abort", resolve, { once: true }));
+}
+
+test("slow GPU worker ends with bounded 504 and no synthesis or CPU overload", async () => {
+  const gpuA = { ...nodes[0], name:"budget-fanout-r9700", role:"interactive" };
+  const gpuB = { ...nodes[1], name:"budget-fanout-rx480", role:"interactive" };
+  const requests = [];
+  const fetchImpl = async (url,opts) => {
+    if(url.endsWith("/v1/models")) return Response.json({data:[{id:model}]});
+    requests.push(url);
+    if(url.includes("100.78.106.121")) {
+      await waitForAbort(opts.signal);
+      throw Error("worker stopped at deadline");
+    }
+    return Response.json({choices:[{message:{content:"GPU A finished"}}]});
+  };
+  const started = Date.now();
+  const result = await runParallelLFM3Research({
+    ...args, authorized:true, nodes:[gpuA,gpuB],
+    fetchImpl, timeoutPolicy:shortTimeouts,
+  });
+  assert.equal(result.status,504);
+  assert.ok(Date.now()-started < 1000);
+  assert.match(result.error,/time budget/);
+  assert.equal(requests.filter(x=>x.includes("chat/completions")).length,2,
+    "must never start synthesis after a fanout deadline");
+});
+
+test("CPU spare deadline cancels recovery without publishing partial research", async () => {
+  const gpuA = { ...nodes[0], name:"budget-spare-r9700", role:"interactive" };
+  const gpuB = { ...nodes[1], name:"budget-spare-rx480", role:"interactive" };
+  const cpu = { ...nodes[0], name:"budget-spare-optiplex", role:"overflow",
+    baseUrl:"http://100.69.158.114:19176" };
+  const requests = [];
+  const fetchImpl = async (url,opts) => {
+    if(url.endsWith("/v1/models")) return Response.json({data:[{id:model}]});
+    requests.push(url);
+    if(url.includes("100.78.106.121")) throw Error("simulated failed GPU");
+    if(url.includes("100.69.158.114")) {
+      await waitForAbort(opts.signal);
+      throw Error("CPU spare timed out");
+    }
+    return Response.json({choices:[{message:{content:"successful GPU"}}]});
+  };
+  const result = await runParallelLFM3Research({
+    ...args,authorized:true,nodes:[gpuA,gpuB,cpu],
+    fetchImpl,timeoutPolicy:shortTimeouts,
+  });
+  assert.equal(result.status,504);
+  assert.equal(requests.filter(x=>x.includes("chat/completions")).length,3);
+});
+
+test("synthesis deadline cannot publish an unfinished final answer", async () => {
+  const gpuA = { ...nodes[0], name:"budget-synth-r9700", role:"interactive" };
+  const gpuB = { ...nodes[1], name:"budget-synth-rx480", role:"interactive" };
+  let synthesisCalls = 0;
+  const fetchImpl = async (url,opts) => {
+    if(url.endsWith("/v1/models")) return Response.json({data:[{id:model}]});
+    const msg = JSON.parse(opts.body).messages.at(-1).content;
+    if(msg.startsWith("Answer this question using")) {
+      synthesisCalls++;
+      await waitForAbort(opts.signal);
+      throw Error("synthesis timed out");
+    }
+    return Response.json({choices:[{message:{content:"Independent completed reasoning."}}]});
+  };
+  const result = await runParallelLFM3Research({
+    ...args,authorized:true,nodes:[gpuA,gpuB],
+    fetchImpl,timeoutPolicy:shortTimeouts,
+  });
+  assert.equal(result.status,504);
+  assert.equal(synthesisCalls,1);
+  assert.match(result.error,/time budget/);
+});
+
+test("client cancellation remains a distinct 499 response", async () => {
+  const gpuA = { ...nodes[0], name:"budget-cancel-r9700", role:"interactive" };
+  const gpuB = { ...nodes[1], name:"budget-cancel-rx480", role:"interactive" };
+  const controller = new AbortController();
+  const fetchImpl = async (url,opts) => {
+    if(url.endsWith("/v1/models")) return Response.json({data:[{id:model}]});
+    await waitForAbort(opts.signal);
+    throw Error("user cancelled");
+  };
+  const operation = runParallelLFM3Research({
+    ...args,authorized:true,nodes:[gpuA,gpuB],
+    fetchImpl,signal:controller.signal,timeoutPolicy:shortTimeouts,
+  });
+  setTimeout(()=>controller.abort(),10);
+  const result=await operation;
+  assert.equal(result.status,499);
+  assert.match(result.error,/cancelled/i);
+});
