@@ -1,3 +1,4 @@
+import { resolveFleetNodeCredential } from "../../../../lib/lfm3-credentials.mjs";
 import { getServerSession } from "next-auth";
 import { authOptions, authReady, isAllowed } from "../../../../lib/auth.js";
 import { boundedJson } from "../../../../lib/stream-utils.mjs";
@@ -85,9 +86,7 @@ export async function POST(request) {
         "Independently examine assumptions, uncertainty, failure modes, and alternatives.",
       ],
       nodes,
-      resolveToken: node => node.credentialEnv
-        ? process.env[node.credentialEnv] || ""
-        : process.env.KIPNERTER_LFM3_BEARER || "",
+      resolveToken: resolveFleetNodeCredential,
       signal: request.signal,
     });
     return Response.json(result.status === 200 ? result : { error: result.error },
