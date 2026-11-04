@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { runParallelLFM3Research } from "../lib/lfm3-parallel.mjs";
+import { completeFleetChat } from "../lib/lfm3-fleet.mjs";
 
 const model = "lfm3-1.7b-research";
 const nodes = [
@@ -88,7 +89,7 @@ test("two successful fallbacks to one physical node cannot masquerade as indepen
   const result=await runParallelLFM3Research({...args,authorized:true,
     nodes:[primary,offline],fetchImpl});
   assert.equal(result.status,503);
-  assert.match(result.error,/Distinct LFM3 workers/);
+  assert.match(result.error,/worker was unavailable/);
   assert.equal(completions.filter(x=>x.question.includes("Answer this question using")).length,0,
     "no synthesis should run when independent provenance failed");
 });
@@ -119,4 +120,74 @@ test("model results on different runtime names but one physical host cannot be s
     nodes:[physical,overflowAlias],fetchImpl});
   assert.equal(result.status,400);
   assert.equal(observed.length,0);
+});
+
+test("preassigned GPUs use an unused OptiPlex CPU spare when one GPU fails", async () => {
+  const first={...nodes[0],name:"reserve-r9700",role:"interactive"};
+  const second={...nodes[1],name:"reserve-rx480",role:"interactive"};
+  const spare={...nodes[0],name:"reserve-optiplex",
+    baseUrl:"http://100.69.158.114:19176",role:"overflow"};
+  const calls=[];
+  const fetchImpl=async (url,opts)=>{
+    if(url.endsWith("/v1/models"))return Response.json({data:[{id:model}]});
+    const prompt=JSON.parse(opts.body).messages.at(-1).content;
+    calls.push({url,prompt});
+    if(url.includes("100.78.106.121"))throw Error("GPU model failed");
+    return Response.json({choices:[{message:{content:"4"}}]});
+  };
+  const result=await runParallelLFM3Research({...args,authorized:true,
+    nodes:[first,second,spare],fetchImpl});
+  assert.equal(result.status,200);
+  assert.deepEqual(result.workerRuntimes,["reserve-r9700","reserve-optiplex"]);
+  assert.equal(calls.filter(x=>x.url.includes("100.78.106.121")).length,1);
+  assert.equal(calls.filter(x=>x.url.includes("100.69.158.114")).length,1);
+  assert.equal(new Set(result.workerRuntimes).size,2);
+  assert.equal(calls.filter(x=>x.prompt.includes("Answer this question using")).length,1);
+});
+test("three perspectives preassign distinct GPU/GPU/CPU hosts without collisions", async () => {
+  const third={...nodes[0],name:"three-optiplex",role:"overflow",
+    baseUrl:"http://100.69.158.114:19176"};
+  const {fetchImpl}=transport();
+  const result=await runParallelLFM3Research({
+    ...args,authorized:true,nodes:[...nodes,third],
+    subtasks:["Analyze throughput","Analyze memory","Analyze operational risk"],
+    fetchImpl
+  });
+  assert.equal(result.status,200);
+  assert.deepEqual(result.workerRuntimes,["parallel-alpha","parallel-beta","three-optiplex"]);
+});
+test("a busy GPU is not assigned to another parallel task, CPU can fill its slot", async () => {
+  const first={...nodes[0],name:"busy-preassign-r9700",role:"interactive"};
+  const second={...nodes[1],name:"busy-preassign-rx480",role:"interactive"};
+  const spare={...nodes[0],name:"busy-preassign-optiplex",role:"overflow",
+    baseUrl:"http://100.69.158.114:19176"};
+  let started,release;
+  const arrived=new Promise(resolve=>{started=resolve;});
+  const held=new Promise(resolve=>{release=resolve;});
+  const holderFetch=async url=>{
+    if(url.endsWith("/v1/models"))return Response.json({data:[{id:model}]});
+    started();
+    await held;
+    return Response.json({choices:[{message:{content:"occupied request complete"}}]});
+  };
+  const holding=completeFleetChat([{role:"user",content:"Hold one GPU slot"}],{
+    nodes:[first],fetchImpl:holderFetch
+  });
+  try {
+    await arrived;
+    const calls=[];
+    const fetchImpl=async (url,opts)=>{
+      if(url.endsWith("/v1/models"))return Response.json({data:[{id:model}]});
+      calls.push(url);
+      return Response.json({choices:[{message:{content:"valid"}}]});
+    };
+    const result=await runParallelLFM3Research({...args,authorized:true,
+      nodes:[first,second,spare],fetchImpl});
+    assert.equal(result.status,200);
+    assert.deepEqual(result.workerRuntimes,["busy-preassign-rx480","busy-preassign-optiplex"]);
+    assert.equal(calls.some(url=>url.includes("100.83.215.83")),false);
+  } finally {
+    release();
+    await holding;
+  }
 });
