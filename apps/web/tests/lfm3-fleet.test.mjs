@@ -357,3 +357,31 @@ test("failed generation opens a bounded circuit-breaker cooldown", async () => {
   assert.equal(second.status,503);
   assert.equal(calls,count,"cooling down must avoid repeated upstream requests");
 });
+
+test("oversized newest turn fails before GPU or CPU lookup instead of misreporting outage", async () => {
+  const gpu={...node,name:"preflight-size-gpu",adapter:"openai",role:"interactive"};
+  const cpu={...node,name:"preflight-size-cpu",adapter:"openai",role:"overflow"};
+  let requests=0;
+  const result=await completeFleetChat([
+    {role:"user",content:"a".repeat(2000)}
+  ],{nodes:[gpu,cpu],fetchImpl:async()=>{requests++;throw Error("never called");}});
+  assert.equal(result.status,413);
+  assert.match(result.error,/latest message exceeds/i);
+  assert.equal(requests,0,"no model catalog or generation calls for an unfit prompt");
+});
+test("an otherwise too-long CPU request remains eligible for fitting GPU contexts", async () => {
+  const gpu={...node,name:"preflight-fit-gpu",adapter:"openai",model:"lfm3-1.7b-preflight",role:"interactive"};
+  const cpu={...node,name:"preflight-unfit-cpu",adapter:"openai",model:"lfm3-1.7b-preflight",role:"overflow"};
+  const calls=[];
+  const fetchImpl=async (url,opts)=>{
+    calls.push(url);
+    if(url.endsWith("/v1/models")) return Response.json({data:[{id:gpu.model}]});
+    return Response.json({choices:[{message:{content:"valid"}}]});
+  };
+  const result=await completeFleetChat([{role:"user",content:"x".repeat(1000)}],{
+    nodes:[cpu,gpu],fetchImpl
+  });
+  assert.equal(result.status,200);
+  assert.equal(result.runtime,gpu.name);
+  assert.equal(calls.filter(x=>x.includes("/chat/completions")).length,1);
+});
