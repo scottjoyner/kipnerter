@@ -7,7 +7,7 @@ evidence of a public kipnerter.com deployment or TestFlight release.
 
 | Node | Runtime | Tailnet service | Model alias | Admission |
 | --- | --- | --- | --- | --- |
-| Joyner / R9700 | Vulkan1 research instance, proxied by rootless `socat` | `100.83.215.83:19176` | `lfm3-1.7b-research` | HEALTH / AUTH PASS; complete authenticated answer still to verify |
+| Joyner / R9700 | Vulkan1 research instance, proxied by rootless `socat` | `100.83.215.83:19176` | `lfm3-1.7b-research` | HEALTH / AUTH / nonempty generation PASS with thinking disabled; admission subject to memory and deployment secret gate |
 | Deathstar / RX 480 | Dedicated Vulkan0 llama.cpp, QAD-Q4_0 | `100.78.106.121:19176` | `lfm3-1.7b-rx480` | HEALTH / AUTH PASS; localhost canary returned a correct nonempty answer |
 | OptiPlex | Dedicated CPU-only AVX2 llama.cpp, Q4_K_M | `100.69.158.114:19176` | `lfm3-1.7b-optiplex` | HEALTH / AUTH PASS; localhost canary returned a correct nonempty answer |
 | Lenovo | LFM3 Q4_K_M GGUF and rebuilt CPU llama.cpp server | none | none | HOLD: slow system-disk I/O prevented timely model startup; canary stopped |
@@ -40,6 +40,8 @@ and ACLs, set the server-only `KIPNERTER_LFM3_ENDPOINTS` JSON array to:
     "adapter": "openai",
     "maxInflight": 1,
     "role": "interactive",
+    "disableThinking": true,
+    "maxOutputTokens": 256,
     "credentialEnv": "KIPNERTER_LFM3_TOKEN_R9700"
   },
   {
@@ -215,3 +217,22 @@ The code and tests for locked-down file mounts are newer than the
 image from a green exact-head commit before final release acceptance.
 The existing production container, Caddy routes and Apple distribution
 remain unchanged at this gate.
+
+## November 4: R9700 chat-generation acceptance
+
+An authenticated local request to the R9700's **already-running** Vulkan1
+LFM3 research server, `127.0.0.1:19175`, using its existing API key and the
+exact `lfm3-1.7b-research` alias returned a nonempty `"4"` answer in
+**0.50 seconds** with `finish_reason=stop`, 2 completion tokens, and
+`chat_template_kwargs.enable_thinking=false`. No model reload, listener
+change, or restart occurred. This supersedes the older nonempty-generation
+HOLD claim for **this bounded prompt**; p95 latency and quality under load
+are not yet established. The host reported only about 850 MiB available RAM
+during a prior inspection, so preserve `maxInflight=1` and verify resource
+headroom before adding production traffic.
+
+The gateway draft now supports explicit `disableThinking: true` and
+`maxOutputTokens: 256` only for this node. RX 480 and OptiPlex retain their
+prior defaults. This is a server-configuration choice, never a client-supplied
+tool or model override. Production web gateway key provisioning and live
+end-to-end HTTPS generation remain incomplete.
