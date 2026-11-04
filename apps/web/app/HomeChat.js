@@ -7,12 +7,7 @@ export default function HomeChat() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const controller = useRef(null);
-  async function submit(event) {
-    event.preventDefault();
-    if (!draft.trim() || busy) return;
-    const next = [...history, { role: "user", content: draft.trim() }].slice(-12);
-    setHistory(next);
-    setDraft("");
+  async function send(next) {
     setBusy(true);
     setError("");
     controller.current = new AbortController();
@@ -31,6 +26,19 @@ export default function HomeChat() {
       controller.current = null;
       setBusy(false);
     }
+  }
+  function submit(event) {
+    event.preventDefault();
+    if (!draft.trim() || busy) return;
+    const next = [...history, { role: "user", content: draft.trim() }].slice(-12);
+    setHistory(next);
+    setDraft("");
+    void send(next);
+  }
+  function retry() {
+    if (busy || history.at(-1)?.role !== "user") return;
+    // Reuse the failed turn instead of adding a duplicate user message.
+    void send(history);
   }
   function clear() {
     controller.current?.abort();
@@ -58,7 +66,10 @@ export default function HomeChat() {
       </div>}
       <div className="public-chat-bottom">
         {busy && <p className="public-chat-feedback" role="status">LFM3 is thinking…</p>}
-        {error && <p className="public-chat-error" role="alert">{error} Your last message remains in the conversation; retry when ready.</p>}
+        {error && <div className="public-chat-error" role="alert">
+          <p>{error} Your last message remains in the conversation.</p>
+          {history.at(-1)?.role === "user" && <button type="button" onClick={retry} disabled={busy}>Retry last message</button>}
+        </div>}
         <form className="public-chat-form" onSubmit={submit}>
           <label className="public-chat-hidden" htmlFor="public-chat-input">Message Kipnerter</label>
           <textarea id="public-chat-input" rows={3} maxLength={4000} placeholder="Message Kipnerter…"
