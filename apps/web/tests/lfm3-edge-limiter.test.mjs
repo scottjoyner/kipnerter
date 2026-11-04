@@ -8,6 +8,8 @@ const compose = readFileSync(
   new URL("../../../deploy/lfm3/edge/compose.edge-candidate.yml", import.meta.url), "utf8");
 const caddy = readFileSync(
   new URL("../../../deploy/lfm3/caddy.phase1.candidate.Caddyfile", import.meta.url), "utf8");
+const smoke = readFileSync(
+  new URL("../../../deploy/lfm3/edge/verify-isolated-limiter.sh", import.meta.url), "utf8");
 
 test("shared limiter listens on Caddy namespace loopback with no exposed port", () => {
   assert.match(nginx, /listen 127\.0\.0\.1:8094;/);
@@ -50,4 +52,19 @@ test("Caddy uses the loopback limiter and sanitizes client IP", () => {
   assert.match(caddy, /header_up X-Real-IP \{remote_host\}/);
   assert.match(caddy, /header_up X-Forwarded-For \{remote_host\}/);
   assert.doesNotMatch(caddy, /reverse_proxy kipnerter-lfm3-stage-provisioned:3000/);
+});
+
+test("offline limiter acceptance refuses mutable or uncached images and never accesses fleet models", () => {
+  assert.ok(smoke.includes("KIPNERTER_LFM3_EDGE_IMAGE"));
+  assert.ok(smoke.includes("@sha256:[a-f0-9]{64}$"));
+  assert.ok(smoke.includes('docker image inspect "$image"'));
+  assert.equal(smoke.includes("docker pull "), false);
+  assert.ok(smoke.includes("--network none"));
+  assert.ok(smoke.includes("--add-host kipnerter-lfm3-stage-provisioned:127.0.0.1"));
+  assert.ok(smoke.includes("--cap-drop ALL"));
+  assert.ok(smoke.includes("trap cleanup EXIT"));
+  assert.ok(smoke.includes("seen429=1"));
+  assert.ok(smoke.includes("No real gateway, model endpoint"));
+  assert.ok(compose.includes('user: "101:101"'));
+  assert.ok(compose.includes("mode=1777"));
 });
