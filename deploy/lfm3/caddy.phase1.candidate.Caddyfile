@@ -1,8 +1,9 @@
 # UNAPPLIED PHASE-1 CUTOVER CANDIDATE.
 #
 # REVIEW/HOLD: requires approved per-node secret provisioning, authenticated
-# staging completion, a SHARED abuse/rate limiter, an approved rollback and
-# authorization to touch live ingress. Stock Caddy 2.11.4 on this host has
+# staging completion, the separate verified shared limiter sidecar on Caddy's
+# loopback namespace, an approved rollback and authorization to touch live ingress.
+# Stock Caddy 2.11.4 on this host has
 # request_body but NOT the http.handlers.rate_limit plugin.
 #
 # Only the canonical host's POST completion route moves to the private LFM3
@@ -20,7 +21,7 @@ kipnerter.com, www.kipnerter.com, preview.kipnerter.com {
         request_body {
             max_size 8KB
         }
-        reverse_proxy kipnerter-lfm3-stage-provisioned:3000 {
+        reverse_proxy 127.0.0.1:8094 {
             # Overwrite client-injected IP chain before the Next.js limiter.
             header_up X-Forwarded-For {remote_host}
             header_up X-Real-IP {remote_host}
