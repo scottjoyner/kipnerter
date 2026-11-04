@@ -1,5 +1,5 @@
 import { getServerSession } from "next-auth";
-import { authOptions, authReady, isAllowed } from "../../../../lib/auth";
+import { authOptions, authReady, isAllowed } from "../../../../lib/auth.js";
 import { boundedJson } from "../../../../lib/stream-utils.mjs";
 import { endpointConfig } from "../../../../lib/lfm3-fleet.mjs";
 import { runParallelLFM3Research } from "../../../../lib/lfm3-parallel.mjs";
