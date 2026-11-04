@@ -258,7 +258,19 @@ test("CPU-only oversized research preflights synthesis before burning model requ
 const shortTimeouts = { totalMs: 120, fanoutMs: 25, spareMs: 25, synthesisMs: 25 };
 async function waitForAbort(signal) {
   if (signal.aborted) return;
-  await new Promise(resolve => signal.addEventListener("abort", resolve, { once: true }));
+  // AbortSignal.timeout timers are deliberately unref'd by Node. Keep the
+  // mocked test process alive so the abort event can actually be observed.
+  await new Promise((resolve, reject) => {
+    const observed = () => {
+      clearTimeout(watchdog);
+      resolve();
+    };
+    const watchdog = setTimeout(() => {
+      signal.removeEventListener("abort", observed);
+      reject(new Error("test watchdog: abort signal never arrived"));
+    }, 1000);
+    signal.addEventListener("abort", observed, { once: true });
+  });
 }
 
 test("slow GPU worker ends with bounded 504 and no synthesis or CPU overload", async () => {
