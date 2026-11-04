@@ -25,7 +25,7 @@ export function endpointConfig(raw) {
   const names = new Set();
   return parsed.map(row => {
     if (!row || typeof row !== "object" || Array.isArray(row)) throw new Error("invalid endpoint");
-    const { name, baseUrl, model, adapter = "lmstudio", maxInflight = 1, credentialEnv = null, role = "interactive" } = row;
+    const { name, baseUrl, model, adapter = "lmstudio", maxInflight = 1, credentialEnv = null, role = "interactive", disableThinking = false, maxOutputTokens = null } = row;
     if (typeof name !== "string" || !/^[a-zA-Z0-9_-]{1,48}$/.test(name) || names.has(name)) throw new Error("invalid node name");
     names.add(name);
     if (typeof baseUrl !== "string" || baseUrl.length > 250) throw new Error("invalid endpoint URL");
@@ -38,7 +38,9 @@ export function endpointConfig(raw) {
     if (!["lmstudio", "openai"].includes(adapter) || !Number.isInteger(maxInflight) || maxInflight < 1 || maxInflight > 8) throw new Error("invalid endpoint adapter or limit");
     if (credentialEnv !== null && (typeof credentialEnv !== "string" || !/^KIPNERTER_LFM3_TOKEN_[A-Z0-9_]{1,48}$/.test(credentialEnv))) throw new Error("invalid per-node credential reference");
     if (!["interactive", "overflow"].includes(role)) throw new Error("invalid endpoint role");
-    return { name, baseUrl: url.origin, model, adapter, maxInflight, credentialEnv, role };
+    if (typeof disableThinking !== "boolean" || (maxOutputTokens !== null &&
+        (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 32 || maxOutputTokens > 512))) throw new Error("invalid generation policy");
+    return { name, baseUrl: url.origin, model, adapter, maxInflight, credentialEnv, role, disableThinking, maxOutputTokens };
   });
 }
 
@@ -163,8 +165,9 @@ export async function completeFleetChat(messages, {
         redirect: "error",
         headers: { ...headers(nodeToken), "Content-Type": "application/json" },
         body: JSON.stringify({ model: node.model, messages: fitted, stream: false,
-          max_tokens: node.role === "overflow" ? 256 : 512,
-          temperature: 0.1, top_k: 50, repeat_penalty: 1.1 }),
+          max_tokens: node.maxOutputTokens ?? (node.role === "overflow" ? 256 : 512),
+          temperature: 0.1, top_k: 50, repeat_penalty: 1.1,
+          ...(node.disableThinking === true ? { chat_template_kwargs: { enable_thinking: false } } : {}) }),
         cache: "no-store",
       });
       if (!upstream.ok) {
