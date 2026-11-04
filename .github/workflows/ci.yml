@@ -123,6 +123,15 @@ jobs:
       - run: docker run --rm -v "$PWD/infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2 caddy validate --config /etc/caddy/Caddyfile
       - run: docker run --rm -v "$PWD/infra/caddy/Caddyfile.staging:/etc/caddy/Caddyfile:ro" caddy:2 caddy validate --config /etc/caddy/Caddyfile
       - run: docker compose build
+      - name: Run actual web app with local-only simulated model under Docker
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          DEMO=deploy/lfm3/demo/compose.simulated.yml
+          docker compose -f "$DEMO" config --quiet
+          trap 'docker compose -f "$DEMO" down --remove-orphans >/dev/null 2>&1 || true' EXIT
+          docker compose -f "$DEMO" up --build -d
+          bash deploy/lfm3/demo/smoke_docker.sh
 
   terraform:
     runs-on: ubuntu-latest
