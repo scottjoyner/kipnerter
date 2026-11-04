@@ -14,3 +14,14 @@ The test launches **the actual production-built Next.js web app** on a random lo
 **This is a simulated demo only.** The fixture emits `4 [SIMULATED DEMO RESPONSE - NOT REAL MODEL INFERENCE]`; it does not download or run model weights. This acceptance proves only local Next.js, UI routing and API behavior, not production readiness, private-worker credentials, the Caddy/Nginx chain, Tailnet ACLs, distributed capacity, iOS device behavior, or real LFM3 generation.
 
 For a *real* demo, run `deploy/lfm3/gateway-acceptance.mjs` against an approved, locally bound staging container after the secret mounts are provisioned. Require its `authenticated-staged-chat` PASS before considering any public cutover. Keep the existing production site and iOS TestFlight unchanged unless all release gates independently pass.
+
+
+## Clickable simulated demo
+
+After `npm ci` and `npm run build` in `apps/web`, start:
+
+```sh
+python3 ../../scripts/lfm3_demo_acceptance.py --serve
+```
+
+Open the printed local `http://127.0.0.1:PORT/chat` address in your browser. Both the Next.js app and fixture bind explicitly to `127.0.0.1`. The chat UI is the actual web implementation, but its replies are visibly labeled **SIMULATED DEMO RESPONSE**: no real model inference, private fleet, production route or Apple device is involved. Open `/fleet` to verify the separate protected operator boundary. Stop with Ctrl-C.

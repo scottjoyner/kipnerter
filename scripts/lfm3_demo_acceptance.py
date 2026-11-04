@@ -9,6 +9,7 @@ import os
 import signal
 import socket
 import subprocess
+import sys
 import time
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -98,7 +99,7 @@ def server_process(port, fixture_port):
         }]),
     })
     proc = subprocess.Popen(
-        ["node", "node_modules/next/dist/bin/next", "start", "-p", str(port)],
+        ["node", "node_modules/next/dist/bin/next", "start", "-p", str(port), "-H", "127.0.0.1"],
         cwd=WEB, env=env, stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         start_new_session=True,
@@ -131,7 +132,7 @@ def assert_ready(base, proc):
     raise AssertionError("isolated Next.js did not start")
 
 
-def run():
+def run(serve=False):
     if not (WEB / ".next").is_dir():
         raise AssertionError("run npm ci && npm run build in apps/web before the demo test")
     fixture_port, app_port = free_port(), free_port()
@@ -175,6 +176,14 @@ def run():
             print("PASS: real Next.js / and /chat, protected /fleet, exact model contract, 400/413, shared-IP 429")
             print(f"SIMULATED_FIXTURE_ONLY=true; accepted_model_calls={FixtureHandler.completions}")
             print("No live LFM3, production Caddy, private secrets, public traffic or Apple device exercised.")
+            if serve:
+                print("LOCAL SIMULATED DEMO ONLY: " + base + "/chat", flush=True)
+                print("The assistant replies are canned fixture text, not model inference. Press Ctrl-C to stop.", flush=True)
+                try:
+                    while proc.poll() is None:
+                        time.sleep(0.5)
+                except KeyboardInterrupt:
+                    pass
     finally:
         server.shutdown()
         server.server_close()
@@ -182,4 +191,6 @@ def run():
 
 
 if __name__ == "__main__":
-    run()
+    if len(sys.argv) > 2 or (len(sys.argv) == 2 and sys.argv[1] != "--serve"):
+        raise SystemExit("Usage: python3 scripts/lfm3_demo_acceptance.py [--serve]")
+    run(serve="--serve" in sys.argv[1:])
