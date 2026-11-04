@@ -191,3 +191,52 @@ edge, (5) prepared rollback and authorized public routing switch,
 (6) live public HTTPS acceptance, then (7) signed iOS/TestFlight
 approval. In particular, a configured 429 limiter cannot compensate
 for missing gateway credentials or an HTTP 404 public chat route.
+
+## Offline Caddy + Nginx chain acceptance — November 4, 2026
+
+The release branch now includes `edge/verify-isolated-caddy-chain.sh`,
+a second offline test that runs the **actual cached Caddy image**
+(current public container image ID
+`sha256:df7f1c2fb114453b951de51a98efc010db1655a92c2e86be6706714e2417a78d`)
+and the above digest-pinned official Nginx image in **throwaway containers
+sharing one network-disabled namespace**. The HTTP-only Caddy test
+listener faithfully mirrors the canonical host/path/method matcher,
+8 KB Caddy request-body policy, and IP-header sanitization from the
+unapplied phase-one candidate. The real Nginx config is only changed
+for the test to point its backend at a nonexistent local port, where
+HTTP 502 is the expected pre-limit response. Neither production Caddy
+nor the model gateway is contacted.
+
+The latest executed offline acceptance returned:
+
+- Wrong hostname `preview.kipnerter.com`: `404`, not routed.
+- Five canonical requests forged **five different**
+  `X-Real-IP` and `X-Forwarded-For` addresses; first three
+  produced `502`, fourth/fifth `429`. Because Nginx's global bucket
+  would not block as early as request four, this demonstrates that
+  Caddy correctly replaced the spoofed client-IP headers and the
+  **per-client** bucket grouped all five by observed source.
+- Direct requests to the isolated Nginx listener with five **distinct
+  synthetic** client keys then produced `502, 502, 502, 502, 429`.
+  This demonstrates that the independent **global shared-memory**
+  request bucket rejected traffic across distinct client identities.
+- The command printed
+  `PASS: isolated Caddy->Nginx canonical host, spoof-resistant per-client
+  429 and global 429`, then cleaned up its test containers.
+
+The Caddy test container uses default file-capability execution because
+the installed official Caddy binary cannot execute with both
+`--cap-drop ALL` and `no-new-privileges`. It still has
+`--network none`, no exposed host port, read-only rootfs, bounded
+memory/CPU, and no mounted secrets. The Nginx test container remains
+nonroot with all capabilities dropped. The production sidecar candidate
+itself is unchanged.
+
+**Scope of evidence:** Caddy-to-limiter request routing and basic
+forwarded-IP spoof protection passed **in an isolated HTTP test**.
+This does not prove correct behavior behind the actual public TLS
+entry point, load-balancer/CDN client identity, multiple Caddy
+replicas, production concurrency, or availability during container
+restarts. Exact-image provenance/approval, safe lifecycle,
+approved gateway key mounts and authenticated staging completion are
+still required before any public cutover or TestFlight release.
