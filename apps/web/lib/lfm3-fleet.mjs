@@ -5,6 +5,7 @@ import { boundedJson } from "./stream-utils.mjs";
 const MODEL_ID = /(?:^|[\/_-])lfm3[-_]?1[._-]?7b(?:$|[\/_-])/i;
 const active = new Map();
 const blockedUntil = new Map();
+const lastSuccessfulAt = new Map();
 let roundRobinCursor = 0;
 const SYSTEM_PROMPT = "You are Kipnerter, a helpful conversational assistant. Answer clearly and accurately. You cannot execute tools, browse private data, or act on the user's fleet through this public chat. Do not claim tool access.";
 export const DISPLAY_MODEL = "LFM3-1.7B";
@@ -134,6 +135,41 @@ export function fitNodeContext(payload, node) {
   return [payload[0], ...selected];
 }
 
+// Private-operator diagnostics: discover only *configured* LFM3 candidates.
+// An OpenAI model-list entry is catalog evidence, not loaded-model proof;
+// only a successful generation in this process can upgrade it to "served".
+export async function discoverFleetNodes(nodes, {
+  fetchImpl = fetch, resolveToken = null, token = "", signal,
+} = {}) {
+  if (!Array.isArray(nodes) || nodes.length > 16) throw new Error("invalid fleet roster");
+  return Promise.all(nodes.map(async node => {
+    const summary = {
+      name: node.name, role: node.role, maxInflight: node.maxInflight,
+      state: "unavailable",
+    };
+    try {
+      const key = resolveToken ? resolveToken(node) : token;
+      if (node.credentialEnv && !key) {
+        summary.state = "missing-credential";
+        return summary;
+      }
+      const advertised = await endpointReady(node, { fetchImpl, token: key, signal });
+      if (advertised) {
+        summary.state = node.adapter === "lmstudio" ? "loaded" : "catalog-listed";
+        const success = lastSuccessfulAt.get(node.name);
+        if (typeof success === "number" && Date.now() - success < 3600000) {
+          summary.state = "served";
+          summary.lastSuccessAt = new Date(success).toISOString();
+        }
+      }
+    } catch {
+      // Unavailable hosts remain unqualified, and error details are not
+      // returned to a client.
+    }
+    return summary;
+  }));
+}
+
 export async function completeFleetChat(messages, {
   nodes, fetchImpl = fetch, token = "", resolveToken = null, signal,
 } = {}) {
@@ -180,6 +216,7 @@ export async function completeFleetChat(messages, {
         blockedUntil.set(node.name, Date.now() + 10000);
         continue;
       }
+      lastSuccessfulAt.set(node.name, Date.now());
       return { status: 200, reply: content, model: DISPLAY_MODEL, runtime: node.name };
     } catch (error) {
       if (signal?.aborted) return { status: 499, error: "Request cancelled." };
