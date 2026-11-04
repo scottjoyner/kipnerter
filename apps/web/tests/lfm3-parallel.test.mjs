@@ -92,3 +92,31 @@ test("two successful fallbacks to one physical node cannot masquerade as indepen
   assert.equal(completions.filter(x=>x.question.includes("Answer this question using")).length,0,
     "no synthesis should run when independent provenance failed");
 });
+
+test("aliases or different ports on one physical host are not independent workers", async () => {
+  const one={...nodes[0],name:"gpu-alias-one"};
+  const second={...nodes[0],name:"gpu-alias-two",baseUrl:"http://100.83.215.83:19176"};
+  const {calls,fetchImpl}=transport();
+  const result=await runParallelLFM3Research({...args,authorized:true,
+    nodes:[one,second],fetchImpl});
+  assert.equal(result.status,400);
+  assert.match(result.error,/distinct physical fleet hosts/);
+  assert.equal(calls.length,0,"the alias attack must be rejected before inference");
+});
+test("model results on different runtime names but one physical host cannot be synthesized", async () => {
+  const physical={name:"one-gpu",baseUrl:"http://100.83.215.83:19175",
+    model,adapter:"openai",maxInflight:1,role:"interactive"};
+  const overflowAlias={name:"same-gpu-different-port",
+    baseUrl:"http://100.83.215.83:19176",
+    model,adapter:"openai",maxInflight:1,role:"interactive"};
+  const observed=[];
+  const fetchImpl=async (url,opts)=>{
+    observed.push(url);
+    if(url.endsWith("/v1/models"))return Response.json({data:[{id:model}]});
+    return Response.json({choices:[{message:{content:"model output"}}]});
+  };
+  const result=await runParallelLFM3Research({...args,authorized:true,
+    nodes:[physical,overflowAlias],fetchImpl});
+  assert.equal(result.status,400);
+  assert.equal(observed.length,0);
+});
