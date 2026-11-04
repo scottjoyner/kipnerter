@@ -121,3 +121,35 @@ test("missing required per-node credential fails closed without network requests
   assert.equal(result.status, 503);
   assert.equal(calls.length, 0);
 });
+
+test("interactive GPU nodes take precedence over lower-priority CPU overflow nodes", async () => {
+  const cpu = { ...node, name: "overflow-cpu", baseUrl: "http://100.69.158.114:19176", role: "overflow" };
+  const gpu = { ...node, name: "interactive-gpu", baseUrl: "http://100.78.106.121:19176", role: "interactive" };
+  const transport = fakeTransport();
+  const result = await completeFleetChat(body, { nodes: [cpu, gpu], fetchImpl: transport.fetch });
+  assert.equal(result.status, 200);
+  assert.equal(result.runtime, "interactive-gpu");
+  assert.equal(transport.calls.filter(c => c.url.endsWith("/v1/chat/completions")).length, 1);
+});
+test("overflow CPU is eligible if all interactive nodes are unavailable", async () => {
+  const gpu = { ...node, name: "failed-gpu", baseUrl: "http://100.78.106.121:19176", role: "interactive" };
+  const cpu = { ...node, name: "rescue-cpu", baseUrl: "http://100.69.158.114:19176", role: "overflow" };
+  let cpuMaxTokens;
+  const fetchImpl = async (url, options) => {
+    if (url.includes("100.78.106.121")) throw Error("offline");
+    if (url.endsWith("/api/v1/models"))
+      return Response.json({ models: [{ key: node.model, type: "llm", loaded_instances: [{ id: node.model }] }] });
+    cpuMaxTokens = JSON.parse(options.body).max_tokens;
+    return Response.json({ choices: [{ message: { content: "CPU response" } }] });
+  };
+  const result = await completeFleetChat(body, { nodes: [cpu, gpu], fetchImpl });
+  assert.equal(result.status, 200);
+  assert.equal(result.runtime, "rescue-cpu");
+  assert.equal(cpuMaxTokens, 256, "CPU output should be bounded to protect latency");
+});
+test("endpoint configuration requires a known routing role", () => {
+  const parsed = endpointConfig(JSON.stringify([{ ...node, role: "overflow" }]));
+  assert.equal(parsed[0].role, "overflow");
+  assert.equal(endpointConfig(JSON.stringify([node]))[0].role, "interactive");
+  assert.throws(() => endpointConfig(JSON.stringify([{ ...node, role: "agent-command" }])), /role/);
+});
