@@ -17,7 +17,8 @@ services:
     depends_on:
       - fixture
     networks:
-      - demo
+      - preview
+      - model
     restart: "no"
     cpus: 1
     mem_limit: 512m
@@ -35,7 +36,7 @@ services:
     expose:
       - "8077"
     networks:
-      - demo
+      - model
     user: "65532:65532"
     restart: "no"
     mem_limit: 64m
@@ -44,5 +45,6 @@ services:
     security_opt:
       - no-new-privileges:true
 networks:
-  demo:
+  preview:
+  model:
     internal: true

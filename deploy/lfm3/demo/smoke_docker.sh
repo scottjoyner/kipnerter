@@ -11,7 +11,7 @@ fi
 curl_opts=(--silent --show-error --fail --max-time 4)
 ready=0
 for attempt in $(seq 1 60); do
-  if curl "${curl_opts[@]}" "$BASE/chat" 2>/dev/null | grep -q 'Message Kipnerter'; then
+  if page="$(curl "${curl_opts[@]}" "$BASE/chat" 2>/dev/null)" && grep -q 'Message Kipnerter' <<<"$page"; then
     ready=1
     break
   fi

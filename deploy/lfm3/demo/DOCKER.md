@@ -26,7 +26,8 @@ docker compose -f deploy/lfm3/demo/compose.simulated.yml down --remove-orphans
 ```
 
 The web port is bound to `127.0.0.1` only. The model fixture has **no
-host-published port**, and the demo network is marked `internal`. No
+host-published port**, and only the fixture/model Docker network is marked `internal` (the
+web's separate preview bridge is required for host loopback access). No
 production public route, DNS, Caddy, inference node, secret mount, telemetry
 database, or iOS TestFlight is modified. The Docker Python base image should
 be reviewed under local image provenance policies if running on a sensitive

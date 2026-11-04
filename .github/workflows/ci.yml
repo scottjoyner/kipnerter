@@ -131,7 +131,11 @@ jobs:
           docker compose -f "$DEMO" config --quiet
           trap 'docker compose -f "$DEMO" down --remove-orphans >/dev/null 2>&1 || true' EXIT
           docker compose -f "$DEMO" up --build -d
-          bash deploy/lfm3/demo/smoke_docker.sh
+          if ! bash deploy/lfm3/demo/smoke_docker.sh; then
+            docker compose -f "$DEMO" ps --all
+            docker compose -f "$DEMO" logs --no-color --tail=40
+            exit 1
+          fi
 
   terraform:
     runs-on: ubuntu-latest
