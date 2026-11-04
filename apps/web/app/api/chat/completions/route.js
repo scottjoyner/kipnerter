@@ -1,4 +1,5 @@
 import { completeFleetChat, endpointConfig } from "../../../../lib/lfm3-fleet.mjs";
+import { boundedJson } from "../../../../lib/stream-utils.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,12 +24,15 @@ export async function POST(request) {
   }
   let body;
   try {
-    const raw = await request.text();
-    if (raw.length > 48000) return Response.json({ error: "Request too large." }, { status: 413, headers: noStore });
-    body = JSON.parse(raw);
-    if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(k => k !== "messages")) throw new Error("unexpected fields");
-  } catch {
-    return Response.json({ error: "Invalid chat request." }, { status: 400, headers: noStore });
+    // A post-read .text() length check is not a body-size cap. Enforce it
+    // while consuming the stream, including chunked requests without a
+    // Content-Length header.
+    body = await boundedJson(new Response(request.body, { headers: request.headers }), 48000);
+    if (Object.keys(body).some(key => key !== "messages")) throw new Error("unexpected fields");
+  } catch (error) {
+    const oversized = /exceeds cap/.test(error?.message || "");
+    return Response.json({ error: oversized ? "Request too large." : "Invalid chat request." },
+      { status: oversized ? 413 : 400, headers: noStore });
   }
   let nodes;
   try { nodes = endpointConfig(process.env.KIPNERTER_LFM3_ENDPOINTS); }
