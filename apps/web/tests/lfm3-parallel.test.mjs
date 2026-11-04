@@ -239,19 +239,18 @@ test("three large UTF8 research summaries fit one configured GPU synthesis conte
   assert.equal(synthesis.includes("�"),false, "never split Unicode surrogate pairs");
 });
 
-test("unfit synthesis returns a clear context error, not an invented complete answer", async () => {
-  const first={...nodes[0],name:"synthesis-unfit-one",role:"interactive"};
-  const second={...nodes[1],name:"synthesis-unfit-two",role:"interactive"};
-  let completions=0;
-  const fetchImpl=async (url,opts)=>{
-    if(url.endsWith("/v1/models"))return Response.json({data:[{id:model}]});
-    completions++;
-    return Response.json({choices:[{message:{content:"Safe worker output"}}]});
-  };
+test("CPU-only oversized research preflights synthesis before burning model requests", async () => {
+  const cpuOne={...nodes[0],name:"long-research-cpu-one",role:"overflow"};
+  const cpuTwo={...nodes[1],name:"long-research-cpu-two",role:"overflow"};
+  let requests=0;
   const question="Z".repeat(690);
+  assert.equal(fitResearchSynthesis(question,[
+    {reply:"A minimum independent model summary."},
+    {reply:"Another independent model summary."},
+  ],[cpuOne,cpuTwo]),null);
   const result=await runParallelLFM3Research({...args,authorized:true,question,
-    nodes:[first,second],fetchImpl});
-  assert.notEqual(result.status,200);
-  assert.equal(completions,2,"must not issue a synthesis model call if it cannot fit");
+    nodes:[cpuOne,cpuTwo],fetchImpl:async()=>{requests++;throw Error("must not call");}});
+  assert.equal(result.status,413);
+  assert.equal(requests,0,"must not issue catalog or generation calls if synthesis cannot fit");
   assert.match(result.error,/synthesis context/);
 });
