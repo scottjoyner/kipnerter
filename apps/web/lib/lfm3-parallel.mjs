@@ -13,7 +13,7 @@ export async function runParallelLFM3Research({
   if (!limit(question, 700) || !Array.isArray(subtasks) ||
       subtasks.length < 2 || subtasks.length > 3 ||
       !subtasks.every(task => limit(task, 200)) ||
-      !Array.isArray(nodes) || nodes.length < 2) {
+      !Array.isArray(nodes) || nodes.length < subtasks.length) {
     return { status: 400, error: "Requires 2–3 independent bounded tasks and at least two dedicated nodes." };
   }
   const options = { nodes, fetchImpl, resolveToken, signal };
@@ -24,6 +24,12 @@ export async function runParallelLFM3Research({
   ], options)));
   if (workers.some(result => result.status !== 200)) {
     return { status: 503, error: "A parallel LFM3 worker was unavailable; no partial synthesis was published." };
+  }
+  // A simultaneous worker can fail over onto a node that just completed
+  // another perspective. Reject duplicate runtime provenance rather than
+  // presenting two outputs from one node as independent analyses.
+  if (new Set(workers.map(result => result.runtime)).size !== workers.length) {
+    return { status: 503, error: "Distinct LFM3 workers were not available for independent research." };
   }
   const excerpts = workers.map((worker, i) =>
     "Worker " + (i + 1) + " (" + subtasks[i] + "): " + worker.reply.slice(0, 450));
