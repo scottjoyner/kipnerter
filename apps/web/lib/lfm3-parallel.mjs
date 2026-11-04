@@ -16,10 +16,10 @@ function physicalHost(node) {
 export function fitResearchSynthesis(question, workers, nodes) {
   const prefix = "Answer this question using independent LFM3 summaries. " +
     "Do not claim external verification or tool use. Note uncertainty or disagreement." +
-    "\\nQuestion: " + question + "\\n";
+    "\nQuestion: " + question + "\n";
   const excerpts = workers.map(worker => Array.from(worker.reply.trim()));
   const compose = length => prefix + excerpts.map((text, i) =>
-    "Worker " + (i + 1) + ": " + text.slice(0, length).join("")).join("\\n");
+    "Worker " + (i + 1) + ": " + text.slice(0, length).join("")).join("\n");
   const fits = text => {
     try {
       const payload = validateMessages([{ role: "user", content: text }]);
@@ -55,6 +55,15 @@ export async function runParallelLFM3Research({
   const hosts = nodes.map(physicalHost);
   if (hosts.some(host => !host) || new Set(hosts).size < subtasks.length) {
     return { status: 400, error: "Parallel LFM3 research requires distinct physical fleet hosts." };
+  }
+  // Preflight the smallest useful synthesis before any worker inference.
+  // CPU-only rosters have a smaller context window, and an otherwise valid
+  // research question may not leave room for independent summaries.
+  const baseline = Array.from({ length: subtasks.length }, () => ({
+    reply: "A minimum independent model summary.",
+  }));
+  if (!fitResearchSynthesis(question, baseline, nodes)) {
+    return { status: 413, error: "Question and independent LFM3 summaries exceed the available synthesis context." };
   }
   const options = { fetchImpl, resolveToken, signal };
   // Assign dedicated physical hosts BEFORE parallel work, not after it.
