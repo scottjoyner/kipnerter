@@ -209,3 +209,47 @@ test("long GPU conversation may fail over to CPU only with fitting recent turns"
   assert.ok(cpuBody.messages.length < history.length);
   assert.equal(cpuBody.max_tokens,256);
 });
+
+test("R9700 can opt out of reasoning while retaining exact LFM3 model identity", async () => {
+  const gpu = { ...node, name: "r9700", model: "lfm3-1.7b-research",
+    adapter: "openai", maxInflight: 1, disableThinking: true, maxOutputTokens: 256 };
+  const configured = endpointConfig(JSON.stringify([gpu]))[0];
+  let generated;
+  const fetchImpl = async (url, opts) => {
+    if (url.endsWith("/v1/models")) {
+      return Response.json({data:[{id:configured.model}]});
+    }
+    generated = JSON.parse(opts.body);
+    return Response.json({choices:[{message:{content:"4"}}]});
+  };
+  const result = await completeFleetChat(body, {nodes:[configured],fetchImpl});
+  assert.equal(result.status,200);
+  assert.equal(result.reply,"4");
+  assert.equal(generated.model,"lfm3-1.7b-research");
+  assert.deepEqual(generated.chat_template_kwargs,{enable_thinking:false});
+  assert.equal(generated.max_tokens,256);
+  assert.equal(generated.tools,undefined);
+});
+test("existing RX480 and OptiPlex models retain default generation settings", async () => {
+  const gpu = { ...node, name:"rx480-thinking-default", adapter:"openai",
+    model:"lfm3-1.7b-rx480", maxInflight:1 };
+  let generated;
+  const fetchImpl = async (url, opts) => {
+    if (url.endsWith("/v1/models")) return Response.json({data:[{id:gpu.model}]});
+    generated = JSON.parse(opts.body);
+    return Response.json({choices:[{message:{content:"ready"}}]});
+  };
+  const result = await completeFleetChat(body, {nodes:[endpointConfig(JSON.stringify([gpu]))[0]], fetchImpl});
+  assert.equal(result.status,200);
+  assert.equal(generated.chat_template_kwargs,undefined);
+  assert.equal(generated.max_tokens,512);
+});
+test("endpoint generation settings are tightly bounded and typed", () => {
+  for (const disableThinking of ["false",1,null]) {
+    assert.throws(() => endpointConfig(JSON.stringify([{...node,disableThinking}])),/generation policy/);
+  }
+  for (const maxOutputTokens of [0,17,513,128.5,"256"]) {
+    assert.throws(() => endpointConfig(JSON.stringify([{...node,maxOutputTokens}])),/generation policy/);
+  }
+  assert.equal(endpointConfig(JSON.stringify([{...node,maxOutputTokens:192}]))[0].maxOutputTokens,192);
+});
