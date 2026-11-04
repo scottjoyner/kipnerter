@@ -271,3 +271,45 @@ Public kipnerter.com remains on its prior deployment with the
 chat-completion endpoint returning HTTP 404, while the reviewed
 localhost-only staging container is unchanged and fails closed at 503
 without protected model credentials.
+
+## November 4 — latency-aware scheduler, three-worker staging
+
+After the initial model-discovery deployment, the web router added bounded
+per-worker runtime telemetry. It keeps process-local active-slot counts,
+recent successful-generation latency (weighted toward recent samples), and
+exponential circuit-breaker cooldowns for upstream failures (3s–30s).
+The private operator discovery view includes the current active slots,
+cooldown flag and recent latency. These values are **not** signed,
+fleet-wide historical metrics; they must not be presented as independent
+provider uptime SLAs. Public chat does not disclose them.
+
+Exact application source commit
+`0cc279a968e9f65acb3e555be97f73315c0a63a5`
+passed **100/100 Node tests**, the optimized Next.js build, and hosted
+CI (run `41799919076`). Tests covered in-flight lease release,
+cooldown after failed generation, and successful-generation latency.
+
+The production droplet now runs the corresponding isolated staging image
+`kipnerter-lfm3-staging:0cc279a` in container
+`kipnerter-lfm3-stage-0cc279a`, bound exclusively to
+`127.0.0.1:3350`. Its approved *candidate* roster is R9700
+GPU (nonthinking), RX480 GPU, and OptiPlex CPU overflow, all with
+independent credential **references** and one concurrent slot each.
+Host checks passed: homepage 200, chat 503 without secrets,
+private model status unavailable without operator identity,
+unauthorized parallel research 403, and model health 200
+from inside the container on all three Tailnet nodes.
+The prior staging container was removed after acceptance; the public
+container and Caddy configuration were not modified.
+
+The companion iOS candidate adds a UTF-8 5KB recent-history budget
+matching the public gateway and preserves the latest full user turn.
+Native iOS code still pins `https://kipnerter.com/api/chat/completions`;
+it does not receive private node URLs or tokens.
+
+**Production and TestFlight remain HOLD:** no approved credentials in the
+staging container, so an actual end-to-end gateway completion has not
+yet passed. The public chat route still returns HTTP 404. Do not merge
+or perform the public Caddy swap or signed TestFlight upload without
+approved secure secrets provisioning, edge abuse-policy review,
+and the live gateway acceptance gate.
