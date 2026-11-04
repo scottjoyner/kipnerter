@@ -110,5 +110,21 @@ for i in 1 2 3 4 5; do
     4|5) [[ "$code" == 429 ]] || { echo "FAIL: forwarded-IP limit bypass" >&2; exit 2; };;
   esac
 done
-echo "PASS: isolated Caddy->Nginx canonical host, forwarded IP overwrite and per-client rate limit"
+# Exercise the OTHER shared-memory bucket directly inside the same
+# disconnected namespace, with distinct well-formed trusted client keys.
+# The global bucket must trigger 429 even though no per-client bucket
+# contains more than one request.
+global429=0
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do
+  code="$(docker exec "$caddy" curl -s -o /dev/null -w '%{http_code}' --max-time 4 \
+    -X POST -H "X-Real-IP: 203.0.113.$i" \
+    -H 'Content-Type: application/json' \
+    --data '{"messages":[{"role":"user","content":"4"}]}' \
+    http://127.0.0.1:8094/api/chat/completions)"
+  echo "GLOBAL_CLIENT_ATTEMPT_$i=$code"
+  if [[ "$code" == 429 ]]; then global429=1; break; fi
+  [[ "$code" == 502 ]] || { echo "FAIL: unexpected global test response" >&2; exit 2; }
+done
+[[ "$global429" == 1 ]] || { echo "FAIL: shared global quota was not enforced" >&2; exit 2; }
+echo "PASS: isolated Caddy->Nginx canonical host, spoof-resistant per-client 429 and global 429"
 echo "No public route, real model, token or gateway contacted."
