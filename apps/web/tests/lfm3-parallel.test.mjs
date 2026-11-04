@@ -61,3 +61,34 @@ test("oversized research question is rejected rather than truncated or overfilli
   const result=await runParallelLFM3Research({...args,authorized:true,question:"x".repeat(701)});
   assert.equal(result.status,400);
 });
+
+test("three research perspectives require three distinct configured workers before any inference", async () => {
+  const { calls, fetchImpl } = transport();
+  const result = await runParallelLFM3Research({
+    ...args, authorized:true, subtasks:["Analyze accuracy","Analyze latency","Analyze memory"],
+    nodes:[...nodes], fetchImpl,
+  });
+  assert.equal(result.status,400);
+  assert.equal(calls.length,0, "insufficient workers must not burn tokens");
+});
+test("two successful fallbacks to one physical node cannot masquerade as independent workers", async () => {
+  const model="lfm3-1.7b-research";
+  const primary={name:"unique-alpha",baseUrl:"http://100.83.215.83:19175",
+    model, adapter:"openai", maxInflight:2, role:"interactive"};
+  const offline={name:"unique-beta",baseUrl:"http://100.78.106.121:19175",
+    model, adapter:"openai", maxInflight:1, role:"interactive"};
+  const completions=[];
+  const fetchImpl=async (url,options)=>{
+    if(url.endsWith("/v1/models")) return Response.json({data:[{id:model}]});
+    const body=JSON.parse(options.body);
+    completions.push({url,question:body.messages.at(-1).content});
+    if(url.includes("100.78.106.121"))throw Error("beta temporarily unavailable");
+    return Response.json({choices:[{message:{content:"successfully analyzed"}}]});
+  };
+  const result=await runParallelLFM3Research({...args,authorized:true,
+    nodes:[primary,offline],fetchImpl});
+  assert.equal(result.status,503);
+  assert.match(result.error,/Distinct LFM3 workers/);
+  assert.equal(completions.filter(x=>x.question.includes("Answer this question using")).length,0,
+    "no synthesis should run when independent provenance failed");
+});
