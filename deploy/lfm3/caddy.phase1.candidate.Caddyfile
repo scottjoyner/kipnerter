@@ -1,0 +1,55 @@
+# UNAPPLIED PHASE-1 CUTOVER CANDIDATE.
+#
+# REVIEW/HOLD: requires approved per-node secret provisioning, authenticated
+# staging completion, a SHARED abuse/rate limiter, an approved rollback and
+# authorization to touch live ingress. Stock Caddy 2.11.4 on this host has
+# request_body but NOT the http.handlers.rate_limit plugin.
+#
+# Only the canonical host's POST completion route moves to the private LFM3
+# gateway. Other traffic, including preview, www, identity, private research,
+# assets, separate API hosts, and operator UI, retains its existing target.
+kipnerter.com, www.kipnerter.com, preview.kipnerter.com {
+    encode zstd gzip
+
+    @canonical_lfm3_chat {
+        host kipnerter.com
+        path /api/chat/completions
+        method POST
+    }
+    handle @canonical_lfm3_chat {
+        request_body {
+            max_size 8KB
+        }
+        reverse_proxy kipnerter-lfm3-stage-provisioned:3000 {
+            # Overwrite client-injected IP chain before the Next.js limiter.
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Real-IP {remote_host}
+        }
+    }
+    handle {
+        reverse_proxy kipnerter-web-public-v01:3000
+    }
+}
+
+api.kipnerter.com {
+    encode zstd gzip
+
+    @spatial_api path /v1/* /health/live /health/ready /version
+    handle @spatial_api {
+        reverse_proxy spatial-api:8000
+    }
+
+    @spatial_artifacts path /kipnerter-artifacts/*
+    handle @spatial_artifacts {
+        reverse_proxy spatial-minio:9000
+    }
+
+    handle {
+        reverse_proxy api:8000
+    }
+}
+
+scottjoyner.dev, admin.scottjoyner.dev {
+    encode zstd gzip
+    reverse_proxy web:3000
+}
