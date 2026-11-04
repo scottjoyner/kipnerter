@@ -56,10 +56,19 @@ jobs:
           PID=$!
           trap 'kill "$PID" 2>/dev/null || true' EXIT
           for attempt in {1..25}; do
-            if curl --fail --silent --max-time 2 http://127.0.0.1:3012/chat >/tmp/kipnerter-chat.html; then break; fi
+            if curl --fail --silent --max-time 2 http://127.0.0.1:3012/fleet >/tmp/kipnerter-fleet.html; then break; fi
             sleep 1
           done
-          grep -q 'PRIVATE AI WORKSPACE' /tmp/kipnerter-chat.html
+          grep -q 'PRIVATE AI WORKSPACE' /tmp/kipnerter-fleet.html
+          for route in / /chat; do
+            curl --fail --silent --max-time 2 "http://127.0.0.1:3012$route" >/tmp/kipnerter-public-chat.html
+            grep -q 'Message Kipnerter' /tmp/kipnerter-public-chat.html
+            grep -q 'LFM3-1.7B' /tmp/kipnerter-public-chat.html
+            if grep -q 'Sign in with Tailscale identity' /tmp/kipnerter-public-chat.html; then
+              echo "FAIL: operator login leaked into public $route" >&2
+              exit 1
+            fi
+          done
           [[ $(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3012/api/auth/providers) = 503 ]]
           [[ $(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3012/api/portal/live) = 503 ]]
           [[ $(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3012/api/portal/traces) = 503 ]]
