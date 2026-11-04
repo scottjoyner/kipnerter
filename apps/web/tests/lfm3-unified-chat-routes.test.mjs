@@ -29,3 +29,11 @@ test("operator console is still session-gated and never exposed through public /
   assert.match(consoleComponent, /callbackUrl=%2Ffleet/);
   assert.doesNotMatch(protectedPage, /KIPNERTER_LFM3_ENDPOINTS|Bearer |api\/chat\/completions/);
 });
+
+test("end-to-end portal smoke distinguishes public chat and authenticated operator console", () => {
+  const smoke = source("../../../scripts/portal_e2e_smoke.py");
+  assert.ok(smoke.includes('request(base + "/fleet")'));
+  assert.ok(smoke.includes('for public_path in ("/", "/chat"):'));
+  assert.ok(smoke.includes('b"Message Kipnerter"'));
+  assert.ok(smoke.includes('b"Sign in with Tailscale identity"'));
+});
