@@ -82,6 +82,9 @@ test("offline Caddy-to-Nginx spoof test refuses unpinned images and network expo
   assert.match(chain, /header_up X-Real-IP \{remote_host\}/);
   assert.match(chain, /header_up X-Forwarded-For \{remote_host\}/);
   assert.match(chain, /SPOOFED_HEADER_ATTEMPT_/);
+  assert.match(chain, /GLOBAL_CLIENT_ATTEMPT_/);
+  assert.match(chain, /shared global quota was not enforced/);
+  assert.match(chain, /global429=1/);
   assert.match(chain, /4\|5\) \[\[ "\$code" == 429 \]\]/);
   assert.match(chain, /preview\.kipnerter\.com/);
   assert.match(chain, /No public route, real model, token or gateway contacted/);
