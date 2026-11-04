@@ -10,6 +10,8 @@ const caddy = readFileSync(
   new URL("../../../deploy/lfm3/caddy.phase1.candidate.Caddyfile", import.meta.url), "utf8");
 const smoke = readFileSync(
   new URL("../../../deploy/lfm3/edge/verify-isolated-limiter.sh", import.meta.url), "utf8");
+const chain = readFileSync(
+  new URL("../../../deploy/lfm3/edge/verify-isolated-caddy-chain.sh", import.meta.url), "utf8");
 
 test("shared limiter listens on Caddy namespace loopback with no exposed port", () => {
   assert.match(nginx, /listen 127\.0\.0\.1:8094;/);
@@ -67,4 +69,20 @@ test("offline limiter acceptance refuses mutable or uncached images and never ac
   assert.ok(smoke.includes("No real gateway, model endpoint"));
   assert.ok(compose.includes('user: "101:101"'));
   assert.ok(compose.includes("mode=1777"));
+});
+
+test("offline Caddy-to-Nginx spoof test refuses unpinned images and network exposure", () => {
+  assert.match(chain, /KIPNERTER_LFM3_EDGE_IMAGE/);
+  assert.match(chain, /KIPNERTER_LFM3_CADDY_IMAGE/);
+  assert.match(chain, /docker image inspect "\\$nginx_image" "\\$caddy_image"/);
+  assert.doesNotMatch(chain, /docker pull |\s--publish\b|\s-p\s+\d+:\d+/);
+  assert.match(chain, /--network none/);
+  assert.match(chain, /--network "container:\\$caddy"/);
+  assert.match(chain, /trap cleanup EXIT/);
+  assert.match(chain, /header_up X-Real-IP \{remote_host\}/);
+  assert.match(chain, /header_up X-Forwarded-For \{remote_host\}/);
+  assert.match(chain, /SPOOFED_HEADER_ATTEMPT_/);
+  assert.match(chain, /4\|5\) \[\[ "\\$code" == 429 \]\]/);
+  assert.match(chain, /preview\.kipnerter\.com/);
+  assert.match(chain, /No public route, real model, token or gateway contacted/);
 });
