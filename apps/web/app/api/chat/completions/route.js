@@ -1,3 +1,4 @@
+import { resolveFleetNodeCredential } from "../../../../lib/lfm3-credentials.mjs";
 import { completeFleetChat, endpointConfig } from "../../../../lib/lfm3-fleet.mjs";
 import { boundedJson } from "../../../../lib/stream-utils.mjs";
 import { isIP } from "node:net";
@@ -49,9 +50,7 @@ export async function POST(request) {
   catch { return Response.json({ error: "LFM3 fleet configuration is invalid." }, { status: 503, headers: noStore }); }
   try {
     const result = await completeFleetChat(body.messages, {
-      nodes, resolveToken: node => node.credentialEnv
-        ? process.env[node.credentialEnv] || ""
-        : process.env.KIPNERTER_LFM3_BEARER || "", signal: request.signal,
+      nodes, resolveToken: resolveFleetNodeCredential, signal: request.signal,
     });
     return Response.json(result.status === 200 ? { reply: result.reply, model: result.model } : { error: result.error },
       { status: result.status === 499 ? 408 : result.status, headers: noStore });
