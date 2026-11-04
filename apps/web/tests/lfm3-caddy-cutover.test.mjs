@@ -25,8 +25,8 @@ test("only canonical POST chat requests are diverted to the staged LFM3 service"
   assert.match(match[1], /method POST/);
   assert.doesNotMatch(match[1], /\/api\/chat\/research|\/api\/auth/);
   assert.match(candidate, /handle @canonical_lfm3_chat\s*\{/);
-  assert.match(candidate, /reverse_proxy kipnerter-lfm3-stage-provisioned:3000/);
-  assert.equal((candidate.match(/reverse_proxy kipnerter-lfm3-stage-provisioned:3000/g) || []).length, 1);
+  assert.match(candidate, /reverse_proxy 127.0.0.1:8094/);
+  assert.equal((candidate.match(/reverse_proxy 127.0.0.1:8094/g) || []).length, 1);
 });
 
 test("same site retains existing fallback site, API and admin backends", () => {
@@ -45,4 +45,10 @@ test("canonical chat route has small request body and sanitized client IP", () =
   assert.match(candidate, /header_up X-Real-IP \{remote_host\}/);
   // No private research endpoint becomes public before operator auth is deployed.
   assert.doesNotMatch(candidate, /path \/api\/chat\/research/);
+});
+
+test("phase one must pass through a shared limiter, never directly to the unkeyed Next.js stage", () => {
+  assert.match(candidate, /reverse_proxy 127\\.0\\.0\\.1:8094/);
+  assert.doesNotMatch(candidate, /reverse_proxy kipnerter-lfm3-stage-provisioned:3000/);
+  assert.match(candidate, /header_up X-Real-IP \\{remote_host\\}/);
 });
