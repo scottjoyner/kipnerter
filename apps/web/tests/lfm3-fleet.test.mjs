@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { endpointConfig, isLoaded, completeFleetChat, validateMessages, fitNodeContext, discoverFleetNodes } from "../lib/lfm3-fleet.mjs";
+import { endpointConfig, isLoaded, completeFleetChat, validateMessages, fitNodeContext, discoverFleetNodes, fleetRuntimeSnapshot } from "../lib/lfm3-fleet.mjs";
 
 const node = { name: "joyner", baseUrl: "http://100.83.215.83:1234", model: "liquid/lfm3-1.7b-q4", adapter: "lmstudio", maxInflight: 2 };
 const body = [{ role: "user", content: "Hello" }];
@@ -293,4 +293,67 @@ test("a successful actual generation upgrades only that candidate to served in-p
   const found=await discoverFleetNodes([n],{fetchImpl});
   assert.equal(found[0].state,"served");
   assert.match(found[0].lastSuccessAt,/^\d{4}-\d\d-\d\dT/);
+});
+
+test("actual generation records recent latency while releasing the worker slot", async () => {
+  const candidate={...node,name:"telemetry-gpu",adapter:"openai",model:"lfm3-1.7b-telemetry",
+    maxInflight:1};
+  const fetchImpl=async url => url.endsWith("/v1/models")
+    ? Response.json({data:[{id:candidate.model}]})
+    : Response.json({choices:[{message:{content:"one generated answer"}}]});
+  const before=fleetRuntimeSnapshot(candidate);
+  assert.equal(before.inFlight,0);
+  assert.equal(before.lastLatencyMs,null);
+  const response=await completeFleetChat(body,{nodes:[candidate],fetchImpl});
+  assert.equal(response.status,200);
+  const after=fleetRuntimeSnapshot(candidate);
+  assert.equal(after.inFlight,0);
+  assert.equal(after.cooldown,false);
+  assert.ok(Number.isInteger(after.lastLatencyMs));
+  assert.ok(after.lastLatencyMs >= 0);
+  const discovered=await discoverFleetNodes([candidate],{fetchImpl});
+  assert.equal(discovered[0].state,"served");
+  assert.equal(discovered[0].lastLatencyMs,after.lastLatencyMs);
+});
+test("private discovery reports live in-flight leases without exposing credentials", async () => {
+  const candidate={...node,name:"concurrent-lease-lfm3",adapter:"openai",
+    model:"lfm3-1.7b-lease",maxInflight:1,credentialEnv:null};
+  let proceed;
+  let started;
+  const waiting=new Promise(resolve=>{proceed=resolve;});
+  const arrived=new Promise(resolve=>{started=resolve;});
+  const fetchImpl=async url=>{
+    if(url.endsWith("/v1/models"))return Response.json({data:[{id:candidate.model}]});
+    started();
+    await waiting;
+    return Response.json({choices:[{message:{content:"Lease released"}}]});
+  };
+  const generating=completeFleetChat(body,{nodes:[candidate],fetchImpl});
+  await arrived;
+  assert.equal(fleetRuntimeSnapshot(candidate).inFlight,1);
+  const during=await discoverFleetNodes([candidate],{fetchImpl});
+  assert.equal(during[0].inFlight,1);
+  const busy=await completeFleetChat(body,{nodes:[candidate],fetchImpl});
+  assert.equal(busy.status,503);
+  proceed();
+  assert.equal((await generating).status,200);
+  assert.equal(fleetRuntimeSnapshot(candidate).inFlight,0);
+});
+test("failed generation opens a bounded circuit-breaker cooldown", async () => {
+  const candidate={...node,name:"circuit-breaker-lfm3",adapter:"openai",
+    model:"lfm3-1.7b-circuit",maxInflight:1};
+  let calls=0;
+  const fetchImpl=async url=>{
+    calls++;
+    if(url.endsWith("/v1/models"))return Response.json({data:[{id:candidate.model}]});
+    throw Error("inference worker unavailable");
+  };
+  const first=await completeFleetChat(body,{nodes:[candidate],fetchImpl});
+  assert.equal(first.status,503);
+  assert.equal(fleetRuntimeSnapshot(candidate).cooldown,true);
+  assert.equal(fleetRuntimeSnapshot(candidate).inFlight,0);
+  const count=calls;
+  const second=await completeFleetChat(body,{nodes:[candidate],fetchImpl});
+  assert.equal(second.status,503);
+  assert.equal(calls,count,"cooling down must avoid repeated upstream requests");
 });
