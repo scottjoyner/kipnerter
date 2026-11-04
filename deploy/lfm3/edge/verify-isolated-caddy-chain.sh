@@ -53,7 +53,9 @@ http://:18111 {
             header_up X-Real-IP {remote_host}
         }
     }
-    handle { respond "Not found" 404 }
+    handle {
+        respond "Not found" 404
+    }
 }
 CADDY
 # The installed Caddy image's binary carries Linux file capabilities.
