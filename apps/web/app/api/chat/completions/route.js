@@ -35,9 +35,11 @@ export async function POST(request) {
   catch { return Response.json({ error: "LFM3 fleet configuration is invalid." }, { status: 503, headers: noStore }); }
   try {
     const result = await completeFleetChat(body.messages, {
-      nodes, token: process.env.KIPNERTER_LFM3_BEARER || "", signal: request.signal,
+      nodes, resolveToken: node => node.credentialEnv
+        ? process.env[node.credentialEnv] || ""
+        : process.env.KIPNERTER_LFM3_BEARER || "", signal: request.signal,
     });
-    return Response.json(result.status === 200 ? result : { error: result.error },
+    return Response.json(result.status === 200 ? { reply: result.reply, model: result.model } : { error: result.error },
       { status: result.status === 499 ? 408 : result.status, headers: noStore });
   } catch {
     return Response.json({ error: "Invalid conversation. Messages must be short, user/assistant text only." },

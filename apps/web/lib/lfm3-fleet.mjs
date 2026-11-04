@@ -25,7 +25,7 @@ export function endpointConfig(raw) {
   const names = new Set();
   return parsed.map(row => {
     if (!row || typeof row !== "object" || Array.isArray(row)) throw new Error("invalid endpoint");
-    const { name, baseUrl, model, adapter = "lmstudio", maxInflight = 1 } = row;
+    const { name, baseUrl, model, adapter = "lmstudio", maxInflight = 1, credentialEnv = null } = row;
     if (typeof name !== "string" || !/^[a-zA-Z0-9_-]{1,48}$/.test(name) || names.has(name)) throw new Error("invalid node name");
     names.add(name);
     if (typeof baseUrl !== "string" || baseUrl.length > 250) throw new Error("invalid endpoint URL");
@@ -36,7 +36,8 @@ export function endpointConfig(raw) {
     }
     if (typeof model !== "string" || model.length > 128 || !MODEL_ID.test(model)) throw new Error("endpoint must serve LFM3-1.7B");
     if (!["lmstudio", "openai"].includes(adapter) || !Number.isInteger(maxInflight) || maxInflight < 1 || maxInflight > 8) throw new Error("invalid endpoint adapter or limit");
-    return { name, baseUrl: url.origin, model, adapter, maxInflight };
+    if (credentialEnv !== null && (typeof credentialEnv !== "string" || !/^KIPNERTER_LFM3_TOKEN_[A-Z0-9_]{1,48}$/.test(credentialEnv))) throw new Error("invalid per-node credential reference");
+    return { name, baseUrl: url.origin, model, adapter, maxInflight, credentialEnv };
   });
 }
 
@@ -92,7 +93,7 @@ export function validateMessages(messages) {
   return [{ role: "system", content: SYSTEM_PROMPT }, ...clean];
 }
 export async function completeFleetChat(messages, {
-  nodes, fetchImpl = fetch, token = "", signal,
+  nodes, fetchImpl = fetch, token = "", resolveToken = null, signal,
 } = {}) {
   const payload = validateMessages(messages);
   if (!Array.isArray(nodes) || nodes.length === 0) return { status: 503, error: "LFM3 fleet is not configured." };
@@ -101,14 +102,16 @@ export async function completeFleetChat(messages, {
     hadFree = true;
     if (!reserve(node)) continue;
     try {
-      if (!await endpointReady(node, { fetchImpl, token, signal })) {
+      const nodeToken = resolveToken ? resolveToken(node) : token;
+      if (node.credentialEnv && !nodeToken) continue;
+      if (!await endpointReady(node, { fetchImpl, token: nodeToken, signal })) {
         blockedUntil.set(node.name, Date.now() + 10000);
         continue;
       }
       const upstream = await fetchImpl(node.baseUrl + "/v1/chat/completions", {
         method: "POST", signal: fetchSignal(signal, 45000),
-        headers: { ...headers(token), "Content-Type": "application/json" },
-        body: JSON.stringify({ model: node.model, messages: payload, stream: false, max_tokens: 512, temperature: 0.5 }),
+        headers: { ...headers(nodeToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ model: node.model, messages: payload, stream: false, max_tokens: 512, temperature: 0.1, top_k: 50, repeat_penalty: 1.1 }),
         cache: "no-store",
       });
       if (!upstream.ok) {

@@ -1,0 +1,62 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { runParallelLFM3Research } from "../lib/lfm3-parallel.mjs";
+
+const model = "lfm3-1.7b-research";
+const nodes = [
+  { name: "parallel-alpha", baseUrl: "http://100.83.215.83:19175", model, adapter: "openai", maxInflight: 1 },
+  { name: "parallel-beta", baseUrl: "http://100.78.106.121:19175", model, adapter: "openai", maxInflight: 1 },
+];
+const args = { question: "Compare capacity options", subtasks: ["Analyze throughput", "Analyze memory"], nodes };
+function transport() {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith("/v1/models")) return Response.json({data:[{id:model}]});
+    return Response.json({choices:[{message:{content:"One bounded summary."}}]});
+  };
+  return {calls,fetchImpl};
+}
+test("anonymous requests cannot fan out to multiple fleet workers", async () => {
+  const api = transport();
+  const result = await runParallelLFM3Research({ ...args, fetchImpl:api.fetchImpl });
+  assert.equal(result.status,403);
+  assert.equal(api.calls.length,0);
+});
+test("bounded model-only parallel work distributes two workers across ready nodes", async () => {
+  const api = transport();
+  const result = await runParallelLFM3Research({ ...args, authorized:true, fetchImpl:api.fetchImpl });
+  assert.equal(result.status,200);
+  assert.equal(new Set(result.workerRuntimes).size,2);
+  assert.equal(api.calls.filter(x => x.url.endsWith("/v1/chat/completions")).length,3);
+  for(const call of api.calls.filter(x => x.url.endsWith("/completions"))) {
+    const request=JSON.parse(call.options.body);
+    assert.equal(request.model,model);
+    assert.equal(request.tools,undefined);
+  }
+});
+test("fanout rejects excessive tasks and one-node oversubscription", async () => {
+  const api=transport();
+  const a=await runParallelLFM3Research({...args,authorized:true,subtasks:Array.from({length:5},(_,i)=>String(i)),fetchImpl:api.fetchImpl});
+  assert.equal(a.status,400);
+  const b=await runParallelLFM3Research({...args,authorized:true,nodes:[nodes[0]],fetchImpl:api.fetchImpl});
+  assert.equal(b.status,400);
+  assert.equal(api.calls.length,0);
+});
+test("incomplete worker results never become an asserted completed answer", async () => {
+  const api=transport();
+  let count=0;
+  const fetchImpl=async (url, opts) => {
+    if(url.endsWith("/v1/models"))return Response.json({data:[{id:model}]});
+    count++;
+    if(count===1)return Response.json({choices:[{message:{content:""}}]});
+    return Response.json({choices:[{message:{content:"valid"}}]});
+  };
+  const result=await runParallelLFM3Research({...args,authorized:true,fetchImpl});
+  assert.equal(result.status,503);
+});
+
+test("oversized research question is rejected rather than truncated or overfilling synthesis", async () => {
+  const result=await runParallelLFM3Research({...args,authorized:true,question:"x".repeat(701)});
+  assert.equal(result.status,400);
+});

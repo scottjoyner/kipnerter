@@ -86,3 +86,38 @@ test("an unavailable LFM3 node fails over to another LFM3 node only", async () =
   assert.equal(result.status, 200);
   assert.equal(result.runtime, "good-node");
 });
+
+test("per-node token env references must be server-scoped", () => {
+  const configured = endpointConfig(JSON.stringify([{ ...node, credentialEnv: "KIPNERTER_LFM3_TOKEN_JOYNER" }]));
+  assert.equal(configured[0].credentialEnv, "KIPNERTER_LFM3_TOKEN_JOYNER");
+  assert.throws(() => endpointConfig(JSON.stringify([{ ...node, credentialEnv: "NEXT_PUBLIC_LEAK" }])), /credential/);
+});
+test("different nodes use different bearer tokens for their catalog and generation requests", async () => {
+  const one = { ...node, name: "authA", credentialEnv: "KIPNERTER_LFM3_TOKEN_A" };
+  const two = { ...node, name: "authB", baseUrl: "http://100.78.106.121:1234", credentialEnv: "KIPNERTER_LFM3_TOKEN_B" };
+  const requests = [];
+  const fetchImpl = async (url, opts) => {
+    requests.push([url, opts.headers.Authorization]);
+    if (url.endsWith("/api/v1/models"))
+      return Response.json({ models: [{ key: node.model, type: "llm", loaded_instances: [{id:node.model}] }] });
+    return Response.json({choices:[{message:{content:"okay"}}]});
+  };
+  const resolveToken = entry => entry.name === "authA" ? "private-A" : "private-B";
+  for (let i = 0; i < 2; i++) {
+    const result = await completeFleetChat(body, { nodes: [one, two], resolveToken, fetchImpl });
+    assert.equal(result.status, 200);
+  }
+  assert.deepEqual(new Set(requests.map(([url, auth]) => auth)), new Set(["Bearer private-A", "Bearer private-B"]));
+  for (const [url, auth] of requests) {
+    assert.equal(auth, url.includes("100.78.106.121") ? "Bearer private-B" : "Bearer private-A");
+  }
+});
+test("missing required per-node credential fails closed without network requests", async () => {
+  const calls = [];
+  const result = await completeFleetChat(body, {
+    nodes: [{ ...node, name: "no-auth", credentialEnv: "KIPNERTER_LFM3_TOKEN_MISSING" }],
+    resolveToken: () => "", fetchImpl: async (...args) => { calls.push(args); throw Error("should never request"); },
+  });
+  assert.equal(result.status, 503);
+  assert.equal(calls.length, 0);
+});
