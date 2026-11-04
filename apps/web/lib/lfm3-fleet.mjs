@@ -6,6 +6,8 @@ const MODEL_ID = /(?:^|[\/_-])lfm3[-_]?1[._-]?7b(?:$|[\/_-])/i;
 const active = new Map();
 const blockedUntil = new Map();
 const lastSuccessfulAt = new Map();
+const recentLatencyMs = new Map();
+const failureCounts = new Map();
 let roundRobinCursor = 0;
 const SYSTEM_PROMPT = "You are Kipnerter, a helpful conversational assistant. Answer clearly and accurately. You cannot execute tools, browse private data, or act on the user's fleet through this public chat. Do not claim tool access.";
 export const DISPLAY_MODEL = "LFM3-1.7B";
@@ -81,6 +83,29 @@ function orderedNodes(nodes) {
     (active.get(a.name) || 0) / a.maxInflight -
     (active.get(b.name) || 0) / b.maxInflight || order.get(a.name) - order.get(b.name));
 }
+export function fleetRuntimeSnapshot(node) {
+  const inFlight = active.get(node.name) || 0;
+  const remainingCooldownMs = Math.max(0, (blockedUntil.get(node.name) || 0) - Date.now());
+  return {
+    inFlight,
+    maxInflight: node.maxInflight,
+    cooldown: remainingCooldownMs > 0,
+    lastLatencyMs: recentLatencyMs.get(node.name) ?? null,
+  };
+}
+function registerFailure(node) {
+  const failures = Math.min(5, (failureCounts.get(node.name) || 0) + 1);
+  failureCounts.set(node.name, failures);
+  blockedUntil.set(node.name, Date.now() + Math.min(30000, 3000 * (2 ** (failures - 1))));
+}
+function registerSuccess(node, startedAt) {
+  lastSuccessfulAt.set(node.name, Date.now());
+  const latency = Math.max(0, Date.now() - startedAt);
+  const previous = recentLatencyMs.get(node.name);
+  recentLatencyMs.set(node.name, Math.round(previous === undefined ? latency : 0.3 * latency + 0.7 * previous));
+  failureCounts.delete(node.name);
+  blockedUntil.delete(node.name);
+}
 function reserve(node) {
   if ((active.get(node.name) || 0) >= node.maxInflight) return false;
   active.set(node.name, (active.get(node.name) || 0) + 1);
@@ -144,7 +169,7 @@ export async function discoverFleetNodes(nodes, {
   if (!Array.isArray(nodes) || nodes.length > 16) throw new Error("invalid fleet roster");
   return Promise.all(nodes.map(async node => {
     const summary = {
-      name: node.name, role: node.role, maxInflight: node.maxInflight,
+      name: node.name, role: node.role, ...fleetRuntimeSnapshot(node),
       state: "unavailable",
     };
     try {
@@ -183,10 +208,11 @@ export async function completeFleetChat(messages, {
     hadFree = true;
     if (!reserve(node)) continue;
     try {
+      const startedAt = Date.now();
       const nodeToken = resolveToken ? resolveToken(node) : token;
       if (node.credentialEnv && !nodeToken) continue;
       if (!await endpointReady(node, { fetchImpl, token: nodeToken, signal })) {
-        blockedUntil.set(node.name, Date.now() + 10000);
+        registerFailure(node);
         continue;
       }
       const attemptsLeft = itinerary.length - index;
@@ -207,20 +233,20 @@ export async function completeFleetChat(messages, {
         cache: "no-store",
       });
       if (!upstream.ok) {
-        blockedUntil.set(node.name, Date.now() + 10000);
+        registerFailure(node);
         continue;
       }
       const response = await boundedJson(upstream, 128000);
       const content = response?.choices?.[0]?.message?.content;
       if (typeof content !== "string" || !content.trim() || content.length > 16000) {
-        blockedUntil.set(node.name, Date.now() + 10000);
+        registerFailure(node);
         continue;
       }
-      lastSuccessfulAt.set(node.name, Date.now());
+      registerSuccess(node, startedAt);
       return { status: 200, reply: content, model: DISPLAY_MODEL, runtime: node.name };
     } catch (error) {
       if (signal?.aborted) return { status: 499, error: "Request cancelled." };
-      blockedUntil.set(node.name, Date.now() + 10000);
+      registerFailure(node);
       // Network or runtime failures can use another LFM3 node. Never switch model families.
     } finally {
       release(node);
