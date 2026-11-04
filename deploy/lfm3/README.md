@@ -102,7 +102,8 @@ its listed modules include `http.handlers.request_body` but no
 The file `caddy.phase1.candidate.Caddyfile` is an **unapplied** full
 candidate preserving the existing public, spatial API, artifacts and
 admin backends. It routes **only canonical-host POST**
-`https://kipnerter.com/api/chat/completions` to the future provisioned
+`https://kipnerter.com/api/chat/completions` through the separate
+Caddy-namespace loopback rate-limiter candidate to the future provisioned
 LFM3 gateway. The operator research endpoint remains on the existing
 site and unavailable until NextAuth and its own security gates pass.
 It enforces an 8 KB request-body cap and overwrites untrusted
@@ -131,3 +132,53 @@ The candidate deliberately introduces **no** `rate_limit` directive
 since the host lacks that Caddy plugin. Its absence is an explicit
 release blocker requiring a reviewed edge limiter/proxy implementation
 (or a suitable shared backend limiter) rather than a hidden assumption.
+
+## Unapplied shared edge limiter sidecar (November 4)
+
+A deployment candidate now exists under `deploy/lfm3/edge/`:
+
+- `nginx.conf`: a **single shared-memory Nginx limiter** providing a
+  6 requests/minute per-client bucket (burst 2), a 30 requests/minute
+  global bucket (burst 5), and a two-active-request concurrency cap.
+  The gateway's effective per-client quota remains the stricter of
+  these edge quotas and its process-local guard. The limiter returns
+  HTTP 429 on saturation; only POST on the canonical chat route can
+  be forwarded; unrelated routes return 404. Access logs are disabled.
+- `compose.edge-candidate.yml`: an **unapplied** Docker Compose plan.
+  Uses a mandatory operator-approved immutable SHA256 image reference,
+  runs as uid/gid 101, read-only root filesystem, no added privileges,
+  no published ports, and shares the existing Caddy container network
+  namespace with a listener on **127.0.0.1:8094**.
+- `verify-isolated-limiter.sh`: **optional offline acceptance test**
+  for a separately approved image already present in the local Docker
+  image cache. It refuses an unpinned/unavailable image (no pull),
+  runs a temporary `--network none` container with an intentionally
+  nonexistent model upstream, validates Nginx syntax and tests 404,
+  405, 502 and rate-limit 429. No secrets, models, public routes or
+  DNS/external network are involved.
+
+The matching **unapplied** `caddy.phase1.candidate.Caddyfile`
+would proxy only the canonical POST chat route from Caddy to its own
+namespace's loopback `127.0.0.1:8094`, overwriting `X-Real-IP` and
+`X-Forwarded-For` with Caddy's observed remote host. Requests then
+pass the centralized limiter to the separately provisioned LFM3
+gateway. Other public Caddy routes retain their existing backends.
+
+The live Caddy 2.11.4 binary validated this *candidate* Caddyfile
+via stdin, and `docker compose -f - config --quiet` parsed the
+sidecar manifest. These are configuration-only validations, **not**
+runtime, rate-limit or ingress acceptance. No Nginx image was cached
+on the deployment host at inspection; no image was pulled or sidecar
+started. Nginx runtime correctness, approved image provenance, correct
+forwarded-IP handling, rate limits behind live TLS, and lifecycle
+when the Caddy container is recreated **all remain unverified**.
+
+**Activation order** remains strictly HOLD until an authorized owner
+records: (1) immutable and verified Nginx image digest plus offline
+smoke test, (2) approved protected model-key mounts and authenticated
+staged LFM3 completion, (3) Caddy namespace and sidecar lifecycle
+review, (4) global and per-client rate-limit acceptance through the
+edge, (5) prepared rollback and authorized public routing switch,
+(6) live public HTTPS acceptance, then (7) signed iOS/TestFlight
+approval. In particular, a configured 429 limiter cannot compensate
+for missing gateway credentials or an HTTP 404 public chat route.
