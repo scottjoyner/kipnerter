@@ -110,3 +110,75 @@ model-load state, or alter x1-370. Before production rollout, require trusted
 reverse-proxy canonical-IP abuse controls, credential provisioning, a staged
 public gateway smoke test, iOS device acceptance, and an authorized release
 decision. Production / TestFlight remains HOLD.
+
+## November 4: isolated production-host staging, no public cutover
+
+Built the exact hosted-CI-passing web SHA
+`5370ec124b182a028a1baa93acb72761f2d4b6eb` from an immutable
+`git archive` on x1-370 into
+`/opt/kipnerter-lfm3-stage-20261104` on `kipnerter-prod-01`.
+Its 232 MB image is `kipnerter-lfm3-staging:5370ec1`.
+
+The **separate** staging container `kipnerter-lfm3-stage-5370ec1`
+runs on Docker's `kipnerter_frontend` network, limited to 0.75 CPUs,
+512 MiB RAM and 150 processes. It is bound strictly to host
+`127.0.0.1:3347`; it is **not** connected to a public Caddy route.
+
+Observed staging HTTP checks:
+- `GET /` -> 200 with the new chat home page.
+- `POST /api/chat/completions` -> 503 (per-node credentials are deliberately
+  **not** present in staging; the exact model roster has credential references).
+- Unauthenticated cross-origin `POST /api/chat/research` -> 403.
+- Existing production web container remains running; public
+  `POST https://kipnerter.com/api/chat/completions` still -> 404.
+
+The staging image is **not** a production cutover and is not the newest
+unmerged security patch. For rollback of the localhost-only staging service,
+the operator can stop/remove `kipnerter-lfm3-stage-5370ec1` via Docker
+without touching `kipnerter-web-public-v01` or Caddy.
+
+### Canonical client IP for a future public cutover
+
+The newer web route ignores the client-spoofable `X-Real-IP` header, validates
+the **last proxy-appended** `X-Forwarded-For` value as IPv4/IPv6 and
+groups absent/invalid headers as `unknown`. Production Caddy must
+overwrite the headers on the upstream hop. When updating the *reviewed*
+public Caddy route, ensure its reverse proxy contains the equivalent of:
+
+```caddy
+reverse_proxy kipnerter-web-public-v01:3000 {
+    header_up X-Forwarded-For {remote_host}
+    header_up -X-Real-IP
+}
+```
+
+Review CDN, trusted-proxy and actual ingress topology first. This canonical
+IP check is still process-local; deploy and verify edge/global abuse limits
+before opening anonymous chat to the internet. **Do not apply this snippet
+to running production Caddy until all release gates pass.**
+
+### Real two-node parallel model canary
+
+On the private x1-370 harness, each model's bearer token was read and used
+**only on its own inference node**, with no key copied to x1-370 or to the
+production droplet. The actual `completeFleetChat` router returned:
+- RX 480 GPU: 200, reply `4`, 1.342 seconds.
+- OptiPlex CPU: 200, reply `4`, 9.251 seconds.
+- Opt-in `runParallelLFM3Research`: RX 480 and OptiPlex each performed
+  one independent analysis, RX 480 synthesized the result, 200 in
+  19.185 seconds.
+
+These are real, bounded model-only generations, but use an ephemeral
+SSH-host-local transport for the smoke test. They **do not** establish that
+the live Next.js HTTP container has production bearer credentials.
+
+### iOS release pairing
+
+The iOS native default remains pinned to
+`https://kipnerter.com/api/chat/completions`, not node IP addresses.
+Draft iOS PR #448 at `e56ed62698527a9698fc6c52f52c6a4fbb8d5dbe`
+has green exact-head contract, portable, standalone-host and CI gates.
+The TestFlight workflow additionally requires a **live** correct-model
+HTTPS response before upload. As the public route is still 404,
+TestFlight upload remains **HOLD**, even though simulator validation passes.
+
