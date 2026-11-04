@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { POST } from "../app/api/chat/completions/route.js";
+import { POST, canonicalClientIp } from "../app/api/chat/completions/route.js";
 
 function request(body, client = "route-test-client") {
   return new Request("https://kipnerter.com/api/chat/completions", {
@@ -49,4 +49,30 @@ test("valid bounded JSON still reaches configured-fleet readiness gate", async (
     if (prior === undefined) delete process.env.KIPNERTER_LFM3_ENDPOINTS;
     else process.env.KIPNERTER_LFM3_ENDPOINTS = prior;
   }
+});
+
+test("client identity ignores spoofed X-Real-IP and earlier XFF chain entries", () => {
+  const req = new Request("https://kipnerter.com/api/chat/completions", {
+    headers: {
+      "x-real-ip": "203.0.113.66",
+      "x-forwarded-for": "203.0.113.77, 198.51.100.19",
+    },
+  });
+  assert.equal(canonicalClientIp(req), "198.51.100.19");
+});
+test("missing or invalid canonical proxy address fails closed into shared anonymous bucket", () => {
+  const noProxy = new Request("https://kipnerter.com/api/chat/completions", {
+    headers: { "x-real-ip": "203.0.113.99" },
+  });
+  assert.equal(canonicalClientIp(noProxy), "unknown");
+  const invalid = new Request("https://kipnerter.com/api/chat/completions", {
+    headers: { "x-forwarded-for": "203.0.113.77, not-an-address" },
+  });
+  assert.equal(canonicalClientIp(invalid), "unknown");
+});
+test("canonical client identity supports IPv6 proxy addresses", () => {
+  const req = new Request("https://kipnerter.com/api/chat/completions", {
+    headers: { "x-forwarded-for": "203.0.113.77, 2001:db8::12" },
+  });
+  assert.equal(canonicalClientIp(req), "2001:db8::12");
 });
