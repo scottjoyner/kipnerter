@@ -33,6 +33,7 @@ test("bounded model-only parallel work distributes two workers across ready node
     const request=JSON.parse(call.options.body);
     assert.equal(request.model,model);
     assert.equal(request.tools,undefined);
+    assert.match(request.messages.at(-1).content, /Compare capacity options/);
   }
 });
 test("fanout rejects excessive tasks and one-node oversubscription", async () => {
