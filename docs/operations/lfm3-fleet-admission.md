@@ -313,3 +313,41 @@ yet passed. The public chat route still returns HTTP 404. Do not merge
 or perform the public Caddy swap or signed TestFlight upload without
 approved secure secrets provisioning, edge abuse-policy review,
 and the live gateway acceptance gate.
+
+## November 4 — correctly classify per-worker context limits
+
+Web code head `80a6ae01739e4285867fe79adb9e62b398f5cfe5`
+preflights whether the complete newest user turn fits *any* configured
+LFM3 worker, before reserving a slot or querying model catalogs. If none
+can hold it, the route returns `HTTP 413` with a brief prompt-size
+error, not `503` implying model or GPU failure. It does not silently
+truncate the newest turn. Existing GPU-first, CPU overflow, single-slot
+concurrency, independent research provenance, and timeout policies
+remain unchanged.
+
+The exact web source was reconstructed from verified GitHub blobs and
+passed **104/104 Node tests**, optimized Next.js build, and hosted CI
+[run 41840169895](https://github.com/scottjoyner/kipnerter/actions/runs/41840169895).
+
+The matching isolated production-host staging image
+`kipnerter-lfm3-staging:80a6ae0` runs in
+`kipnerter-lfm3-stage-80a6ae0`, exposed **only on**
+`127.0.0.1:3352`. A real HTTP probe verified homepage `200`,
+normal chat without approved keys `503` (fail closed), oversized latest
+prompt `413`, unauthorized research `403`, and worker health `200`
+from within the container on R9700, RX480, and OptiPlex. Private
+operator status remains blocked without configured operator identity.
+Previous stage removed after acceptance; public Caddy and
+`kipnerter-web-public-v01` unchanged and still `404` on
+`POST /api/chat/completions`.
+
+The iOS draft client now distinguishes this `413` as `promptTooLong`
+rather than suggesting the fleet is offline. An isolated Swift 6
+`URLSession` fixture suite on the Mac executed **6/6 passing tests**
+including the new status mapping. Final exact-head hosted iOS CI
+remains a separate release gate.
+
+The approval boundary is unchanged: secrets were not transferred,
+no authenticated generation has passed **through the staged web
+container**, and there has been no public site cutover or signed
+TestFlight upload.
