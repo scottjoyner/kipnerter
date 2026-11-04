@@ -53,3 +53,49 @@ do not replace distributed capacity controls.
 
 ## Bounded parallel research (library only)
 The module apps/web/lib/lfm3-parallel.mjs supports 2–3 **independent** model-only workers on separate admitted LFM3 nodes and a final LFM3 synthesis. It returns no partial synthesis when a worker fails. It requires a trusted authorized caller and is deliberately **not** wired into the public chat route; no Hermes, tools, or private database reads are authorized by these model outputs. Future integration needs authenticated identity, task-cost budgets, per-node lease coordination, and signed SG/Trace DB receipts.
+
+## Private model-only parallel research (opt-in)
+
+The authenticated private workspace now contains an explicit **Parallel LFM3
+research** panel. Its server route is `POST /api/chat/research`, which requires
+a configured NextAuth Tailscale identity, an admitted operator session, and a
+same-origin browser request. Users supply only a short question. The service
+assigns two independent analysis perspectives, routes their LFM3 requests to
+available admitted fleet models, then synthesizes their responses on LFM3.
+
+This is **not** the Hermes agent harness. No shell, tools, database reads,
+private trace retrieval, or arbitrary client-selected endpoints are authorized.
+Anonymous `/api/chat/completions` and the iOS default never invoke this
+parallel endpoint. The private service restricts two concurrent requests per
+app process and three attempts per authorized identity per minute; these are
+defense-in-depth limits, not distributed leases or reverse-proxy abuse controls.
+
+## November 4 staging and release boundaries
+
+- Authenticated direct-generation checks passed on Deathstar RX 480
+  (`lfm3-1.7b-rx480`, short completion in 779ms) and OptiPlex
+  (`lfm3-1.7b-optiplex`, short completion in 6.91 seconds). The R9700
+  Tailnet bridge is present and enforces bearer authentication, but a
+  final nonempty authenticated generation acceptance is still outstanding.
+- The public web completion API uses a 48KB **streaming** request-body cap,
+  recent contiguous history bounded to 5,000 UTF-8 bytes to protect
+  the smallest model context, GPU-first interactive routing, optional
+  CPU overflow and bounded same-family failover.
+- A standalone, ephemeral Next.js production-server smoke with a local
+  **mock** LFM3 backend produced HTTP 200 and the expected JSON
+  `reply`/`model` shape. The private parallel route rejected a
+  cross-origin request with HTTP 403. This is synthetic protocol evidence,
+  not real authenticated multi-node gateway admission.
+- Production site topology is Caddy -> `kipnerter-web-public-v01:3000`
+  (host loopback port 3337). The production host can reach all three
+  authenticated Tailnet model endpoints. However, the **live public**
+  `POST /api/chat/completions` still returns 404, because this draft
+  has not been promoted to that public container.
+- Production deployment needs securely provisioned **per-node bearer
+  secrets** on the server, operator-reviewed Caddy client-IP and
+  rate-limit protections, tested real responses through the staged
+  gateway, exact-head CI, and an explicit cutover/rollback decision.
+  The iOS branch's complete CI/simulator gates pass, but shipping its
+  LFM3 default to users before this web cutover would create a broken
+  chat default. No signed IPA/TestFlight upload or prod image cutover
+  is claimed.
