@@ -1,0 +1,38 @@
+# Isolated, NO-PUBLIC-CUTOVER LFM3 staging template.
+# DO NOT run until an approved secrets manager has provisioned private
+# per-node bearer files on the production Docker host. No token values
+# appear in this manifest, environment, CI, logs, or the iOS client.
+#
+# Operator must pin an already verified exact-head image tag, and provision
+# KIPNERTER_LFM3_SECRET_DIR with root-owned 0400/0600 regular files:
+# r9700.key, rx480.key, optiplex.key. Do not recreate a missing mount path.
+services:
+  kipnerter-lfm3-stage-provisioned:
+    image: ${KIPNERTER_LFM3_STAGE_IMAGE:?A verified staging image tag is required}
+    container_name: kipnerter-lfm3-stage-provisioned
+    restart: "no"
+    ports:
+      - "127.0.0.1:3354:3000"
+    networks:
+      - kipnerter_frontend
+    cpus: 0.75
+    mem_limit: 512m
+    memswap_limit: 640m
+    pids_limit: 150
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      KIPNERTER_ENV: staging
+      KIPNERTER_LFM3_ENDPOINTS: >-
+        [{"name":"r9700","baseUrl":"http://100.83.215.83:19176","model":"lfm3-1.7b-research","adapter":"openai","role":"interactive","maxInflight":1,"disableThinking":true,"maxOutputTokens":256,"credentialEnv":"KIPNERTER_LFM3_TOKEN_R9700"},{"name":"rx480","baseUrl":"http://100.78.106.121:19176","model":"lfm3-1.7b-rx480","adapter":"openai","role":"interactive","maxInflight":1,"credentialEnv":"KIPNERTER_LFM3_TOKEN_RX480"},{"name":"optiplex","baseUrl":"http://100.69.158.114:19176","model":"lfm3-1.7b-optiplex","adapter":"openai","role":"overflow","maxInflight":1,"credentialEnv":"KIPNERTER_LFM3_TOKEN_OPTIPLEX"}]
+    volumes:
+      - type: bind
+        source: ${KIPNERTER_LFM3_SECRET_DIR:?A provisioned root-only directory is required}
+        target: /run/secrets/kipnerter-lfm3
+        read_only: true
+        bind:
+          create_host_path: false
+
+networks:
+  kipnerter_frontend:
+    external: true
