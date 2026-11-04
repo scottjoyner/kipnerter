@@ -42,6 +42,8 @@ export function fitResearchSynthesis(question, workers, nodes) {
 export async function runParallelLFM3Research({
   authorized = false, question, subtasks, nodes,
   fetchImpl = fetch, resolveToken = null, signal,
+  // Internal-only test override. The HTTP route never passes this from a client.
+  timeoutPolicy = { totalMs: 75000, fanoutMs: 40000, spareMs: 14000, synthesisMs: 20000 },
 } = {}) {
   if (authorized !== true) return { status: 403, error: "Authenticated research authorization required." };
   if (!limit(question, 700) || !Array.isArray(subtasks) ||
@@ -65,7 +67,26 @@ export async function runParallelLFM3Research({
   if (!fitResearchSynthesis(question, baseline, nodes)) {
     return { status: 413, error: "Question and independent LFM3 summaries exceed the available synthesis context." };
   }
-  const options = { fetchImpl, resolveToken, signal };
+  if (signal?.aborted) return { status: 499, error: "Research cancelled." };
+  // Keep a single finite end-to-end deadline across fanout, spare recovery
+  // and synthesis. The original code could spend 43s on every phase and
+  // outlive the web client or reverse-proxy request.
+  const bounds = ["totalMs", "fanoutMs", "spareMs", "synthesisMs"];
+  if (!timeoutPolicy || bounds.some(key =>
+      !Number.isInteger(timeoutPolicy[key]) ||
+      timeoutPolicy[key] < 1 || timeoutPolicy[key] > 75000)) {
+    throw new Error("invalid internal parallel inference time budget");
+  }
+  const totalSignal = signal
+    ? AbortSignal.any([signal, AbortSignal.timeout(timeoutPolicy.totalMs)])
+    : AbortSignal.timeout(timeoutPolicy.totalMs);
+  const phaseSignal = milliseconds => AbortSignal.any([
+    totalSignal, AbortSignal.timeout(milliseconds),
+  ]);
+  const stopped = () => signal?.aborted
+    ? { status: 499, error: "Research cancelled." }
+    : { status: 504, error: "Parallel LFM3 research exceeded its bounded time budget." };
+  const options = { fetchImpl, resolveToken };
   // Assign dedicated physical hosts BEFORE parallel work, not after it.
   // Round-robin calls racing for the same global pool could otherwise
   // converge onto one host after a failure and waste the entire fan-out.
@@ -92,9 +113,10 @@ export async function runParallelLFM3Research({
     role: "user", content: "Question: " + question + "\nAssigned perspective: " + task +
       "\nAnalyze briefly and independently. Do not execute tools or claim external verification.",
   }];
+  const workerSignal = phaseSignal(timeoutPolicy.fanoutMs);
   const workers = await Promise.all(subtasks.map((task, index) =>
-    completeFleetChat(prompt(task), { ...options, nodes: [assigned[index]] })));
-  if (signal?.aborted) return { status: 499, error: "Research cancelled." };
+    completeFleetChat(prompt(task), { ...options, nodes: [assigned[index]], signal: workerSignal })));
+  if (workerSignal.aborted) return stopped();
 
   // Failed perspectives may be retried only on a DISTINCT idle spare, never
   // on a worker another perspective already used. A spare is leased to at
@@ -104,10 +126,12 @@ export async function runParallelLFM3Research({
   if (failed.length > spares.length) {
     return { status: 503, error: "A parallel LFM3 worker was unavailable; no partial synthesis was published." };
   }
+  if (totalSignal.aborted) return stopped();
+  const spareSignal = phaseSignal(timeoutPolicy.spareMs);
   const recovered = await Promise.all(failed.map((index, i) =>
-    completeFleetChat(prompt(subtasks[index]), { ...options, nodes: [spares[i]] })));
+    completeFleetChat(prompt(subtasks[index]), { ...options, nodes: [spares[i]], signal: spareSignal })));
   for (let i = 0; i < failed.length; i++) workers[failed[i]] = recovered[i];
-  if (signal?.aborted) return { status: 499, error: "Research cancelled." };
+  if (spareSignal.aborted) return stopped();
   if (workers.some(result => result.status !== 200)) {
     return { status: 503, error: "A parallel LFM3 worker was unavailable; no partial synthesis was published." };
   }
@@ -127,9 +151,12 @@ export async function runParallelLFM3Research({
   if (!synthesis) {
     return { status: 413, error: "Question and independent LFM3 summaries exceed the available synthesis context." };
   }
+  if (totalSignal.aborted) return stopped();
+  const synthesisSignal = phaseSignal(timeoutPolicy.synthesisMs);
   const composed = await completeFleetChat([
     { role: "user", content: synthesis },
-  ], { ...options, nodes });
+  ], { ...options, nodes, signal: synthesisSignal });
+  if (synthesisSignal.aborted) return stopped();
   if (composed.status !== 200) {
     return { status: 503, error: "LFM3 synthesis unavailable." };
   }
