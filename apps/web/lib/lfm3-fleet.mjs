@@ -25,7 +25,7 @@ export function endpointConfig(raw) {
   const names = new Set();
   return parsed.map(row => {
     if (!row || typeof row !== "object" || Array.isArray(row)) throw new Error("invalid endpoint");
-    const { name, baseUrl, model, adapter = "lmstudio", maxInflight = 1, credentialEnv = null } = row;
+    const { name, baseUrl, model, adapter = "lmstudio", maxInflight = 1, credentialEnv = null, role = "interactive" } = row;
     if (typeof name !== "string" || !/^[a-zA-Z0-9_-]{1,48}$/.test(name) || names.has(name)) throw new Error("invalid node name");
     names.add(name);
     if (typeof baseUrl !== "string" || baseUrl.length > 250) throw new Error("invalid endpoint URL");
@@ -37,7 +37,8 @@ export function endpointConfig(raw) {
     if (typeof model !== "string" || model.length > 128 || !MODEL_ID.test(model)) throw new Error("endpoint must serve LFM3-1.7B");
     if (!["lmstudio", "openai"].includes(adapter) || !Number.isInteger(maxInflight) || maxInflight < 1 || maxInflight > 8) throw new Error("invalid endpoint adapter or limit");
     if (credentialEnv !== null && (typeof credentialEnv !== "string" || !/^KIPNERTER_LFM3_TOKEN_[A-Z0-9_]{1,48}$/.test(credentialEnv))) throw new Error("invalid per-node credential reference");
-    return { name, baseUrl: url.origin, model, adapter, maxInflight, credentialEnv };
+    if (!["interactive", "overflow"].includes(role)) throw new Error("invalid endpoint role");
+    return { name, baseUrl: url.origin, model, adapter, maxInflight, credentialEnv, role };
   });
 }
 
@@ -72,7 +73,8 @@ function orderedNodes(nodes) {
   // Keep requests distributed when several eligible nodes have equal load.
   const offset = roundRobinCursor++ % Math.max(1, candidates.length);
   const order = new Map(candidates.map((n, index) => [n.name, (index - offset + candidates.length) % candidates.length]));
-  return candidates.sort((a, b) => (active.get(a.name) || 0) / a.maxInflight -
+  return candidates.sort((a, b) => (a.role === "overflow" ? 1 : 0) - (b.role === "overflow" ? 1 : 0) ||
+    (active.get(a.name) || 0) / a.maxInflight -
     (active.get(b.name) || 0) / b.maxInflight || order.get(a.name) - order.get(b.name));
 }
 function reserve(node) {
@@ -98,7 +100,10 @@ export async function completeFleetChat(messages, {
   const payload = validateMessages(messages);
   if (!Array.isArray(nodes) || nodes.length === 0) return { status: 503, error: "LFM3 fleet is not configured." };
   let hadFree = false;
-  for (const node of orderedNodes(nodes)) {
+  const itinerary = orderedNodes(nodes);
+  const deadlineAt = Date.now() + 43000; // iOS client timeout is 55s; reserve room for network overhead.
+  for (const [index, node] of itinerary.entries()) {
+    if (Date.now() >= deadlineAt - 1000) break;
     hadFree = true;
     if (!reserve(node)) continue;
     try {
@@ -108,10 +113,15 @@ export async function completeFleetChat(messages, {
         blockedUntil.set(node.name, Date.now() + 10000);
         continue;
       }
+      const attemptsLeft = itinerary.length - index;
+      const attemptMs = Math.min(42000, Math.max(1000,
+        Math.floor((deadlineAt - Date.now() - 1000) / attemptsLeft)));
       const upstream = await fetchImpl(node.baseUrl + "/v1/chat/completions", {
-        method: "POST", signal: fetchSignal(signal, 45000),
+        method: "POST", signal: fetchSignal(signal, attemptMs),
         headers: { ...headers(nodeToken), "Content-Type": "application/json" },
-        body: JSON.stringify({ model: node.model, messages: payload, stream: false, max_tokens: 512, temperature: 0.1, top_k: 50, repeat_penalty: 1.1 }),
+        body: JSON.stringify({ model: node.model, messages: payload, stream: false,
+          max_tokens: node.role === "overflow" ? 256 : 512,
+          temperature: 0.1, top_k: 50, repeat_penalty: 1.1 }),
         cache: "no-store",
       });
       if (!upstream.ok) {
