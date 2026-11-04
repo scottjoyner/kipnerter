@@ -109,6 +109,28 @@ export function validateMessages(messages) {
   }
   return [{ role: "system", content: SYSTEM_PROMPT }, ...recent];
 }
+// Context-bound admission is per worker: CPU overflow has 1536 tokens,
+// while the current GPU research lanes use 2048. Byte-based budgets are
+// deliberately stricter than either model window to leave space for special
+// tokens, chat templates, and response tokens.
+export function fitNodeContext(payload, node) {
+  const byteCap = node.role === "overflow" ? 900 : 1300;
+  const encoder = new TextEncoder();
+  let bytes = encoder.encode(payload[0].content).byteLength + 32;
+  const selected = [];
+  for (let i = payload.length - 1; i >= 1; i--) {
+    const cost = encoder.encode(payload[i].content).byteLength + 40;
+    if (bytes + cost > byteCap) {
+      // Never silently shorten a user's newest message.
+      if (!selected.length) return null;
+      break;
+    }
+    selected.unshift(payload[i]);
+    bytes += cost;
+  }
+  return [payload[0], ...selected];
+}
+
 export async function completeFleetChat(messages, {
   nodes, fetchImpl = fetch, token = "", resolveToken = null, signal,
 } = {}) {
@@ -131,10 +153,12 @@ export async function completeFleetChat(messages, {
       const attemptsLeft = itinerary.length - index;
       const attemptMs = Math.min(42000, Math.max(1000,
         Math.floor((deadlineAt - Date.now() - 1000) / attemptsLeft)));
+      const fitted = fitNodeContext(payload, node);
+      if (!fitted) continue; // This node cannot hold the latest user turn.
       const upstream = await fetchImpl(node.baseUrl + "/v1/chat/completions", {
         method: "POST", signal: fetchSignal(signal, attemptMs),
         headers: { ...headers(nodeToken), "Content-Type": "application/json" },
-        body: JSON.stringify({ model: node.model, messages: payload, stream: false,
+        body: JSON.stringify({ model: node.model, messages: fitted, stream: false,
           max_tokens: node.role === "overflow" ? 256 : 512,
           temperature: 0.1, top_k: 50, repeat_penalty: 1.1 }),
         cache: "no-store",
