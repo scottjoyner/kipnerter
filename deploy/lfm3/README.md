@@ -87,3 +87,47 @@ edge/global abuse-control verification all pass. Only then review public
 Caddy promotion and the signed iOS/TestFlight gate. The iOS app uses
 `https://kipnerter.com/api/chat/completions` and must never contain
 Tailnet credentials or individual worker addresses.
+
+## Public edge phase-one cutover candidate — deliberately unapplied
+
+A read-only production Caddy inspection on November 4 found that the
+current Caddyfile proxies `kipnerter.com`, `www.kipnerter.com`, and
+`preview.kipnerter.com` to the existing public web container and has
+**no explicit LFM3 chat route**. It also lacks a shared rate-limiting
+directive and request-body cap. The running image is **Caddy 2.11.4**;
+its listed modules include `http.handlers.request_body` but no
+`http.handlers.rate_limit`. Therefore do **not** assume a Caddy
+`rate_limit` directive will work on the deployed binary.
+
+The file `caddy.phase1.candidate.Caddyfile` is an **unapplied** full
+candidate preserving the existing public, spatial API, artifacts and
+admin backends. It routes **only canonical-host POST**
+`https://kipnerter.com/api/chat/completions` to the future provisioned
+LFM3 gateway. The operator research endpoint remains on the existing
+site and unavailable until NextAuth and its own security gates pass.
+It enforces an 8 KB request-body cap and overwrites untrusted
+forwarded-IP headers before the Next.js process-local rate limiter.
+
+The actual production Caddy binary ran a `caddy validate --config
+/dev/stdin --adapter caddyfile` **without installing/reloading the
+candidate** and returned `Valid configuration`. This proves syntax
+and module compatibility only; **it does not prove** public request
+routing, shared/global abuse protection or authenticated inference.
+Tests in `apps/web/tests/lfm3-caddy-cutover.test.mjs` ensure that the
+candidate preserves its restricted host/method/path and fallback.
+
+The cutover remains **HOLD** until all of the following are physically
+verified and recorded together: approved protected key mounts on a
+staged gateway; an authenticated LFM3 completion via that gateway;
+shared/edge-wide abuse controls appropriate for the deployment;
+the candidate's IP-header semantics and reverse proxy's connectivity;
+an exact-head Docker image and signed acceptance record; an immediately
+available rollback to the unchanged public site; then authorized Caddy
+promotion. Merely loading model catalogs or returning `/health 200`
+is insufficient evidence. The new iOS default must not be TestFlight
+distributed while public chat is HTTP 404 or 503.
+
+The candidate deliberately introduces **no** `rate_limit` directive
+since the host lacks that Caddy plugin. Its absence is an explicit
+release blocker requiring a reviewed edge limiter/proxy implementation
+(or a suitable shared backend limiter) rather than a hidden assumption.
