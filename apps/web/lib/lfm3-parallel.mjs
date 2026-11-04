@@ -1,6 +1,6 @@
 // Model-only bounded fan-out for a *trusted*, authenticated orchestrator.
 // Not imported by anonymous home chat and never performs tool execution.
-import { completeFleetChat, DISPLAY_MODEL } from "./lfm3-fleet.mjs";
+import { completeFleetChat, DISPLAY_MODEL, fleetRuntimeSnapshot } from "./lfm3-fleet.mjs";
 
 const limit = (value, maximum) => typeof value === "string" &&
   value.trim().length > 0 && value.length <= maximum;
@@ -27,12 +27,49 @@ export async function runParallelLFM3Research({
   if (hosts.some(host => !host) || new Set(hosts).size < subtasks.length) {
     return { status: 400, error: "Parallel LFM3 research requires distinct physical fleet hosts." };
   }
-  const options = { nodes, fetchImpl, resolveToken, signal };
-  // Reuses process-local per-node reservations, cooldowns and exact LFM3 checks.
-  // No deployment, shells, SensorGraft retrieval, or private fleet mutations.
-  const workers = await Promise.all(subtasks.map(subtask => completeFleetChat([
-    { role: "user", content: "Question: " + question + "\nAssigned perspective: " + subtask + "\nAnalyze briefly and independently. Do not execute tools or claim external verification." },
-  ], options)));
+  const options = { fetchImpl, resolveToken, signal };
+  // Assign dedicated physical hosts BEFORE parallel work, not after it.
+  // Round-robin calls racing for the same global pool could otherwise
+  // converge onto one host after a failure and waste the entire fan-out.
+  // Preserve interactive GPU priority and use an idle CPU only as overflow.
+  const available = nodes.filter(node => {
+    const snapshot = fleetRuntimeSnapshot(node);
+    return !snapshot.cooldown && snapshot.inFlight < snapshot.maxInflight;
+  }).sort((a, b) => Number(a.role === "overflow") - Number(b.role === "overflow"));
+  const unique = [];
+  const hostsSeen = new Set();
+  for (const node of available) {
+    const host = physicalHost(node);
+    if (host && !hostsSeen.has(host)) {
+      hostsSeen.add(host);
+      unique.push(node);
+    }
+  }
+  if (unique.length < subtasks.length) {
+    return { status: 503, error: "Not enough distinct idle LFM3 workers for parallel research." };
+  }
+  const assigned = unique.slice(0, subtasks.length);
+  const spares = unique.slice(subtasks.length);
+  const prompt = task => [{
+    role: "user", content: "Question: " + question + "\nAssigned perspective: " + task +
+      "\nAnalyze briefly and independently. Do not execute tools or claim external verification.",
+  }];
+  const workers = await Promise.all(subtasks.map((task, index) =>
+    completeFleetChat(prompt(task), { ...options, nodes: [assigned[index]] })));
+  if (signal?.aborted) return { status: 499, error: "Research cancelled." };
+
+  // Failed perspectives may be retried only on a DISTINCT idle spare, never
+  // on a worker another perspective already used. A spare is leased to at
+  // most one failed task; no repeated probes or surprise model loading.
+  const failed = workers.flatMap((worker, index) =>
+    worker.status === 200 ? [] : [index]);
+  if (failed.length > spares.length) {
+    return { status: 503, error: "A parallel LFM3 worker was unavailable; no partial synthesis was published." };
+  }
+  const recovered = await Promise.all(failed.map((index, i) =>
+    completeFleetChat(prompt(subtasks[index]), { ...options, nodes: [spares[i]] })));
+  for (let i = 0; i < failed.length; i++) workers[failed[i]] = recovered[i];
+  if (signal?.aborted) return { status: 499, error: "Research cancelled." };
   if (workers.some(result => result.status !== 200)) {
     return { status: 503, error: "A parallel LFM3 worker was unavailable; no partial synthesis was published." };
   }
@@ -56,7 +93,7 @@ export async function runParallelLFM3Research({
       "Do not claim external verification or tool use. Note uncertainty or disagreement.",
       "\nQuestion: " + question, "\n" + excerpts.join("\n"),
     ].join("") },
-  ], options);
+  ], { ...options, nodes });
   if (composed.status !== 200) {
     return { status: 503, error: "LFM3 synthesis unavailable." };
   }
