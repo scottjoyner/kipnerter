@@ -166,12 +166,21 @@ gateway. Other public Caddy routes retain their existing backends.
 
 The live Caddy 2.11.4 binary validated this *candidate* Caddyfile
 via stdin, and `docker compose -f - config --quiet` parsed the
-sidecar manifest. These are configuration-only validations, **not**
-runtime, rate-limit or ingress acceptance. No Nginx image was cached
-on the deployment host at inspection; no image was pulled or sidecar
-started. Nginx runtime correctness, approved image provenance, correct
-forwarded-IP handling, rate limits behind live TLS, and lifecycle
-when the Caddy container is recreated **all remain unverified**.
+sidecar manifest. The registry subsequently advertised an official
+Nginx Alpine **candidate OCI image-index digest** of
+`sha256:0e52bd054126cdc040b1276c0af347aeb02a41b9cfe305d6094767ac30e97949`
+(linux/amd64 variant, 1.30.6-alpine). That digest-pinned image was
+cached on the production host for an **offline temporary-container smoke
+test**. The test ran `nginx -t` and verified that unrelated URLs
+return 404, non-POST completions return 405, and repeated completions
+return a 429 from the shared rate-limit zone. The intentionally absent
+upstream produced 502 *before* rate limiting was triggered. The test
+reported `OFFLINE_EDGE_ACCEPTED`, and the temporary container was
+removed. No gateway/model, public Caddy route, or credential was used.
+This is **stronger than syntax-only validation**, but the image
+provenance/approval, correct client IP behind Caddy, rate limits behind
+live TLS, and lifecycle when Caddy is recreated **remain unverified**.
+The image's cache presence does not authorize its production use.
 
 **Activation order** remains strictly HOLD until an authorized owner
 records: (1) immutable and verified Nginx image digest plus offline
