@@ -200,6 +200,12 @@ export async function completeFleetChat(messages, {
 } = {}) {
   const payload = validateMessages(messages);
   if (!Array.isArray(nodes) || nodes.length === 0) return { status: 503, error: "LFM3 fleet is not configured." };
+  // A newest prompt that does not fit *any* configured model context is a
+  // client-size error, not evidence that GPUs are down. Do this before
+  // discovering or reserving workers, and never truncate the user's turn.
+  if (!nodes.some(node => fitNodeContext(payload, node) !== null)) {
+    return { status: 413, error: "The latest message exceeds the available LFM3 context window. Shorten the message." };
+  }
   let hadFree = false;
   const itinerary = orderedNodes(nodes);
   const deadlineAt = Date.now() + 43000; // iOS client timeout is 55s; reserve room for network overhead.
