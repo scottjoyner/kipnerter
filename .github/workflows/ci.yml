@@ -40,6 +40,8 @@ jobs:
       - run: npm audit --omit=dev --audit-level=moderate
       - run: node --test tests/*.test.mjs
       - run: npm run build
+      - name: Exercise simulated LFM3 chat through real Next.js API (no fleet access)
+        run: python3 ../../scripts/lfm3_demo_acceptance.py
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
