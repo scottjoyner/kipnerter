@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { endpointConfig, isLoaded, completeFleetChat, validateMessages, fitNodeContext } from "../lib/lfm3-fleet.mjs";
+import { endpointConfig, isLoaded, completeFleetChat, validateMessages, fitNodeContext, discoverFleetNodes } from "../lib/lfm3-fleet.mjs";
 
 const node = { name: "joyner", baseUrl: "http://100.83.215.83:1234", model: "liquid/lfm3-1.7b-q4", adapter: "lmstudio", maxInflight: 2 };
 const body = [{ role: "user", content: "Hello" }];
@@ -252,4 +252,45 @@ test("endpoint generation settings are tightly bounded and typed", () => {
     assert.throws(() => endpointConfig(JSON.stringify([{...node,maxOutputTokens}])),/generation policy/);
   }
   assert.equal(endpointConfig(JSON.stringify([{...node,maxOutputTokens:192}]))[0].maxOutputTokens,192);
+});
+
+test("private discovery distinguishes native loaded weights from OpenAI catalog listing", async () => {
+  const native = { ...node, name: "native-loaded-discovery" };
+  const openai = { ...node, name: "openai-catalog-discovery", adapter: "openai",
+    baseUrl: "http://100.78.106.121:19176", role: "overflow", maxInflight: 1 };
+  const fetchImpl = async (url) => {
+    if (url.endsWith("/api/v1/models")) return Response.json({models: [{
+      key: native.model, type: "llm", loaded_instances:[{id:native.model}]
+    }]});
+    return Response.json({data:[{id:openai.model}]});
+  };
+  const result = await discoverFleetNodes([native,openai], {fetchImpl});
+  assert.deepEqual(result.map(x=>x.state),["loaded","catalog-listed"]);
+  assert.equal(result[1].role,"overflow");
+  assert.equal(result[1].maxInflight,1);
+  assert.equal(JSON.stringify(result).includes("100.78.106.121"),false, "no private node IP returned");
+});
+test("uncredentialed or unreachable discovery cannot qualify a candidate", async () => {
+  const locked={ ...node, name:"needs-key", credentialEnv:"KIPNERTER_LFM3_TOKEN_MISSING" };
+  const offline={ ...node, name:"offline-discovery", credentialEnv:null };
+  let requests=0;
+  const states=await discoverFleetNodes([locked,offline], {
+    resolveToken: () => "",
+    fetchImpl:async () => {requests++;throw Error("unreachable");}
+  });
+  assert.deepEqual(states.map(x=>x.state),["missing-credential","unavailable"]);
+  assert.equal(requests,1);
+});
+test("a successful actual generation upgrades only that candidate to served in-process", async () => {
+  const n={...node,name:"actually-served-discovery",adapter:"openai",baseUrl:"http://100.83.215.83:19176"};
+  const fetchImpl=async (url)=>{
+    if(url.endsWith("/v1/models"))return Response.json({data:[{id:n.model}]});
+    return Response.json({choices:[{message:{content:"4"}}]});
+  };
+  assert.equal((await discoverFleetNodes([n],{fetchImpl}))[0].state,"catalog-listed");
+  const generated=await completeFleetChat(body,{nodes:[n],fetchImpl});
+  assert.equal(generated.status,200);
+  const found=await discoverFleetNodes([n],{fetchImpl});
+  assert.equal(found[0].state,"served");
+  assert.match(found[0].lastSuccessAt,/^\d{4}-\d\d-\d\dT/);
 });
