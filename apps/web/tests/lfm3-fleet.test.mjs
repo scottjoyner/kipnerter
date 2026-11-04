@@ -153,3 +153,21 @@ test("endpoint configuration requires a known routing role", () => {
   assert.equal(endpointConfig(JSON.stringify([node]))[0].role, "interactive");
   assert.throws(() => endpointConfig(JSON.stringify([{ ...node, role: "agent-command" }])), /role/);
 });
+
+test("only recent contiguous conversation turns reach small LFM3 inference contexts", () => {
+  const history = Array.from({ length: 10 }, (_, i) => ({
+    role: i % 2 ? "assistant" : "user",
+    content: "turn " + i + " " + "x".repeat(1400),
+  }));
+  history.push({ role: "user", content: "What is the answer?" });
+  const selected = validateMessages(history);
+  assert.equal(selected[0].role, "system");
+  assert.equal(selected.at(-1).content, "What is the answer?");
+  assert.ok(selected.length < history.length + 1, "older turns must be dropped");
+  assert.ok(selected.length > 2, "recent context should be preserved");
+  const indexOfSelected = history.findIndex(entry => entry.content === selected[1].content);
+  assert.deepEqual(selected.slice(1), history.slice(indexOfSelected));
+});
+test("oversized final Unicode prompt is rejected, not truncated", () => {
+  assert.throws(() => validateMessages([{ role: "user", content: "界".repeat(3000) }]), /context budget/);
+});
