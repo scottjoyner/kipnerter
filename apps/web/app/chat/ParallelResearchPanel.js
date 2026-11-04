@@ -79,6 +79,9 @@ export default function ParallelResearchPanel() {
         {workers.length === 0 ? <p>No LFM3 workers are configured.</p> : <ul>
           {workers.map(item => <li key={item.name}>
             <strong>{item.name}</strong> · {item.role === "overflow" ? "CPU / overflow" : "Interactive"} · {item.state}
+            {item.cooldown ? " · Cooling down after a failure" : ""}
+            {" · "}{item.inFlight ?? 0}/{item.maxInflight ?? 1} slots busy
+            {Number.isInteger(item.lastLatencyMs) ? " · recent completion " + item.lastLatencyMs + " ms" : ""}
             {item.lastSuccessAt ? " · Served a request in this app process" : ""}
           </li>)}
         </ul>}
