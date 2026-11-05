@@ -26,6 +26,7 @@ test("remote audit reads only exact containers, key metadata and anonymous auth"
     "http://127.0.0.1:3355/", "http://100.78.106.121:19176/v1/models",
     "fs.lstatSync", "s.isFile()", "(s.mode & 0o077)===0",
     "worker_anonymous", "credential_state", "production_writes=none",
+    "gateway_available_memory_kib", "gateway_disk_free_kib", "gateway_swap_free_kib",
     "single-worker real staging is not fully admitted",
   ]) assert.ok(probe.includes(term), "expected readonly check: "+term);
   for (const forbidden of [

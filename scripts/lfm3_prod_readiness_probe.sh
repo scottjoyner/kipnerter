@@ -55,6 +55,16 @@ echo "rx480_anonymous_model_http=$worker_anonymous"
 echo "rx480_key_metadata=$credential_state"
 # No public routes, containers, model state or secret files have been changed.
 echo "production_writes=none"
+# Assess only host capacity, never search or delete arbitrary files.
+# A 4 GiB gateway may lack room for an isolated 1.7B CPU fallback.
+mem_available_kib="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
+swap_free_kib="$(awk '/^SwapFree:/ {print $2}' /proc/meminfo)"
+disk_free_kib="$(df -Pk / | awk 'END {print $4}')"
+[[ "$mem_available_kib" =~ ^[0-9]+$ && "$swap_free_kib" =~ ^[0-9]+$ &&
+   "$disk_free_kib" =~ ^[0-9]+$ ]] || { echo "HOLD: host capacity unknown"; exit 3; }
+echo "gateway_available_memory_kib=$mem_available_kib"
+echo "gateway_swap_free_kib=$swap_free_kib"
+echo "gateway_disk_free_kib=$disk_free_kib"
 if [[ "$new_stage" != running || "$local_home" != 200 ||
       "$credential_state" != ready || "$worker_anonymous" != 401 ]]; then
   echo "HOLD: single-worker real staging is not fully admitted"
