@@ -1,0 +1,138 @@
+name: LFM3 RX480 Real Product Staging (guarded)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/lfm3-rx480-real-stage.yml'
+      - 'scripts/lfm3_rx480_stage_preflight.sh'
+      - 'scripts/lfm3_rx480_stage_activate.sh'
+      - 'apps/web/tests/lfm3-rx480-real-stage-contract.test.mjs'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-rx480-real-stage-production
+  cancel-in-progress: false
+
+jobs:
+  real-product-staging:
+    if: >-
+      github.repository == 'scottjoyner/kipnerter' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == github.repository_owner &&
+      github.event.pull_request.head.ref == 'feat/lfm3-native-homechat-20261103'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 35
+    steps:
+      - name: Check out exact owner-reviewed LFM3 source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify immutable source and deployment scripts before prod access
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "${{ github.event.pull_request.head.sha }}" ]]
+          bash -n scripts/lfm3_rx480_stage_preflight.sh
+          bash -n scripts/lfm3_rx480_stage_activate.sh
+          node --test apps/web/tests/lfm3-rx480-real-stage-contract.test.mjs
+
+      - name: Connect existing restricted CI Tailscale identity
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+
+      - name: Resolve uniquely production-tagged host
+        id: destination
+        shell: bash
+        run: |
+          set -euo pipefail
+          host="$(tailscale status --json | python3 scripts/portal_deploy_target.py --environment production)"
+          [[ "$host" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 3
+          tailscale ping --timeout=8s "$host" >/dev/null
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+
+      - name: Require protected RX480 secret and resources BEFORE production writes
+        shell: bash
+        env:
+          HOST: ${{ steps.destination.outputs.host }}
+        run: |
+          set -euo pipefail
+          [[ "$HOST" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 3
+          timeout 40 tailscale ssh "kipnerter@$HOST" 'bash -s' \
+            < scripts/lfm3_rx480_stage_preflight.sh
+
+      - name: Build exact-source production Next.js image on CI host
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          [[ "$sha" =~ ^[a-f0-9]{40}$ ]] || exit 3
+          tag="kipnerter-lfm3-stage-rx480:$sha"
+          docker build --build-arg "KIPNERTER_RELEASE_SHA=$sha" \
+            -t "$tag" -f apps/web/Dockerfile apps/web
+          image_id="$(docker image inspect --format '{{.Id}}' "$tag")"
+          [[ "$image_id" =~ ^sha256:[a-f0-9]{64}$ ]] || exit 3
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "id=$image_id" >> "$GITHUB_OUTPUT"
+          echo "source=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Transfer public image bytes and private-stage manifest only
+        shell: bash
+        env:
+          HOST: ${{ steps.destination.outputs.host }}
+          TAG: ${{ steps.image.outputs.tag }}
+          SHA: ${{ steps.image.outputs.source }}
+        run: |
+          set -euo pipefail
+          [[ "$HOST" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 3
+          [[ "$SHA" =~ ^[a-f0-9]{40}$ && "$TAG" == "kipnerter-lfm3-stage-rx480:$SHA" ]] || exit 3
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]{8,14}$ ]] || exit 3
+          dir="/home/kipnerter/.local/state/kipnerter-lfm3/rx480/$SHA-$GITHUB_RUN_ID"
+          tailscale ssh "kipnerter@$HOST" "umask 077; mkdir -p '$dir'"
+          cat deploy/lfm3/compose.staging.rx480.yml |
+            tailscale ssh "kipnerter@$HOST" \
+              "umask 077; set -C; cat > '$dir/compose.staging.rx480.yml'"
+          # Only built public web image data; no tokens, Docker env values,
+          # host secret files or model weights are moved.
+          docker save "$TAG" | gzip -1 |
+            tailscale ssh "kipnerter@$HOST" \
+              "umask 077; set -C; cat > '$dir/image.tar.gz'"
+          tailscale ssh "kipnerter@$HOST" \
+            "gzip -t '$dir/image.tar.gz' && gzip -dc '$dir/image.tar.gz' | docker load >/dev/null"
+
+      - name: Activate isolated localhost stage and require a genuine LFM3 reply
+        shell: bash
+        env:
+          HOST: ${{ steps.destination.outputs.host }}
+          SHA: ${{ steps.image.outputs.source }}
+          IMAGE_ID: ${{ steps.image.outputs.id }}
+        run: |
+          set -euo pipefail
+          [[ "$HOST" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 3
+          [[ "$SHA" =~ ^[a-f0-9]{40}$ && "$IMAGE_ID" =~ ^sha256:[a-f0-9]{64}$ ]] || exit 3
+          tailscale ssh "kipnerter@$HOST" \
+            "bash -s -- '$SHA' '$IMAGE_ID' '$GITHUB_RUN_ID'" \
+            < scripts/lfm3_rx480_stage_activate.sh
+
+      - name: Preserve explicit live product release boundaries
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '### Real RX480 Next.js product stage'
+            echo ''
+            echo '- Credential presence is checked before any image or stage changes.'
+            echo '- Existing production model key is mounted read-only from an operator-managed path; its value is never transferred.'
+            echo '- A PASS requires a real authenticated LFM3 generated answer through Next.js, not a fixture.'
+            echo '- Stage is bound to 127.0.0.1:3355; no Caddy, public URL, API or TestFlight release changed.'
+            echo '- A failed staging response triggers narrowly scoped rollback; HOLD is never counted as deployed.'
+          } >> "$GITHUB_STEP_SUMMARY"
