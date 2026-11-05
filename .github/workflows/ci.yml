@@ -38,6 +38,8 @@ jobs:
           node-version: "22"
       - run: npm ci --no-audit --no-fund
       - run: npm audit --omit=dev --audit-level=moderate
+      - name: Parse standalone real-model localhost demo script (no model download)
+        run: bash -n ../../scripts/lfm3_live_local_demo.sh
       - run: node --test tests/*.test.mjs
       - run: npm run build
       - name: Exercise simulated LFM3 chat through real Next.js API (no fleet access)
