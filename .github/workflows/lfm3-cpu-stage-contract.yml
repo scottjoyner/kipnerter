@@ -1,0 +1,34 @@
+name: LFM3 isolated CPU stage safety contract
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/lfm3-cpu-stage-contract.yml"
+      - "deploy/lfm3/compose.staging.cpu.yml"
+      - "scripts/lfm3_cpu_stage_preflight.sh"
+      - "scripts/lfm3_cpu_stage_activate.sh"
+      - "scripts/tests/lfm3-cpu-stage-contract.test.mjs"
+      - "deploy/lfm3/CPU_STAGE_READINESS.md"
+permissions:
+  contents: read
+jobs:
+  cpu-stage-no-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run isolated staging negative and contract tests
+        run: node --test scripts/tests/lfm3-cpu-stage-contract.test.mjs
+      - name: Parse staging Compose without running or pulling containers
+        shell: bash
+        run: |
+          set -euo pipefail
+          export KIPNERTER_LFM3_CPU_MODEL_IMAGE="ghcr.io/ggml-org/llama.cpp@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          export KIPNERTER_LFM3_CPU_WEB_IMAGE="kipnerter/web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          export KIPNERTER_LFM3_CPU_MODEL_FILE="/tmp/LFM3-1.7B-Q4_K_M.gguf"
+          docker compose -f deploy/lfm3/compose.staging.cpu.yml config --quiet
+          echo "CPU_STAGE_CONTRACT_PASS: syntax and Compose only; no production access or model download"
