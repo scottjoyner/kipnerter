@@ -240,3 +240,38 @@ replicas, production concurrency, or availability during container
 restarts. Exact-image provenance/approval, safe lifecycle,
 approved gateway key mounts and authenticated staging completion are
 still required before any public cutover or TestFlight release.
+
+## First operational MVP: a real RX480-only authenticated web gateway
+
+A new **unapplied** `compose.staging.rx480.yml` provides a constrained
+localhost-only (`127.0.0.1:3355`) Next.js gateway with **one** explicitly
+admitted real LFM3 model worker, Deathstar/RX480. Unlike the three-worker
+candidate, this can be staged with a single, separately provisioned protected
+`rx480.key` secret. It uses the actual `/api/chat/completions` route, not a
+mock server or fallback response. Its static model alias is
+`lfm3-1.7b-rx480`, and it does not require the other two workers to be
+available.
+
+The new operator acceptance command, when the isolated service has been
+provisioned and started by the authorized host deployment mechanism, is:
+
+```sh
+node deploy/lfm3/gateway-acceptance.mjs \
+  kipnerter-lfm3-stage-rx480 http://127.0.0.1:3355 --rx480-only
+```
+
+This command verifies the live home route, too-large rejection, protected
+RX480 key-file metadata *without ever reading or printing the key*, and a
+**real authenticated generation** returning LFM3-1.7B with the correct
+nonempty arithmetic reply. A missing key, network issue, HTTP 503 or invalid
+model reply is HOLD/FAIL, **never simulated success**. The previous default
+three-worker acceptance remains unchanged. The RX480-only option is accepted
+only for the exact `kipnerter-lfm3-stage-rx480` staging container; operator
+cannot use it to bypass the full staging checks.
+
+This is implementation delivered in the repository, not proof of an actual
+deployment. The image must be built and pinned from accepted source, the
+RX480 key must be provisioned through the approved secret manager, and the
+Docker network / Tailnet reachability / live authenticated response must all
+be checked. Do not open public ingress or ship TestFlight before separately
+passing public HTTPS, abuse controls, rollback and release gates.

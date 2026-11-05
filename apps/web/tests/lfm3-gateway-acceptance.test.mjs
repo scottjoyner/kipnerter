@@ -91,3 +91,55 @@ test("inside-container secret inspection only uses private metadata and rejects 
     /invalid staging/);
   assert.equal(received.length, 1);
 });
+
+test("RX480-only approved stage qualifies genuine chat with one private key", async () => {
+  const { calls, fetchImpl } = fakeTransport();
+  const result = await runGatewayAcceptance({
+    url: "http://127.0.0.1:3355", fetchImpl,
+    requiredWorkers: ["rx480"],
+    inspectSecrets: () => ({ r9700: "missing", rx480: "ready", optiplex: "missing" }),
+  });
+  assert.equal(result.decision, "PASS");
+  assert.equal(result.admissionScope, "rx480-only");
+  assert.deepEqual(result.workerMounts, { rx480: "ready" });
+  assert.equal(calls.length, 3, "the accepted stage must make a real model request");
+});
+
+test("RX480 MVP must have its own key; full stage remains three-worker", async () => {
+  const { calls, fetchImpl } = fakeTransport();
+  const partial = { r9700: "missing", rx480: "ready", optiplex: "missing" };
+  const full = await runGatewayAcceptance({
+    url: "http://127.0.0.1:3354", fetchImpl, inspectSecrets: () => partial,
+  });
+  assert.equal(full.decision, "HOLD");
+  assert.equal(full.admissionScope, "three-worker");
+  const missing = await runGatewayAcceptance({
+    url: "http://127.0.0.1:3355", fetchImpl, requiredWorkers: ["rx480"],
+    inspectSecrets: () => ({ ...partial, rx480: "missing" }),
+  });
+  assert.equal(missing.decision, "HOLD");
+  assert.deepEqual(missing.workerMounts, { rx480: "missing" });
+  assert.equal(calls.length, 4, "no chat generation on missing keys");
+});
+
+test("operator cannot invent an arbitrary worker admission scope", async () => {
+  let calls = 0;
+  for (const requiredWorkers of [[], ["optiplex"], ["r9700"], ["rx480","optiplex"], ["RX480"], ["rx480","rx480"]]) {
+    const decision = await runGatewayAcceptance({
+      url: "http://127.0.0.1:3355", requiredWorkers,
+      fetchImpl: () => { calls++; throw Error("unexpected network"); },
+      inspectSecrets: () => ready,
+    });
+    assert.equal(decision.decision, "FAIL");
+    assert.equal(decision.gate, "unapproved-worker-admission-scope");
+  }
+  assert.equal(calls, 0);
+});
+
+test("single-worker container name is literal and cannot be expanded by injection", () => {
+  const calls=[];
+  const exec=(cmd,args)=> { calls.push([cmd,...args]); return JSON.stringify(ready); };
+  assert.deepEqual(inspectStagedSecretMounts("kipnerter-lfm3-stage-rx480",{exec}),ready);
+  assert.throws(()=>inspectStagedSecretMounts("kipnerter-lfm3-stage-rx480;id",{exec}),/invalid staging/);
+  assert.equal(calls.length,1);
+});

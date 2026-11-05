@@ -9,6 +9,11 @@ import { resolve } from "node:path";
 
 const EXPECTED_MODEL = "LFM3-1.7B";
 const WORKERS = ["r9700", "rx480", "optiplex"];
+// The single-worker MVP uses an isolated, explicitly named compose service;
+// it never relaxes requirements on the existing three-worker staging service.
+const RX480_STAGE_CONTAINER = "kipnerter-lfm3-stage-rx480";
+export const RX480_ONLY = Object.freeze(["rx480"]);
+
 const DOCKER_CHECK = `
 const fs = require("node:fs");
 const root = "/run/secrets/kipnerter-lfm3";
@@ -25,7 +30,8 @@ process.stdout.write(JSON.stringify(result));
 
 export function inspectStagedSecretMounts(container, { exec = execFileSync } = {}) {
   if (typeof container !== "string" ||
-      !/^kipnerter-lfm3-stage-[a-f0-9]{7,40}$/.test(container)) {
+      !(/^kipnerter-lfm3-stage-[a-f0-9]{7,40}$/.test(container) ||
+        container === RX480_STAGE_CONTAINER)) {
     throw new Error("invalid staging container identity");
   }
   try {
@@ -43,8 +49,17 @@ export function inspectStagedSecretMounts(container, { exec = execFileSync } = {
 }
 
 export async function runGatewayAcceptance({
-  url, fetchImpl = fetch, inspectSecrets,
+  url, fetchImpl = fetch, inspectSecrets, requiredWorkers = WORKERS,
 } = {}) {
+  // Only the existing full roster or the isolated RX480-only MVP is
+  // approved. Never take unvalidated worker identities from HTTP clients.
+  const fullRoster = Array.isArray(requiredWorkers) &&
+    requiredWorkers.length === WORKERS.length &&
+    WORKERS.every((name, i) => requiredWorkers[i] === name);
+  const rx480Only = Array.isArray(requiredWorkers) &&
+    requiredWorkers.length === 1 && requiredWorkers[0] === "rx480";
+  if (!fullRoster && !rx480Only)
+    return { decision: "FAIL", gate: "unapproved-worker-admission-scope" };
   let origin;
   try {
     const parsed = new URL(url);
@@ -80,10 +95,12 @@ export async function runGatewayAcceptance({
     // Stop before any model generation to avoid leaking a prompt through a
     // partial or misconfigured key/roster.
     const mounts = await inspectSecrets();
-    if (!mounts || WORKERS.some(name => mounts[name] !== "ready")) {
+    const admitted = rx480Only ? RX480_ONLY : WORKERS;
+    if (!mounts || admitted.some(name => mounts[name] !== "ready")) {
       return {
         decision: "HOLD", gate: "protected-model-secrets",
-        workerMounts: Object.fromEntries(WORKERS.map(name => [
+        admissionScope: rx480Only ? "rx480-only" : "three-worker",
+        workerMounts: Object.fromEntries(admitted.map(name => [
           name, ["ready","missing","invalid"].includes(mounts?.[name]) ? mounts[name] : "unknown",
         ])),
       };
@@ -105,7 +122,8 @@ export async function runGatewayAcceptance({
     return {
       decision: "PASS", gate: "authenticated-staged-chat",
       model: EXPECTED_MODEL, elapsedMs: Date.now() - start,
-      workerMounts: Object.fromEntries(WORKERS.map(name => [name, "ready"])),
+      admissionScope: rx480Only ? "rx480-only" : "three-worker",
+      workerMounts: Object.fromEntries(admitted.map(name => [name, "ready"])),
     };
   } catch {
     return { decision: "HOLD", gate: "staging-network-or-runtime" };
@@ -113,13 +131,17 @@ export async function runGatewayAcceptance({
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const [container, url] = process.argv.slice(2);
-  if (!container || !url) {
-    process.stderr.write("Usage: node gateway-acceptance.mjs <stage-container> <http://127.0.0.1:33xx>\n");
+  const [container, url, mode, ...extra] = process.argv.slice(2);
+  if (!container || !url || extra.length ||
+      (mode !== undefined && mode !== "--rx480-only") ||
+      (mode === "--rx480-only" && container !== RX480_STAGE_CONTAINER) ||
+      (container === RX480_STAGE_CONTAINER && mode !== "--rx480-only")) {
+    process.stderr.write("Usage: node gateway-acceptance.mjs <stage-container> <http://127.0.0.1:33xx> [--rx480-only]\n");
     process.exitCode = 2;
   } else {
     const result = await runGatewayAcceptance({
       url, inspectSecrets: () => inspectStagedSecretMounts(container),
+      requiredWorkers: mode === "--rx480-only" ? RX480_ONLY : WORKERS,
     });
     process.stdout.write(JSON.stringify(result) + "\n");
     process.exitCode = result.decision === "PASS" ? 0 : result.decision === "HOLD" ? 3 : 2;
