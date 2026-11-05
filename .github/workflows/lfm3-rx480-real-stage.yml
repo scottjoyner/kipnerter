@@ -21,7 +21,8 @@ jobs:
       github.repository == 'scottjoyner/kipnerter' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.login == github.repository_owner &&
-      github.event.pull_request.head.ref == 'feat/lfm3-native-homechat-20261103'
+      github.event.pull_request.head.ref == 'feat/lfm3-native-homechat-20261103' &&
+      github.event.pull_request.head.sha == 'a377aa1e256152d4bcfc70f103627aaf974ad672'
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 35
