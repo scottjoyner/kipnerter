@@ -26,3 +26,12 @@ test("real auditor proves a second response and checks live runtime limits witho
     "readFileSync","open('/run/secrets","sudo ","systemctl "])
     assert.ok(!audit.includes(bad),bad);
 });
+
+test("real-model audit measures one successful request without adding extra probes",()=>{
+  assert.ok(audit.includes("time.monotonic_ns()"),"monotonic duration clock");
+  assert.ok(audit.includes("successful_generation_request_latency_ms="),"safe latency metadata");
+  assert.ok(audit.includes("sample_count=1"),"single-sample caveat");
+  assert.equal((audit.match(/urllib\.request\.urlopen\(request,timeout=54\)/g)||[]).length,1,
+    "no additional real-generation requests");
+  assert.ok(!audit.includes("docker stats"),"no extra Docker resource polling");
+});
