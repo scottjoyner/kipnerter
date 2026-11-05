@@ -1,0 +1,162 @@
+name: LFM3 Real Local CPU Product Staging (bounded)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/lfm3-local-cpu-real-stage.yml'
+      - 'deploy/lfm3/compose.local-cpu-real.yml'
+      - 'scripts/lfm3_local_cpu_preflight.sh'
+      - 'scripts/lfm3_local_cpu_activate.sh'
+      - 'apps/web/tests/lfm3-local-cpu-real-stage-contract.test.mjs'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-lfm3-local-cpu-production-staging
+  cancel-in-progress: false
+
+jobs:
+  real-cpu-stage:
+    if: >-
+      github.repository == 'scottjoyner/kipnerter' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == github.repository_owner &&
+      github.event.pull_request.head.ref == 'feat/lfm3-native-homechat-20261103'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact owner-reviewed product source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify stage identity and source-level negative controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "${{ github.event.pull_request.head.sha }}" ]]
+          bash -n scripts/lfm3_local_cpu_preflight.sh
+          bash -n scripts/lfm3_local_cpu_activate.sh
+          node --test apps/web/tests/lfm3-local-cpu-real-stage-contract.test.mjs
+
+      - name: Join scoped production CI Tailnet
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+
+      - name: Select uniquely production-tagged, nonroot deployment host
+        id: host
+        shell: bash
+        run: |
+          set -euo pipefail
+          host="$(tailscale status --json | python3 scripts/portal_deploy_target.py --environment production)"
+          [[ "$host" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 3
+          tailscale ping --timeout=8s "$host" >/dev/null
+          echo "address=$host" >> "$GITHUB_OUTPUT"
+
+      - name: Fail closed on host RAM, disk, port and existing stage BEFORE any writes
+        shell: bash
+        env:
+          HOST: ${{ steps.host.outputs.address }}
+        run: |
+          set -euo pipefail
+          [[ "$HOST" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 3
+          timeout 40 tailscale ssh "kipnerter@$HOST" 'bash -s' \
+            < scripts/lfm3_local_cpu_preflight.sh
+
+      - name: Build real Next.js image and pin official llama.cpp CPU image identity
+        id: images
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          [[ "$sha" =~ ^[a-f0-9]{40}$ ]] || exit 3
+          web="kipnerter-lfm3-local-web:$sha"
+          server="kipnerter-lfm3-local-server:$sha"
+          docker build --build-arg "KIPNERTER_RELEASE_SHA=$sha" \
+            -t "$web" -f apps/web/Dockerfile apps/web
+          docker pull --platform linux/amd64 ghcr.io/ggml-org/llama.cpp:server-b12119
+          docker tag ghcr.io/ggml-org/llama.cpp:server-b12119 "$server"
+          web_id="$(docker image inspect --format '{{.Id}}' "$web")"
+          server_id="$(docker image inspect --format '{{.Id}}' "$server")"
+          [[ "$web_id" =~ ^sha256:[a-f0-9]{64}$ && "$server_id" =~ ^sha256:[a-f0-9]{64}$ ]] || exit 3
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "web=$web" >> "$GITHUB_OUTPUT"
+          echo "server=$server" >> "$GITHUB_OUTPUT"
+          echo "web_id=$web_id" >> "$GITHUB_OUTPUT"
+          echo "server_id=$server_id" >> "$GITHUB_OUTPUT"
+
+      - name: Download official pinned LFM3 GGUF and verify full publisher weight SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          model="$RUNNER_TEMP/LFM3-1.7B-Q4_K_M.gguf"
+          curl --fail --location --retry 3 --retry-delay 3 --max-time 1200 \
+            --output "$model" \
+            'https://huggingface.co/LiquidAI/LFM3-1.7B-GGUF/resolve/b3f2ae5d73cd3c91bf40e8ba752c648aa05dffdf/LFM3-1.7B-Q4_K_M.gguf'
+          [[ "$(wc -c < "$model" | tr -d ' ')" == 1099627808 ]] || { echo "HOLD: unexpected official GGUF size"; exit 3; }
+          echo '3793e1e6e2266919d6e015287221b41100175a98eddaba92e111aed3b05c93c4  '"$model" |
+            sha256sum --check --status
+          echo "PASS: actual official LFM3 model bytes and provenance verified"
+
+      - name: Transfer only audited image and official model bytes to new private staging path
+        shell: bash
+        env:
+          HOST: ${{ steps.host.outputs.address }}
+          SHA: ${{ steps.images.outputs.sha }}
+          WEB: ${{ steps.images.outputs.web }}
+          SERVER: ${{ steps.images.outputs.server }}
+        run: |
+          set -euo pipefail
+          [[ "$HOST" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 3
+          [[ "$SHA" =~ ^[a-f0-9]{40}$ && "$GITHUB_RUN_ID" =~ ^[0-9]{8,14}$ ]] || exit 3
+          dir="/home/kipnerter/.local/state/kipnerter-lfm3/local-cpu/$SHA-$GITHUB_RUN_ID"
+          tailscale ssh "kipnerter@$HOST" "umask 077; mkdir -p '$dir/models'"
+          cat deploy/lfm3/compose.local-cpu-real.yml |
+            tailscale ssh "kipnerter@$HOST" \
+              "umask 077; set -C; cat > '$dir/compose.local-cpu-real.yml'"
+          cat "$RUNNER_TEMP/LFM3-1.7B-Q4_K_M.gguf" |
+            tailscale ssh "kipnerter@$HOST" \
+              "umask 077; set -C; cat > '$dir/models/LFM3-1.7B-Q4_K_M.gguf'"
+          tailscale ssh "kipnerter@$HOST" \
+            "echo '3793e1e6e2266919d6e015287221b41100175a98eddaba92e111aed3b05c93c4  $dir/models/LFM3-1.7B-Q4_K_M.gguf' | sha256sum --check --status"
+          docker save "$WEB" "$SERVER" | gzip -1 |
+            tailscale ssh "kipnerter@$HOST" \
+              "umask 077; set -C; cat > '$dir/verified-images.tar.gz'"
+          tailscale ssh "kipnerter@$HOST" \
+            "gzip -t '$dir/verified-images.tar.gz' && gzip -dc '$dir/verified-images.tar.gz' | docker load >/dev/null"
+
+      - name: Start isolated CPU + Next.js, require real LFM3 response or scoped rollback
+        shell: bash
+        env:
+          HOST: ${{ steps.host.outputs.address }}
+          SHA: ${{ steps.images.outputs.sha }}
+          WEB_ID: ${{ steps.images.outputs.web_id }}
+          SERVER_ID: ${{ steps.images.outputs.server_id }}
+        run: |
+          set -euo pipefail
+          [[ "$HOST" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 3
+          [[ "$SHA" =~ ^[a-f0-9]{40}$ && "$WEB_ID" =~ ^sha256:[a-f0-9]{64}$ && "$SERVER_ID" =~ ^sha256:[a-f0-9]{64}$ ]] || exit 3
+          tailscale ssh "kipnerter@$HOST" \
+            "bash -s -- '$SHA' '$WEB_ID' '$SERVER_ID' '$GITHUB_RUN_ID'" \
+            < scripts/lfm3_local_cpu_activate.sh
+
+      - name: Summarize independent real-model product result
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '### Real local LFM3 product stage'
+            echo ''
+            echo '- This uses official SHA-256-verified weights, not a fixture or model catalog.'
+            echo '- One CPU-only model at <=1536MiB plus one localhost-only web gateway <=384MiB.'
+            echo '- The model has no published port; both containers use a separate internal Docker network.'
+            echo '- Genuine HTTP model generation is mandatory; failed models are removed by scoped rollback.'
+            echo '- Existing public Caddy, authenticated fleet nodes, credentials, TestFlight and DNS are unchanged.'
+          } >> "$GITHUB_STEP_SUMMARY"
