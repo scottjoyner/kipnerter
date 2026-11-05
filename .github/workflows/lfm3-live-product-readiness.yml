@@ -84,6 +84,37 @@ jobs:
             exit 3
           fi
           echo "PASS: public chat page reachable (not inference proof)"
+          # Release means a genuine user request receives an actual model
+          # completion through HTTPS. A rendered chat shell alone is not enough.
+          proof="$(mktemp "$RUNNER_TEMP/lfm3-live-response.XXXXXXXX")"
+          trap 'rm -f "$proof"' EXIT
+          reply_code="$(curl --silent --show-error --max-time 52 \
+            --output "$proof" --write-out '%{http_code}' \
+            --header 'Content-Type: application/json' \
+            --data '{"messages":[{"role":"user","content":"What is 2 + 2? Answer with the digit 4."}]}' \
+            'https://kipnerter.com/api/chat/completions' || true)"
+          [[ "$reply_code" =~ ^[0-9]{3}$ ]] || reply_code=000
+          echo "public_model_http=$reply_code"
+          if [[ "$reply_code" != 200 ]]; then
+            echo "HOLD: public model generation did not succeed"
+            exit 3
+          fi
+          node - "$proof" <<'NODE'
+          const fs = require("node:fs");
+          let answer;
+          try { answer=JSON.parse(fs.readFileSync(process.argv[2],"utf8")); }
+          catch { process.stderr.write("FAIL: invalid public JSON\n"); process.exit(2); }
+          const reply=answer?.reply;
+          const correct=answer?.model==="LFM3-1.7B" &&
+            typeof reply==="string" && /\b4\b/.test(reply) &&
+            !reply.includes("SIMULATED DEMO RESPONSE") &&
+            !reply.includes("LOCAL HTTP FIXTURE");
+          if (!correct) {
+            process.stderr.write("FAIL: public response is not a valid real LFM3 completion\n");
+            process.exit(2);
+          }
+          process.stdout.write("PASS: public HTTPS returned genuine LFM3 model completion\n");
+          NODE
 
       - name: State no production mutation
         if: always()

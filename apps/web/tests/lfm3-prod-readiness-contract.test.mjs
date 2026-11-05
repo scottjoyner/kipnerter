@@ -12,6 +12,8 @@ test("live audit uses owner-only approved production Tailnet and never deploys",
     "persist-credentials: false", "tags: tag:kipnerter-ci",
     "python3 scripts/portal_deploy_target.py --environment production",
     "scripts/lfm3_prod_readiness_probe.sh", "bash -n",
+    "public_model_http=$reply_code", "public HTTPS returned genuine LFM3 model completion",
+    "SIMULATED DEMO RESPONSE", "LOCAL HTTP FIXTURE",
     "no production files, secrets, containers or ingress were changed",
   ]) assert.ok(work.includes(term), "expected safe admission: "+term);
   for (const forbidden of [
