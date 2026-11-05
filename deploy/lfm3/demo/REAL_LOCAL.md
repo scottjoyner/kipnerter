@@ -14,7 +14,8 @@ The model card states llama.cpp **v0.8.0 or newer** is required.
 ## First-time prerequisites
 
 You need Node.js 22+, npm, Python 3, curl, and an up-to-date
-`llama-server` binary from llama.cpp with LFM3 support. On macOS,
+llama.cpp build with LFM3 support. Either `llama-server` **or**
+the newer unified `llama serve` executable is supported. On macOS,
 one installation method is `brew install llama.cpp` (update if outdated).
 The first launch downloads the official GGUF from Hugging Face into the
 llama.cpp cache. Disk, RAM, and network capacity must be available.

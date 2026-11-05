@@ -7,6 +7,9 @@ const launcher = readFileSync(
 test("real-model demo uses only official Liquid AI model and conservative local port binding", () => {
   assert.match(launcher, /LiquidAI\/LFM3-1\.7B-GGUF:Q4_K_M/);
   assert.match(launcher, /--alias "\$MODEL_ID"/);
+  assert.match(launcher, /LLAMA_SERVER=\(llama-server\)/);
+  assert.match(launcher, /LLAMA_SERVER=\(llama serve\)/);
+  assert.match(launcher, /"\$\{LLAMA_SERVER\[@\]\}" -hf/);
   assert.match(launcher, /--host 127\.0\.0\.1 --port "\$MODEL_PORT"/);
   assert.match(launcher, /next start -H 127\.0\.0\.1 -p "\$CHAT_PORT"/);
   assert.match(launcher, /maxInflight=1,maxOutputTokens=256/);
@@ -25,5 +28,7 @@ test("a real model completion, not a catalog or canned response, is required", (
   assert.match(launcher, /data\.get\("model"\)=="LFM3-1\.7B"/);
   assert.match(launcher, /assert isinstance\(reply,str\) and reply\.strip\(\)/);
   assert.match(launcher, /assert "SIMULATED DEMO RESPONSE" not in reply/);
+  assert.match(launcher, /re\.search/);
+  assert.match(launcher, /incorrect arithmetic canary/);
   assert.match(launcher, /PASS: REAL local LFM3 generation/);
 });

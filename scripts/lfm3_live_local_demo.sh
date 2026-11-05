@@ -8,10 +8,20 @@ CHAT_PORT="${KIPNERTER_LFM3_LOCAL_CHAT_PORT:-3362}"
 GPU_LAYERS="${KIPNERTER_LFM3_LOCAL_GPU_LAYERS:-0}"
 MODEL_ID=lfm3-1.7b-local
 MODEL_REPO="LiquidAI/LFM3-1.7B-GGUF:Q4_K_M"
-for command in node npm python3 curl llama-server; do
+for command in node npm python3 curl; do
   command -v "$command" >/dev/null 2>&1 ||
     { echo "Required program missing: $command" >&2; exit 2; }
 done
+# Official llama.cpp installs may expose either the standalone server binary
+# or the unified 'llama serve' frontend. Require one, never auto-install.
+if command -v llama-server >/dev/null 2>&1; then
+  LLAMA_SERVER=(llama-server)
+elif command -v llama >/dev/null 2>&1; then
+  LLAMA_SERVER=(llama serve)
+else
+  echo "llama.cpp server not found: install llama.cpp v0.8.0+ (llama-server or llama serve)." >&2
+  exit 2
+fi
 if ! [[ "$GPU_LAYERS" =~ ^[0-9]{1,3}$ ]]; then
   echo "GPU layer count must be a non-negative integer." >&2; exit 2
 fi
@@ -53,7 +63,7 @@ trap 'exit 143' TERM
 
 # Never change models/services already running on the machine. This isolated
 # llama-server instance is created for this demo and owns only its own PID.
-llama-server -hf "$MODEL_REPO" --alias "$MODEL_ID" \
+"${LLAMA_SERVER[@]}" -hf "$MODEL_REPO" --alias "$MODEL_ID" \
   --host 127.0.0.1 --port "$MODEL_PORT" --ctx-size 2048 \
   --parallel 1 --threads 4 --n-gpu-layers "$GPU_LAYERS" \
   >"$TMP/model.log" 2>&1 &
@@ -131,6 +141,8 @@ with urllib.request.urlopen(request,timeout=55) as response:
     assert response.status==200 and data.get("model")=="LFM3-1.7B"
     reply=data.get("reply")
     assert isinstance(reply,str) and reply.strip()
+    import re
+    assert re.search(r"\b4\b", reply), "Actual local model returned an incorrect arithmetic canary."
     assert "SIMULATED DEMO RESPONSE" not in reply
     print("PASS: REAL local LFM3 generation via actual Next.js /api/chat/completions")
     print("Model response:",reply[:300])
