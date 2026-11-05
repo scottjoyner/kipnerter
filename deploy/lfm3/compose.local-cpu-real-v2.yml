@@ -1,0 +1,73 @@
+# REAL local CPU fallback. Not the authenticated RX480 service.
+# No public Caddy changes; loopback-only browser gateway on port 3356.
+# Requires verified official GGUF and pinned, locally loaded image identities.
+services:
+  lfm3-local-cpu:
+    image: ${KIPNERTER_LFM3_CPU_SERVER_IMAGE:?Verified exact CPU runtime image required}
+    container_name: kipnerter-lfm3-local-cpu
+    restart: "no"
+    cpus: 1.0
+    mem_limit: 1536m
+    memswap_limit: 1536m
+    pids_limit: 80
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - "-m"
+      - "/models/LFM3-1.7B-Q4_K_M.gguf"
+      - "--alias"
+      - "lfm3-1.7b-local"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--ctx-size"
+      - "512"
+      - "--parallel"
+      - "1"
+      - "--threads"
+      - "2"
+      - "--n-gpu-layers"
+      - "0"
+      - "--batch-size"
+      - "64"
+      - "-n"
+      - "128"
+    volumes:
+      - type: bind
+        source: ${KIPNERTER_LFM3_LOCAL_MODEL_DIR:?Verified private official model location required}
+        target: /models
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - model_only
+    # NO host port, no unauthenticated listener outside private Docker network.
+
+  lfm3-local-web:
+    image: ${KIPNERTER_LFM3_LOCAL_WEB_IMAGE:?Verified exact Next.js image required}
+    container_name: kipnerter-lfm3-local-web
+    restart: "no"
+    cpus: 0.40
+    mem_limit: 384m
+    memswap_limit: 384m
+    pids_limit: 110
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "127.0.0.1:3356:3000"
+    networks:
+      - model_only
+      - web_loopback
+    environment:
+      KIPNERTER_ENV: staging
+      KIPNERTER_LFM3_ENDPOINTS: >-
+        [{"name":"local_cpu","baseUrl":"http://lfm3-local-cpu:8080","model":"lfm3-1.7b-local","adapter":"openai","role":"interactive","maxInflight":1,"maxOutputTokens":128}]
+
+networks:
+  model_only:
+    internal: true
+  # A second dedicated bridge supplies the host-only published web port.
+  # The model service is NEVER attached to this bridge.
+  web_loopback:
+    driver: bridge
