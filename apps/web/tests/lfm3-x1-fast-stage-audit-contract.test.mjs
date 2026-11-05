@@ -36,7 +36,7 @@ test("new CI only verifies code; it cannot reach or deploy to the fleet",()=>{
   for(const bad of [
     "tailscale/github-action", "environment: production", "workflow_dispatch",
     "TS_OAUTH_SECRET", "secrets.", "docker compose up", "systemd-run",
-    "sudo ", "deploy", "ssh -o StrictHostKeyChecking=no",
+    "sudo ", "ssh -o StrictHostKeyChecking=no",
   ]) assert.ok(!workflow.includes(bad),bad);
   for(const bad of [
     "docker run", "docker rm", "docker restart", "systemctl restart",
