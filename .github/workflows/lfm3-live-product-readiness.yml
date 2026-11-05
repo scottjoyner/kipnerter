@@ -1,0 +1,98 @@
+name: LFM3 Live Product Readiness (production read-only)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/lfm3-live-product-readiness.yml'
+      - 'scripts/lfm3_prod_readiness_probe.sh'
+      - 'apps/web/tests/lfm3-prod-readiness-contract.test.mjs'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-lfm3-production-readonly-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  inspect-live-production:
+    # The production environment may require independent operator approval.
+    # Never run contributor/fork code against production infrastructure.
+    if: >-
+      github.repository == 'scottjoyner/kipnerter' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == github.repository_owner &&
+      github.event.pull_request.head.ref == 'feat/lfm3-native-homechat-20261103'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact owner-reviewed source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify probe is syntax-valid and has no provisioning commands
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "${{ github.event.pull_request.head.sha }}" ]]
+          bash -n scripts/lfm3_prod_readiness_probe.sh
+          node --test apps/web/tests/lfm3-prod-readiness-contract.test.mjs
+
+      - name: Join existing restricted CI Tailnet identity
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+
+      - name: Select uniquely production-tagged host (not user-supplied)
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$(tailscale status --json |
+            python3 scripts/portal_deploy_target.py --environment production)"
+          [[ "$target" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 3
+          tailscale ping --timeout=8s "$target" >/dev/null
+          echo "host=$target" >> "$GITHUB_OUTPUT"
+
+      - name: Inspect actual web/staging and RX480 auth boundary (no writes)
+        shell: bash
+        env:
+          TARGET: ${{ steps.target.outputs.host }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 3
+          timeout 35 tailscale ssh "kipnerter@$TARGET" 'bash -s' \
+            < scripts/lfm3_prod_readiness_probe.sh
+
+      - name: Independently check public chat route without credentials
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          code="$(curl --silent --show-error --output /dev/null --location --max-time 12 \
+            --write-out '%{http_code}' 'https://kipnerter.com/chat' || true)"
+          [[ "$code" =~ ^[0-9]{3}$ ]] || code=000
+          echo "public_chat_http=$code"
+          if [[ "$code" != 200 ]]; then
+            echo "HOLD: public chat page is not independently reachable"
+            exit 3
+          fi
+          echo "PASS: public chat page reachable (not inference proof)"
+
+      - name: State no production mutation
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '### Live LFM3 product audit'
+            echo ''
+            echo '- All commands were read-only; no production files, secrets, containers or ingress were changed.'
+            echo '- The production staging gate requires a real authenticated generation, not just an HTTP 200 home page.'
+            echo '- This is NOT authorization for Caddy cutover, TestFlight or public release.'
+          } >> "$GITHUB_STEP_SUMMARY"
