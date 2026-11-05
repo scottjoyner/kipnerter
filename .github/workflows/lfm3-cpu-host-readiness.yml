@@ -1,0 +1,69 @@
+name: LFM3 CPU host capacity probe (read-only)
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/lfm3-cpu-host-readiness.yml"
+permissions:
+  contents: read
+concurrency:
+  group: kipnerter-lfm3-cpu-host-readiness
+  cancel-in-progress: false
+jobs:
+  read-only-resource-probe:
+    if: >-
+      github.repository == 'scottjoyner/kipnerter' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == github.repository_owner &&
+      github.event.pull_request.head.ref == 'feat/lfm3-cpu-stage-readiness-20261105' &&
+      github.event.pull_request.base.ref == 'feat/lfm3-native-homechat-20261103'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 9
+    steps:
+      - name: Check out immutable reviewed preflight source
+        uses: actions/checkout@v4
+        with:
+          ref: 8cb6a7bfc52b9b162ff3af39097cd3c7a92655c6
+          persist-credentials: false
+      - name: Verify preflight source and syntax before production connection
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "8cb6a7bfc52b9b162ff3af39097cd3c7a92655c6"
+          test "$(git hash-object scripts/lfm3_cpu_stage_preflight.sh)" = "1e7decdf3f0187e615ed3de7c826cc87fc8fb8fb"
+          bash -n scripts/lfm3_cpu_stage_preflight.sh
+      - name: Connect existing restricted CI Tailscale identity
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+      - name: Resolve production host by its unique existing tag
+        id: destination
+        shell: bash
+        run: |
+          set -euo pipefail
+          host="$(tailscale status --json | python3 scripts/portal_deploy_target.py --environment production)"
+          [[ "$host" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 3
+          tailscale ping --timeout=8s "$host" >/dev/null
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+      - name: Inspect capacity and port without mutations or RX480 credential
+        shell: bash
+        env:
+          HOST: ${{ steps.destination.outputs.host }}
+        run: |
+          set -euo pipefail
+          [[ "$HOST" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 3
+          timeout 45 tailscale ssh "kipnerter@$HOST" 'bash -s' < scripts/lfm3_cpu_stage_preflight.sh
+      - name: Preserve release boundaries
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Independent CPU stage capacity (read-only)"
+            echo "- This job only probes the production host for feasibility."
+            echo "- The worker and Next.js containers have NOT been created."
+            echo "- It does not access the protected RX480 key."
+            echo "- Public Caddy, DNS, API, fleet workers and iOS are unchanged."
+            echo "- A readiness PASS does not authorize model placement or activation."
+          } >> "$GITHUB_STEP_SUMMARY"
