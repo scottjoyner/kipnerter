@@ -37,7 +37,7 @@ test("production stage is owner-only, preflights resources before any image or m
   assert.ok(order.every(x=>x>0));
   assert.deepEqual(order,[...order].sort((a,b)=>a-b));
   assert.ok(workflow.includes("3793e1e6e2266919d6e015287221b41100175a98eddaba92e111aed3b05c93c4"));
-  assert.ok(workflow.includes("server-b12119"));
+  assert.ok(workflow.includes("ghcr.io/ggml-org/llama.cpp:server"));
   assert.ok(!workflow.includes("docker compose down"));
 });
 

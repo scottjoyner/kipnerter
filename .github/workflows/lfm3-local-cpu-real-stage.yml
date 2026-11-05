@@ -81,8 +81,8 @@ jobs:
           server="kipnerter-lfm3-local-server:$sha"
           docker build --build-arg "KIPNERTER_RELEASE_SHA=$sha" \
             -t "$web" -f apps/web/Dockerfile apps/web
-          docker pull --platform linux/amd64 ghcr.io/ggml-org/llama.cpp:server-b12119
-          docker tag ghcr.io/ggml-org/llama.cpp:server-b12119 "$server"
+          docker pull --platform linux/amd64 ghcr.io/ggml-org/llama.cpp:server
+          docker tag ghcr.io/ggml-org/llama.cpp:server "$server"
           web_id="$(docker image inspect --format '{{.Id}}' "$web")"
           server_id="$(docker image inspect --format '{{.Id}}' "$server")"
           [[ "$web_id" =~ ^sha256:[a-f0-9]{64}$ && "$server_id" =~ ^sha256:[a-f0-9]{64}$ ]] || exit 3
