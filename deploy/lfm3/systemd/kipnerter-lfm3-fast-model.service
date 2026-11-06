@@ -1,0 +1,33 @@
+[Unit]
+Description=Kipnerter LFM3-1.7B fast private model (x1-370, pinned GGUF)
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=simple
+EnvironmentFile=/home/scott/.config/kipnerter/lfm3-fast.env
+Environment=LD_LIBRARY_PATH=/home/scott/.local/share/kipnerter-lfm3-fast/runtime-vulkan-v0.7.0-3fd5de70/bin
+WorkingDirectory=/home/scott/.local/share/kipnerter-lfm3-fast
+ExecStartPre=/usr/bin/python3 /home/scott/.local/share/kipnerter-lfm3-fast/lfm3_x1_durable_preflight.py model
+ExecStart=/home/scott/.local/share/kipnerter-lfm3-fast/runtime-vulkan-v0.7.0-3fd5de70/bin/llama-server --model /home/scott/models/LFM3-1.7B-Q4_K_M.gguf --alias lfm3-1.7b-x1-fast --host 127.0.0.1 --port ${LFM3_MODEL_PORT} --threads 6 --parallel 1 --ctx-size 2048 --batch-size 128 --n-gpu-layers 0
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=60
+MemoryMax=2500M
+MemorySwapMax=0
+CPUQuota=600%
+TasksMax=80
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=default.target
