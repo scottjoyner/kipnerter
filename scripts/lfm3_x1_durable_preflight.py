@@ -11,6 +11,7 @@ import pwd
 import socket
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -86,14 +87,23 @@ def main():
         }]
         if parsed != expected:
             hold("web endpoints differ from single reviewed private model")
-        try:
-            with urllib.request.urlopen(
-                "http://127.0.0.1:" + model_port + "/health", timeout=10
-            ) as response:
-                if response.status != 200:
-                    hold("model health not ready")
-        except (OSError, urllib.error.HTTPError, ValueError):
-            hold("model health unavailable")
+        # Type=simple reports the model service started before it is ready;
+        # allow a bounded cold-start health window without extra generation.
+        ready = False
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(
+                    "http://127.0.0.1:" + model_port + "/health", timeout=2
+                ) as response:
+                    if response.status == 200:
+                        ready = True
+                        break
+            except (OSError, urllib.error.HTTPError, ValueError):
+                pass
+            time.sleep(1)
+        if not ready:
+            hold("model health unavailable after bounded 30-second startup")
 
     print("LFM3_DURABLE_PREFLIGHT_PASS role=" + role)
 
