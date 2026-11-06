@@ -44,3 +44,32 @@ test("new CI only verifies code; it cannot reach or deploy to the fleet",()=>{
     "os.system", "Popen(", "ssh-keyscan", "StrictHostKeyChecking=no",
   ]) assert.ok(!audit.includes(bad),bad);
 });
+
+test("durable unit audit verifies reboot admission, pinned executable and safe sandbox",()=>{
+  for(const part of [
+    "kipnerter-lfm3-fast-model.service", "kipnerter-lfm3-fast-web.service",
+    "FragmentPath", "Restart", "on-failure", "is-enabled", "loginctl",
+    "Linger", "RUNTIME_SHA256SUMS.txt", "PINNED_RUNTIME",
+    "NoNewPrivileges", "PrivateTmp", "ProtectSystem",
+    "durable_units_enabled=true",
+  ]) assert.ok(audit.includes(part),part);
+  const model=readFileSync(new URL("deploy/lfm3/systemd/kipnerter-lfm3-fast-model.service",root),"utf8");
+  const web=readFileSync(new URL("deploy/lfm3/systemd/kipnerter-lfm3-fast-web.service",root),"utf8");
+  const preflight=readFileSync(new URL("scripts/lfm3_x1_durable_preflight.py",root),"utf8");
+  for(const text of [model,web]){
+    for(const part of ["Restart=on-failure","MemorySwapMax=0","NoNewPrivileges=yes",
+      "PrivateTmp=yes","ProtectSystem=full","EnvironmentFile=","WantedBy=default.target",
+      "ExecStartPre=/usr/bin/python3"])
+      assert.ok(text.includes(part),part);
+    for(const unsupported of ["CapabilityBoundingSet=","AmbientCapabilities=",
+      "ProtectKernelTunables=","ProtectKernelModules=","ProtectControlGroups=",
+      "RestrictSUIDSGID="])
+      assert.ok(!text.includes(unsupported),unsupported);
+  }
+  for(const part of ["EXPECTED_MODEL", "EXPECTED_BINARY", "EXPECTED_SOURCE",
+    "8 * 1024 * 1024", "127.0.0.1:", "LFM3_DURABLE_PREFLIGHT_PASS"])
+    assert.ok(preflight.includes(part),part);
+  for(const bad of ["sudo ","systemctl start","systemctl stop",
+    "os.system(", "Popen(", "docker run"])
+    assert.ok(!preflight.includes(bad),bad);
+});
