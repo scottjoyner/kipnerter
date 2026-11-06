@@ -73,3 +73,11 @@ test("durable unit audit verifies reboot admission, pinned executable and safe s
     "os.system(", "Popen(", "docker run"])
     assert.ok(!preflight.includes(bad),bad);
 });
+
+test("web startup waits only a bounded period for genuine model readiness",()=>{
+  const preflight=readFileSync(new URL("scripts/lfm3_x1_durable_preflight.py",root),"utf8");
+  for(const x of ["time.monotonic() + 30","while time.monotonic() < deadline",
+    "/health", "time.sleep(1)", "if not ready:", "hold("])
+    assert.ok(preflight.includes(x),x);
+  assert.ok(!preflight.includes("/v1/chat/completions"),"startup never generates traffic");
+});
