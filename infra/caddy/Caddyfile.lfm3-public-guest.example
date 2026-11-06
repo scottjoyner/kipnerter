@@ -4,7 +4,20 @@ kipnerter.com, www.kipnerter.com {
     encode zstd gzip
     @lfm3_guest_entry path /chat /chat/*
     redir @lfm3_guest_entry https://preview.kipnerter.com{uri} 302
-    reverse_proxy kipnerter-web-public-v01:3000
+    @native_lfm3_api path /api/chat/completions
+    handle @native_lfm3_api {
+        request_body {
+            max_size 8192
+        }
+        header Cache-Control "no-store"
+        reverse_proxy kipnerter-lfm3-public-gate-v01:8080 {
+            header_up X-Kipnerter-Client-IP {remote_host}
+            header_up -Authorization
+        }
+    }
+    handle {
+        reverse_proxy kipnerter-web-public-v01:3000
+    }
 }
 
 preview.kipnerter.com {
