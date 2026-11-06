@@ -45,6 +45,14 @@ This independently checks machine/principal, exact source commit, full model SHA
 
 The GitHub Actions contract workflow tests source and policy syntax only, with **no fleet credentials or production access**. Passing hosted CI is not a live staging assertion.
 
+## Live recovery and private HTTPS (November 5, 2026)
+
+**Controlled fault-injection evidence:** A deliberate SIGKILL of only the durable Next.js process caused user-systemd to restart it automatically; the UI recovered at HTTP 200 with a *new* PID on the seventh one-second poll. A deliberate SIGKILL of only the durable llama-server process caused automatic recovery with a *new* PID and healthy model endpoint on the eighth poll. A subsequent **real Next.js-to-model HTTP 200 response** returned the correct answer in **1,848 ms**. Neither fault touched the original x1 research server, the production-host CPU fallback, or public routing. Afterward the full read-only audited model request passed again at **1,454 ms** with permanent unit files, pinned runtime checksums, zero unit swap and no public listener.
+
+**Tailnet-only HTTPS is now live:** From a permitted Tailscale-connected browser or phone, open **https://x1-370.tailcb8954.ts.net:8450/chat**. This is a distinct Tailscale Serve handler on HTTPS port 8450 pointing to `127.0.0.1:3357`. Actual page+TLS checks passed from Joyner and xwing; a real HTTPS LFM3 completion from xwing passed in **1,368 ms**. The seven preexisting Serve handlers were preserved, public Funnel state unchanged. Full state evidence and scoped rollback: [TAILNET_HTTPS_PREVIEW.md](TAILNET_HTTPS_PREVIEW.md).
+
+**Do not claim iPhone tested:** Physical iPhone/Safari, native app and TestFlight are not yet verified. Public `kipnerter.com/chat` remains HTTP 404 and is a separate security/release gate.
+
 ## Recovery and durability gates
 
 **Durability fix completed (November 5, 2026):** The formerly transient units were replaced by persistent enabled user-systemd services backed by a pinned, 26-MB llama runtime outside /tmp. The model+Next.js service pair passed one 1,370-ms real chat request after promotion and a 1,411-ms request after a controlled restart. Linger=yes ensures user services can start without an interactive login. A **full host reboot has not been exercised** because it would disrupt unrelated active fleet workloads; do not claim verified post-reboot availability or HA. Startup remains fail-closed if model hash, source commit, binary hash, port/endpoint configuration, model health, or the 8-GiB free-RAM admission gate fail.
