@@ -19,8 +19,9 @@ from pathlib import Path
 
 ROOT = Path("/home/kipnerter/.local/state/lfm3-public-edge-gate-20261105")
 CADDY = Path("/opt/kipnerter/infra/caddy/Caddyfile")
-PUBLIC_CADDY_SHA = "0788282cee590569e2a519678cc9cb4afa02c61ce29813ce27b70e1878635471"
+PUBLIC_CADDY_SHA = "ef9bf65190d0ae0661b8782cf04bf7064fda57b29a0f437437bdb2c2073d5260"
 PREVIOUS_CADDY_SHA = "2e4ba38cd67316b6469c740aee7fc4e19b9c2cc3754a1a2a92b00bb01819d23a"
+GUEST_BEFORE_IOS_SHA = "0788282cee590569e2a519678cc9cb4afa02c61ce29813ce27b70e1878635471"
 NGINX_CONFIG_SHA = "17c7b5033d000547a79917f63235675bad038bb24cc02e0d920320bd69d9bc85"
 CA_BUNDLE_SHA = "0e4c9a8eb123513b1c131c0aec2d3f9ddaad02b77b8af53bff30e1e7fc3c6b71"
 NGINX_IMAGE = "sha256:0e52bd054126cdc040b1276c0af347aeb02a41b9cfe305d6094767ac30e97949"
@@ -63,7 +64,8 @@ def main():
     inputs = (
         (CADDY, PUBLIC_CADDY_SHA),
         (ROOT / "Caddyfile.before", PREVIOUS_CADDY_SHA),
-        (ROOT / "Caddyfile.public-candidate", PUBLIC_CADDY_SHA),
+        (ROOT / "Caddyfile.before-ios-api", GUEST_BEFORE_IOS_SHA),
+        (ROOT / "Caddyfile.ios-api-candidate", PUBLIC_CADDY_SHA),
         (ROOT / "nginx.conf.prod", NGINX_CONFIG_SHA),
         (ROOT / "verified-host-ca.pem", CA_BUNDLE_SHA),
     )
@@ -75,6 +77,7 @@ def main():
     nginx_source = (ROOT / "nginx.conf.prod").read_text()
     for line in (
         "redir @lfm3_beta_entry https://preview.kipnerter.com{uri} 302",
+        "handle @native_lfm3_api {",
         "handle @public_chat {", "handle @public_api {",
         "handle @public_assets {", "basic_auth {",
         "header_up X-Kipnerter-Client-IP {remote_host}",
@@ -123,8 +126,9 @@ def main():
     operator, _, _ = fetch("https://preview.kipnerter.com/")
     fleet, _, _ = fetch("https://preview.kipnerter.com/api/chat/fleet-status")
     ready, _, _ = fetch("https://api.kipnerter.com/health/ready")
+    canonical_get, _, _ = fetch("https://kipnerter.com/api/chat/completions")
     if ((home, redirect, guest, operator, fleet, ready) !=
-            (200, 302, 200, 401, 401, 200) or
+            (200, 302, 200, 401, 401, 200) or canonical_get != 403 or
             location != "https://preview.kipnerter.com/chat" or
             b"Message Kipnerter" not in page):
         hold("public/guest/operator route separation failed")
@@ -140,19 +144,20 @@ def main():
         "role": "user", "content": "What is 2 + 2? Reply with the digit 4."
     }]}).encode("utf-8")
     start = time.monotonic()
-    code, raw, _ = fetch("https://preview.kipnerter.com/api/chat/completions",
-                         body=payload, timeout=40)
+    code, raw, location = fetch("https://kipnerter.com/api/chat/completions",
+                                body=payload, timeout=40, follow=False)
     latency = round((time.monotonic() - start) * 1000)
     answer = json.loads(raw) if code == 200 else {}
     reply = answer.get("reply", "")
-    if (code != 200 or answer.get("model") != "LFM3-1.7B" or
+    if (code != 200 or location or answer.get("model") != "LFM3-1.7B" or
             not isinstance(reply, str) or not re.search(r"\b4\b", reply) or
             "SIMULATED DEMO RESPONSE" in reply or
             "LOCAL HTTP FIXTURE" in reply or latency > 15000):
         hold("public guest failed bounded genuine-model acceptance")
 
     print("PUBLIC_GUEST_LFM3_RELEASE_PASS",
-          "main_redirect_302=true", "guest_html_200=true",
+          "main_redirect_302=true", "native_api_get_403=true",
+          "canonical_native_post_200_no_redirect=true", "guest_html_200=true",
           "guest_assets_200=true", "operator_401=true",
           "fleet_api_401=true", "main_200=true", "api_health_200=true",
           "bounded_nginx_gateway=true", "cert_verify_required=true",
