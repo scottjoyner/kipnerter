@@ -1,0 +1,26 @@
+name: LFM3 protected preview edge contract (synthetic, read-only)
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/lfm3_protected_preview_audit.py'
+      - 'apps/web/tests/lfm3-preview-edge-contract.test.mjs'
+      - 'infra/caddy/Caddyfile.lfm3-protected-preview.example'
+      - 'deploy/lfm3/PROTECTED_PREVIEW_RELEASE.md'
+      - '.github/workflows/lfm3-preview-edge-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  protected-preview-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check read-only auditor syntax
+        run: python3 -m py_compile scripts/lfm3_protected_preview_audit.py
+      - name: Verify hostname separation, Basic Auth, and no secret/production access
+        run: node --test apps/web/tests/lfm3-preview-edge-contract.test.mjs

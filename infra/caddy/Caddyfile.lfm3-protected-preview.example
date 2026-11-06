@@ -1,0 +1,41 @@
+# EXAMPLE ONLY. Never deploy with placeholder hash. Do not check actual hash/password into Git.
+# Snapshot of independently verified production split-host routing (November 5, 2026).
+# This is intentionally separate from the existing default infra/caddy/Caddyfile.
+kipnerter.com, www.kipnerter.com {
+    encode zstd gzip
+    reverse_proxy kipnerter-web-public-v01:3000
+}
+
+preview.kipnerter.com {
+    encode zstd gzip
+    basic_auth {
+        beta __REPLACE_WITH_OPERATOR_GENERATED_BCRYPT_HASH__
+    }
+    header Cache-Control "private, no-store"
+    reverse_proxy https://x1-370.tailcb8954.ts.net:8450 {
+        header_up Host x1-370.tailcb8954.ts.net:8450
+    }
+}
+
+api.kipnerter.com {
+    encode zstd gzip
+
+    @spatial_api path /v1/* /health/live /health/ready /version
+    handle @spatial_api {
+        reverse_proxy spatial-api:8000
+    }
+
+    @spatial_artifacts path /kipnerter-artifacts/*
+    handle @spatial_artifacts {
+        reverse_proxy spatial-minio:9000
+    }
+
+    handle {
+        reverse_proxy api:8000
+    }
+}
+
+scottjoyner.dev, admin.scottjoyner.dev {
+    encode zstd gzip
+    reverse_proxy web:3000
+}
