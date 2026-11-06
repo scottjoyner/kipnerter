@@ -25,9 +25,12 @@ MODEL_NAME = "lfm3-1.7b-x1-fast"
 MODEL_URL = "http://127.0.0.1:19181"
 WEB_URL = "http://127.0.0.1:3357"
 UNITS = {
-    "model": ("kipnerter-lfm3-fast-model-20261105.service", 2500 * 1024 * 1024, "6s", 80),
-    "web": ("kipnerter-lfm3-fast-web-20261105.service", 384 * 1024 * 1024, "750ms", 110),
+    "model": ("kipnerter-lfm3-fast-model.service", 2500 * 1024 * 1024, "6s", 80),
+    "web": ("kipnerter-lfm3-fast-web.service", 384 * 1024 * 1024, "750ms", 110),
 }
+PINNED_RUNTIME = Path("/home/scott/.local/share/kipnerter-lfm3-fast/runtime-vulkan-v0.7.0-3fd5de70")
+RUNTIME_BINARY_SHA = "3fd5de70af49313930b5df2e907fcf6dff795d0d64274d0c85369788a8b7f5bc"
+
 
 
 def hold(reason):
@@ -65,6 +68,8 @@ def validate_local_bindings():
                 present.add(port)
     if present != ports:
         hold("stage port is missing")
+    if any(":" + p in capture(["ss", "-ltnH"], 6) for p in ("19182", "3358")):
+        hold("old temporary canary port is still listening")
 
 
 def audit_systemd_units():
@@ -76,12 +81,23 @@ def audit_systemd_units():
             ["systemctl", "--user", "show", unit,
              "-p", "ActiveState", "-p", "MemoryMax", "-p", "MemoryCurrent",
              "-p", "MemorySwapCurrent", "-p", "CPUQuotaPerSecUSec",
-             "-p", "TasksMax", "-p", "ExecStart"],
+             "-p", "TasksMax", "-p", "ExecStart", "-p", "Restart",
+             "-p", "FragmentPath", "-p", "NoNewPrivileges",
+             "-p", "PrivateTmp", "-p", "ProtectSystem"],
             8, env=env,
         )
         data = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
         if data.get("ActiveState") != "active":
             hold("fast stage service is not active")
+        if data.get("Restart") != "on-failure":
+            hold("durable service must restart on failure")
+        if data.get("FragmentPath") != f"/home/scott/.config/systemd/user/{unit}":
+            hold("unit must be a persistent operator-managed service")
+        if data.get("NoNewPrivileges") != "yes" or data.get("PrivateTmp") != "yes" or data.get("ProtectSystem") != "full":
+            hold("verified user-systemd sandbox policy is missing")
+        enabled = capture(["systemctl", "--user", "is-enabled", unit], 5, env=env)
+        if enabled != "enabled":
+            hold("durable unit is not enabled for login boot")
         if int(data.get("MemoryMax", "0")) > memory_cap or int(data.get("MemoryMax", "0")) <= 0:
             hold("memory quota exceeds reviewed bound")
         if int(data.get("MemoryCurrent", "0")) > memory_cap:
@@ -91,9 +107,10 @@ def audit_systemd_units():
         if data.get("CPUQuotaPerSecUSec") != quota or int(data.get("TasksMax", "0")) > tasks:
             hold("CPU/task limits changed")
         cmd = data.get("ExecStart", "")
-        if role == "model" and (MODEL_NAME not in cmd or str(MODEL_FILE) not in cmd):
+        if role == "model" and (MODEL_NAME not in cmd or str(MODEL_FILE) not in cmd or
+                                str(PINNED_RUNTIME / "bin/llama-server") not in cmd):
             hold("model service identity changed")
-        if role == "web" and ("127.0.0.1" not in cmd or "3357" not in cmd):
+        if role == "web" and ("127.0.0.1" not in cmd or "LFM3_WEB_PORT" not in cmd):
             hold("frontend binding changed")
         print(f"unit={role} active=true memory_current_bytes={data['MemoryCurrent']} "
               f"memory_cap_bytes={data['MemoryMax']} memory_swap_bytes=0")
@@ -114,6 +131,18 @@ def main():
     if digest.hexdigest() != EXPECTED_MODEL_SHA:
         hold("official GGUF checksum mismatch")
 
+    if not (PINNED_RUNTIME / "bin/llama-server").is_file():
+        hold("reboot-safe pinned runtime is missing")
+    if hashlib.sha256((PINNED_RUNTIME / "bin/llama-server").read_bytes()).hexdigest() != RUNTIME_BINARY_SHA:
+        hold("reboot-safe pinned runtime executable hash mismatch")
+    runtime_manifest = subprocess.run(
+        ["sha256sum", "-c", "RUNTIME_SHA256SUMS.txt"],
+        cwd=PINNED_RUNTIME, capture_output=True, text=True, timeout=15, check=False)
+    if runtime_manifest.returncode != 0:
+        hold("pinned llama runtime library checksums did not verify")
+    linger = capture(["loginctl", "show-user", "scott", "-p", "Linger", "--value"], 5)
+    if linger != "yes":
+        hold("user-systemd is not configured to start without login")
     validate_local_bindings()
     audit_systemd_units()
     available = int(next(
@@ -152,7 +181,7 @@ def main():
     print(f"LIVE_X1_FAST_STAGE_PASS web_get_ms={web_ms} "
           f"single_generation_latency_ms={elapsed_ms} sample_count=1 "
           "exact_source=true official_model_sha_verified=true "
-          "web_and_model_loopback_only=true public_cutover=false")
+          "web_and_model_loopback_only=true durable_units_enabled=true public_cutover=false")
 
 
 if __name__ == "__main__":
