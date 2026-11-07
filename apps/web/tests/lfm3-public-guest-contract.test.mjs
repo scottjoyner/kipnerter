@@ -84,7 +84,7 @@ test("live audit validates identities without exposing credentials or changing h
     "PUBLIC_CADDY_SHA", "PREVIOUS_CADDY_SHA", "NGINX_CONFIG_SHA", "CA_BUNDLE_SHA",
     "NGINX_IMAGE", "CADDY_IMAGE",
     "PortBindings", "ReadonlyRootfs", "NanoCpus", "PidsLimit", "CapDrop",
-    "/api/chat/fleet-status", "200, 302, 200, 401, 401, 200",
+    "/api/chat/fleet-status", "200, 302, 200, 401, 401, 401, 401, 200",
     "/_next/static/", "LFM3-1.7B", "PUBLIC_GUEST_LFM3_RELEASE_PASS",
     "sample_count=1",
   ]) assert.ok(audit.includes(expected), expected);
