@@ -1,0 +1,27 @@
+name: LFM3 public guest rate gate contract (synthetic, no production access)
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/lfm3_public_guest_audit.py'
+      - 'infra/nginx/lfm3-public-guest.conf'
+      - 'infra/caddy/Caddyfile.lfm3-public-guest.example'
+      - 'apps/web/tests/lfm3-public-guest-contract.test.mjs'
+      - 'deploy/lfm3/PUBLIC_GUEST_RELEASE.md'
+      - '.github/workflows/lfm3-public-guest-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-no-secret-policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate read-only auditor syntax
+        run: python3 -m py_compile scripts/lfm3_public_guest_audit.py
+      - name: Validate public rate limits and operator isolation
+        run: node --test apps/web/tests/lfm3-public-guest-contract.test.mjs

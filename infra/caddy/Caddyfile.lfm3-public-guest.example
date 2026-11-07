@@ -1,0 +1,83 @@
+# REFERENCE TEMPLATE ONLY. Replace operator BCRYPT_HASH_PLACEHOLDER on the
+# production host, never in the Git repo. Do not deploy the template unchanged.
+kipnerter.com, www.kipnerter.com {
+    encode zstd gzip
+    @lfm3_guest_entry path /chat /chat/*
+    redir @lfm3_guest_entry https://preview.kipnerter.com{uri} 302
+    @native_lfm3_api path /api/chat/completions
+    handle @native_lfm3_api {
+        request_body {
+            max_size 8192
+        }
+        header Cache-Control "no-store"
+        reverse_proxy kipnerter-lfm3-public-gate-v01:8080 {
+            header_up X-Kipnerter-Client-IP {remote_host}
+            header_up -Authorization
+        }
+    }
+    handle {
+        reverse_proxy kipnerter-web-public-v01:3000
+    }
+}
+
+preview.kipnerter.com {
+    encode zstd gzip
+    @public_chat path /chat /chat/*
+    handle @public_chat {
+        header Cache-Control "no-store"
+        reverse_proxy kipnerter-lfm3-public-gate-v01:8080 {
+            header_up X-Kipnerter-Client-IP {remote_host}
+            header_up -Authorization
+        }
+    }
+    @public_api path /api/chat/completions
+    handle @public_api {
+        request_body {
+            max_size 8192
+        }
+        header Cache-Control "no-store"
+        reverse_proxy kipnerter-lfm3-public-gate-v01:8080 {
+            header_up X-Kipnerter-Client-IP {remote_host}
+            header_up -Authorization
+        }
+    }
+    @public_assets path /_next/static/*
+    handle @public_assets {
+        reverse_proxy kipnerter-lfm3-public-gate-v01:8080 {
+            header_up X-Kipnerter-Client-IP {remote_host}
+            header_up -Authorization
+        }
+    }
+    handle {
+        basic_auth {
+            beta BCRYPT_HASH_PLACEHOLDER
+        }
+        header Cache-Control "private, no-store"
+        reverse_proxy https://x1-370.tailcb8954.ts.net:8450 {
+            header_up Host x1-370.tailcb8954.ts.net:8450
+        }
+    }
+}
+
+api.kipnerter.com {
+    encode zstd gzip
+
+    @spatial_api path /v1/* /health/live /health/ready /version
+    handle @spatial_api {
+        reverse_proxy spatial-api:8000
+    }
+
+    @spatial_artifacts path /kipnerter-artifacts/*
+    handle @spatial_artifacts {
+        reverse_proxy spatial-minio:9000
+    }
+
+    handle {
+        reverse_proxy api:8000
+    }
+}
+
+scottjoyner.dev, admin.scottjoyner.dev {
+    encode zstd gzip
+    reverse_proxy web:3000
+}
