@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import ChatComposer from "./ChatComposer";
+import ParallelResearchPanel from "./ParallelResearchPanel";
 import { answerFleetQuestion } from "../../lib/fleet-chat.mjs";
 import { snapshotExpired, canApplyPoll } from "../../lib/telemetry-freshness.mjs";
 
@@ -141,7 +142,7 @@ export default function FleetConsole({ email }) {
         <div className="sidebar-status"><span className="pulse" />Private fleet · authenticated</div>
         <div className="sidebar-identity"><span className="avatar">{email[0]?.toUpperCase()}</span>
           <span className="identity-name">{email}<small>Authorized operator</small></span></div>
-        <a className="signout-link" href="/api/auth/signout?callbackUrl=%2Fchat">Sign out ↗</a>
+        <a className="signout-link" href="/api/auth/signout?callbackUrl=%2Ffleet">Sign out ↗</a>
       </div>
     </aside>
     <main className="portal-main">
@@ -170,6 +171,7 @@ export default function FleetConsole({ email }) {
             </div>
             <ChatComposer draft={chatDraft} onDraftChange={setChatDraft} onSend={askFleet} />
           </section>
+          <ParallelResearchPanel />
         </>}
         {tab === "agents" && <>
           <div className="page-intro"><p className="section-kicker">AGENT ORCHESTRATION</p><h1>Agents<span className="accent">.</span></h1><p>Service health signals only. Execution requires a separately authorized workflow.</p></div>

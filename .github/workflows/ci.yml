@@ -38,8 +38,12 @@ jobs:
           node-version: "22"
       - run: npm ci --no-audit --no-fund
       - run: npm audit --omit=dev --audit-level=moderate
+      - name: Parse standalone real-model localhost demo script (no model download)
+        run: bash -n ../../scripts/lfm3_live_local_demo.sh
       - run: node --test tests/*.test.mjs
       - run: npm run build
+      - name: Exercise simulated LFM3 chat through real Next.js API (no fleet access)
+        run: python3 ../../scripts/lfm3_demo_acceptance.py
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -56,10 +60,19 @@ jobs:
           PID=$!
           trap 'kill "$PID" 2>/dev/null || true' EXIT
           for attempt in {1..25}; do
-            if curl --fail --silent --max-time 2 http://127.0.0.1:3012/chat >/tmp/kipnerter-chat.html; then break; fi
+            if curl --fail --silent --max-time 2 http://127.0.0.1:3012/fleet >/tmp/kipnerter-fleet.html; then break; fi
             sleep 1
           done
-          grep -q 'PRIVATE AI WORKSPACE' /tmp/kipnerter-chat.html
+          grep -q 'PRIVATE AI WORKSPACE' /tmp/kipnerter-fleet.html
+          for route in / /chat; do
+            curl --fail --silent --max-time 2 "http://127.0.0.1:3012$route" >/tmp/kipnerter-public-chat.html
+            grep -q 'Message Kipnerter' /tmp/kipnerter-public-chat.html
+            grep -q 'LFM3-1.7B' /tmp/kipnerter-public-chat.html
+            if grep -q 'Sign in with Tailscale identity' /tmp/kipnerter-public-chat.html; then
+              echo "FAIL: operator login leaked into public $route" >&2
+              exit 1
+            fi
+          done
           [[ $(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3012/api/auth/providers) = 503 ]]
           [[ $(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3012/api/portal/live) = 503 ]]
           [[ $(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3012/api/portal/traces) = 503 ]]
@@ -77,6 +90,11 @@ jobs:
       - name: Test owner-gated, firewall-only DR bootstrap (no network)
         run: python3 -m unittest tests.test_do_recovery_quarantine_firewall -v
       - run: docker compose config --quiet
+      - name: Parse loopback-only single-worker LFM3 demo manifest without creating secrets
+        env:
+          KIPNERTER_LFM3_DEMO_IMAGE: lfm3-demo-parse-only:local
+          KIPNERTER_LFM3_SECRET_DIR: /nonexistent/kipnerter-demo-secrets
+        run: docker compose -f deploy/lfm3/compose.demo-rx480.yml config --quiet
       - name: Verify stateless fleet preview cannot bind public ports or stateful volumes
         env:
           KIPNERTER_ENV: staging
@@ -107,6 +125,19 @@ jobs:
       - run: docker run --rm -v "$PWD/infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2 caddy validate --config /etc/caddy/Caddyfile
       - run: docker run --rm -v "$PWD/infra/caddy/Caddyfile.staging:/etc/caddy/Caddyfile:ro" caddy:2 caddy validate --config /etc/caddy/Caddyfile
       - run: docker compose build
+      - name: Run actual web app with local-only simulated model under Docker
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          DEMO=deploy/lfm3/demo/compose.simulated.yml
+          docker compose -f "$DEMO" config --quiet
+          trap 'docker compose -f "$DEMO" down --remove-orphans >/dev/null 2>&1 || true' EXIT
+          docker compose -f "$DEMO" up --build -d
+          if ! bash deploy/lfm3/demo/smoke_docker.sh; then
+            docker compose -f "$DEMO" ps --all
+            docker compose -f "$DEMO" logs --no-color --tail=40
+            exit 1
+          fi
 
   terraform:
     runs-on: ubuntu-latest

@@ -1,0 +1,18 @@
+[Unit]
+Description=Kipnerter LFM3-1.7B R9700 Tailnet-only authenticated research bridge
+After=network-online.target
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/curl --fail --silent --show-error --max-time 3 http://127.0.0.1:19175/health
+ExecStart=/usr/bin/socat TCP4-LISTEN:19176,bind=100.83.215.83,reuseaddr,fork,range=100.64.0.0/10 TCP4:127.0.0.1:19175
+Restart=on-failure
+RestartSec=10s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+UMask=0077
+TasksMax=128
+CPUQuota=70%
+[Install]
+WantedBy=default.target

@@ -153,10 +153,17 @@ def run(real_observer, staging=False):
             ROOT / "apps/web", web_env,
         ) as web:
             base = f"http://127.0.0.1:{web_port}"
-            wait_for(base + "/chat", web)
-            code, page, _ = request(base + "/chat")
+            wait_for(base + "/fleet", web)
+            code, page, _ = request(base + "/fleet")
             if code != 200 or b"Sign in with Tailscale identity" not in page or b"Fleet login is not yet configured" in page:
                 raise AssertionError("Deployment-scoped NextAuth provider is not available")
+            for public_path in ("/", "/chat"):
+                code, public_page, _ = request(base + public_path)
+                if code != 200 or b"Message Kipnerter" not in public_page or b"LFM3-1.7B" not in public_page:
+                    raise AssertionError(f"Public LFM3 chat unavailable at {public_path}")
+                if b"Sign in with Tailscale identity" in public_page:
+                    raise AssertionError(f"Public chat unexpectedly exposes operator sign-in at {public_path}")
+            print("public / and /chat share LFM3 conversation; /fleet login remains separate")
             for url, source in (
                 (base + "/api/release", "kipnerter-web"),
                 (f"http://127.0.0.1:{api_port}/api/v1/release", "kipnerter-api"),

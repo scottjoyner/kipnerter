@@ -1,0 +1,20 @@
+[Unit]
+Description=Kipnerter low-priority LFM3-1.7B OptiPlex CPU inference (Tailnet-only)
+After=network-online.target
+[Service]
+Type=simple
+ExecStartPre=/home/scott/.local/libexec/kipnerter/lfm3-optiplex-preflight.sh
+ExecStart=/home/scott/.lmstudio/extensions/backends/llama.cpp-linux-x86_64-avx2-2.67.0/llama-server --model /home/scott/lfm3-research/gguf/LFM3-1.7B-Q4_K_M.gguf --alias lfm3-1.7b-optiplex --host 100.69.158.114 --port 19176 --n-gpu-layers 0 --ctx-size 1536 --parallel 1 --threads 2 --threads-batch 2 --batch-size 96 --ubatch-size 64 --api-key-file /home/scott/.config/kipnerter/lfm3-optiplex.key --offline --no-webui
+Restart=on-failure
+RestartSec=20s
+TimeoutStartSec=45s
+MemoryHigh=2G
+MemoryMax=3G
+TasksMax=100
+CPUQuota=125%
+Nice=15
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+[Install]
+WantedBy=default.target

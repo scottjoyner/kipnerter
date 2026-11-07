@@ -1,0 +1,35 @@
+# Functional one-worker MVP (RX 480), isolated from public production.
+# A valid provisioned RX480 token MUST exist as private regular file:
+# ${KIPNERTER_LFM3_SECRET_DIR}/rx480.key (mode 0400/0600).
+# No credentials appear in this Compose file or Docker environment.
+# This stage does not change the public Caddy routing, DNS or iOS release.
+services:
+  kipnerter-lfm3-stage-rx480:
+    image: ${KIPNERTER_LFM3_STAGE_IMAGE:?Verified pinned staging image required}
+    container_name: kipnerter-lfm3-stage-rx480
+    restart: "no"
+    ports:
+      - "127.0.0.1:3355:3000"
+    networks:
+      - kipnerter_frontend
+    cpus: 0.75
+    mem_limit: 512m
+    memswap_limit: 640m
+    pids_limit: 150
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      KIPNERTER_ENV: staging
+      KIPNERTER_LFM3_ENDPOINTS: >-
+        [{"name":"rx480","baseUrl":"http://100.78.106.121:19176","model":"lfm3-1.7b-rx480","adapter":"openai","role":"interactive","maxInflight":1,"maxOutputTokens":256,"credentialEnv":"KIPNERTER_LFM3_TOKEN_RX480"}]
+    volumes:
+      - type: bind
+        source: ${KIPNERTER_LFM3_SECRET_DIR:?Approved private directory required}
+        target: /run/secrets/kipnerter-lfm3
+        read_only: true
+        bind:
+          create_host_path: false
+
+networks:
+  kipnerter_frontend:
+    external: true

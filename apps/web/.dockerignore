@@ -1,0 +1,19 @@
+# Never bake host-local tokens, .env files, or a developer's build state
+# into a Kipnerter web image (production and simulated demo share this Dockerfile).
+node_modules
+.next
+.git
+.env
+.env.*
+*.pem
+*.p12
+*.pfx
+*.key
+*.crt
+*.mobileprovision
+*.secret
+*.secrets
+secrets
+__pycache__
+*.pyc
+.DS_Store

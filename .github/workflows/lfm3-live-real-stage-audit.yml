@@ -1,0 +1,74 @@
+name: LFM3 Live Real Model Staging Audit (read-only)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/lfm3-live-real-stage-audit.yml'
+      - 'scripts/lfm3_local_cpu_readonly_audit.py'
+      - 'apps/web/tests/lfm3-live-real-stage-audit-contract.test.mjs'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-lfm3-live-stage-readonly
+  cancel-in-progress: false
+
+jobs:
+  actual-deployed-chat:
+    if: >-
+      github.repository == 'scottjoyner/kipnerter' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == github.repository_owner &&
+      github.event.pull_request.head.ref == 'feat/lfm3-native-homechat-20261103'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - name: Check out owner-reviewed exact audit source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Validate independent live-check safety contract
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/lfm3_local_cpu_readonly_audit.py
+          node --test apps/web/tests/lfm3-live-real-stage-audit-contract.test.mjs
+
+      - name: Join scoped production CI tailnet without service changes
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+
+      - name: Resolve exact role-tagged production host
+        id: target
+        run: |
+          set -euo pipefail
+          target="$(tailscale status --json | python3 scripts/portal_deploy_target.py --environment production)"
+          [[ "$target" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 3
+          tailscale ping --timeout=8s "$target" >/dev/null
+          echo "host=$target" >> "$GITHUB_OUTPUT"
+
+      - name: Independently prove still-running actual LFM3 completion and memory isolation
+        env:
+          TARGET: ${{ steps.target.outputs.host }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 3
+          timeout 100 tailscale ssh "kipnerter@$TARGET" 'python3 -' \
+            < scripts/lfm3_local_cpu_readonly_audit.py
+
+      - name: State separation from public and iOS release
+        if: always()
+        run: |
+          {
+            echo "### Genuine deployed LFM3 staging audit"
+            echo "- Independent request must return real LFM3 model output through Next.js."
+            echo "- Read-only check verifies localhost-only binding, private model network and cgroup caps."
+            echo "- No public Caddy, TestFlight, model, container, token or DNS change."
+            echo "- Stage success is NOT public product release."
+          } >> "$GITHUB_STEP_SUMMARY"

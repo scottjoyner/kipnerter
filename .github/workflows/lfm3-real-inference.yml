@@ -1,0 +1,108 @@
+name: Real LFM3 localhost inference proof
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/lfm3-real-inference.yml"
+      - "scripts/lfm3_live_local_demo.sh"
+      - "apps/web/app/api/chat/completions/route.js"
+      - "apps/web/lib/lfm3-fleet.mjs"
+      - "deploy/lfm3/demo/REAL_LOCAL.md"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: lfm3-real-proof-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  real-gguf-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      KIPNERTER_LFM3_LOCAL_GPU_LAYERS: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Verify demo launcher does not mutate production
+        run: bash -n scripts/lfm3_live_local_demo.sh
+      - name: Install checksum-verified upstream llama.cpp b12119 CPU runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          ASSET="llama-b12119-bin-ubuntu-x64.tar.gz"
+          URL="https://github.com/ggml-org/llama.cpp/releases/download/b12119/$ASSET"
+          EXPECTED_SHA="b766529b1a5082c65b9dc5a5f1a78092c6e107344dc383c53a00b83da47c16a6"
+          curl --fail --location --retry 3 --connect-timeout 15 --max-time 160 \
+            "$URL" --output "$RUNNER_TEMP/$ASSET"
+          echo "$EXPECTED_SHA  $RUNNER_TEMP/$ASSET" | sha256sum --check --status
+          mkdir -p "$RUNNER_TEMP/llama"
+          tar -xzf "$RUNNER_TEMP/$ASSET" -C "$RUNNER_TEMP/llama"
+          SERVER="$(find "$RUNNER_TEMP/llama" -type f -name llama-server -print -quit)"
+          test -n "$SERVER" && test -x "$SERVER"
+          echo "$(dirname "$SERVER")" >> "$GITHUB_PATH"
+          echo "LLAMA_LIBDIR=$(dirname "$SERVER")" >> "$GITHUB_ENV"
+          echo "Reviewed binary: ggml-org/llama.cpp b12119 sha256=$EXPECTED_SHA"
+      - name: Exercise REAL official LFM3-1.7B GGUF through actual Next.js chat
+        shell: bash
+        timeout-minutes: 14
+        env:
+          # Temporary runner only. Public ingress/fleet credentials are never used.
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          export LD_LIBRARY_PATH="$LLAMA_LIBDIR:${LD_LIBRARY_PATH:-}"
+          LOG="$RUNNER_TEMP/lfm3-real-proof.log"
+          touch "$LOG"
+          bash scripts/lfm3_live_local_demo.sh > "$LOG" 2>&1 &
+          PID=$!
+          cleanup() { kill "$PID" 2>/dev/null || true; wait "$PID" 2>/dev/null || true; }
+          trap cleanup EXIT
+          verdict=pending
+          for attempt in $(seq 1 180); do
+            if grep -q "^PASS: REAL local LFM3 generation via actual Next.js" "$LOG"; then
+              verdict=pass
+              break
+            fi
+            if ! kill -0 "$PID" 2>/dev/null; then
+              verdict=exited
+              break
+            fi
+            sleep 3
+          done
+          if [[ "$verdict" != pass ]]; then
+            echo "Real LFM3 test could not confirm generation: $verdict" >&2
+            tail -n 35 "$LOG" | sed -E 's/([A-Za-z0-9_-]{22,})/[redacted]/g' >&2
+            exit 1
+          fi
+          # Independently exercise live HTTP while both localhost services run.
+          python3 - <<'PY'
+          import json,urllib.request
+          for path in ("/", "/chat"):
+              with urllib.request.urlopen("http://127.0.0.1:3362"+path, timeout=5) as resp:
+                  body=resp.read(150000)
+                  assert resp.status==200 and b"Message Kipnerter" in body
+          data=json.dumps({"messages":[{"role":"user","content":"What is 2 + 2? Reply with 4."}]}).encode()
+          req=urllib.request.Request("http://127.0.0.1:3362/api/chat/completions",data=data,
+                  headers={"Content-Type":"application/json"},method="POST")
+          with urllib.request.urlopen(req,timeout=52) as resp:
+              out=json.load(resp)
+              assert resp.status==200 and out.get("model")=="LFM3-1.7B"
+              assert isinstance(out.get("reply"),str) and out["reply"].strip()
+              assert "SIMULATED DEMO RESPONSE" not in out["reply"]
+          print("REAL_LFM3_1_7B_GATEWAY_PASS: official GGUF inference via Kipnerter /chat API")
+          PY
+          printf '{"result":"REAL_LFM3_PASS","model":"LiquidAI/LFM3-1.7B-GGUF:Q4_K_M","runtime":"llama.cpp b12119","route":"/api/chat/completions","scope":"ephemeral runner localhost","public_deployed":false,"fleet_used":false,"head":"%s"}\n' \
+            "$GITHUB_SHA" > "$RUNNER_TEMP/lfm3-real-evidence.json"
+      - name: Upload evidence only (never model weights or prompts)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: lfm3-real-inference-evidence
+          path: ${{ runner.temp }}/lfm3-real-evidence.json
+          retention-days: 3
+          if-no-files-found: warn

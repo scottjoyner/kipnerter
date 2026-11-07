@@ -1,0 +1,50 @@
+# Simulated development demo ONLY — this is not a live LFM3 model and
+# never mounts private credentials, Tailnet nodes, or production Caddy.
+name: kipnerter-lfm3-demo
+services:
+  chat:
+    build:
+      context: ../../../apps/web
+      args:
+        KIPNERTER_RELEASE_SHA: simulated-local-demo
+    environment:
+      KIPNERTER_ENV: staging
+      NEXTAUTH_URL: http://127.0.0.1:${KIPNERTER_LFM3_DEMO_PORT:-3360}
+      KIPNERTER_LFM3_ENDPOINTS: >-
+        [{"name":"demo_fixture","baseUrl":"http://fixture:8077","model":"lfm3-1.7b-demo-fixture","adapter":"openai","role":"interactive","maxInflight":1,"maxOutputTokens":128}]
+    ports:
+      - "127.0.0.1:${KIPNERTER_LFM3_DEMO_PORT:-3360}:3000"
+    depends_on:
+      - fixture
+    networks:
+      - preview
+      - model
+    restart: "no"
+    cpus: 1
+    mem_limit: 512m
+    pids_limit: 150
+    security_opt:
+      - no-new-privileges:true
+  fixture:
+    image: python:3.12-alpine
+    command: ["python", "/demo/fixture_server.py"]
+    volumes:
+      - type: bind
+        source: ./fixture_server.py
+        target: /demo/fixture_server.py
+        read_only: true
+    expose:
+      - "8077"
+    networks:
+      - model
+    user: "65532:65532"
+    restart: "no"
+    mem_limit: 64m
+    pids_limit: 50
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+networks:
+  preview:
+  model:
+    internal: true

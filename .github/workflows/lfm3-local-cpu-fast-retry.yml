@@ -1,0 +1,127 @@
+name: LFM3 REAL CPU Stage Retry (pinned cache, corrected networking)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/lfm3-local-cpu-fast-retry.yml'
+      - 'deploy/lfm3/compose.local-cpu-real-v2.yml'
+      - 'scripts/lfm3_local_cpu_activate_v2.sh'
+      - 'apps/web/tests/lfm3-local-cpu-fast-retry-contract.test.mjs'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-lfm3-cpu-stage-retry
+  cancel-in-progress: false
+
+jobs:
+  real-stage-acceptance:
+    if: >-
+      github.repository == 'scottjoyner/kipnerter' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == github.repository_owner &&
+      github.event.pull_request.head.ref == 'feat/lfm3-native-homechat-20261103' &&
+      github.event.pull_request.head.sha == 'ebaa164aa67075957b123a23a540e61179907d3f'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    env:
+      CERTIFIED_SOURCE_SHA: 6f910de222e2b21ddbe1486584f3cc8da7274b22
+      CERTIFIED_MODEL_SHA: 3793e1e6e2266919d6e015287221b41100175a98eddaba92e111aed3b05c93c4
+      CERTIFIED_RUN: '42075860987'
+      CERTIFIED_WEB_IMAGE_ID: sha256:e539c1b888e1148ff34ce00d50ac8a9638b7ff6d6df8918ce27b429026804587
+      CERTIFIED_SERVER_IMAGE_ID: sha256:c0a11067c72bb1eb330b8bddbf9869274c195e596bf4fae55fd527102e644b85
+
+    steps:
+      - name: Checkout exact owner-reviewed network fix
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Validate bounded stage scripts and known original artifact identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "${{ github.event.pull_request.head.sha }}" ]]
+          bash -n scripts/lfm3_local_cpu_preflight.sh
+          bash -n scripts/lfm3_local_cpu_activate_v2.sh
+          node --test apps/web/tests/lfm3-local-cpu-fast-retry-contract.test.mjs
+          [[ "$CERTIFIED_SOURCE_SHA" =~ ^[a-f0-9]{40}$ &&
+             "$CERTIFIED_WEB_IMAGE_ID" =~ ^sha256:[a-f0-9]{64}$ &&
+             "$CERTIFIED_SERVER_IMAGE_ID" =~ ^sha256:[a-f0-9]{64}$ ]]
+
+      - name: Connect existing restricted CI Tailnet identity
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+
+      - name: Resolve unique production-tagged host
+        id: host
+        shell: bash
+        run: |
+          set -euo pipefail
+          host="$(tailscale status --json | python3 scripts/portal_deploy_target.py --environment production)"
+          [[ "$host" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 3
+          tailscale ping --timeout=8s "$host" >/dev/null
+          echo "address=$host" >> "$GITHUB_OUTPUT"
+
+      - name: Recheck host resources and exact previous Docker/model identities (read-only)
+        shell: bash
+        env:
+          HOST: ${{ steps.host.outputs.address }}
+        run: |
+          set -euo pipefail
+          [[ "$HOST" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 3
+          tailscale ssh "kipnerter@$HOST" 'bash -s' < scripts/lfm3_local_cpu_preflight.sh
+          original="/home/kipnerter/.local/state/kipnerter-lfm3/local-cpu/$CERTIFIED_SOURCE_SHA-$CERTIFIED_RUN/models/LFM3-1.7B-Q4_K_M.gguf"
+          model_image="kipnerter-lfm3-local-server:$CERTIFIED_SOURCE_SHA"
+          web_image="kipnerter-lfm3-local-web:$CERTIFIED_SOURCE_SHA"
+          tailscale ssh "kipnerter@$HOST" \
+            "test -f '$original' && test ! -L '$original' &&
+             test \"\$(stat -c %s '$original')\" = 1099627808 &&
+             echo '$CERTIFIED_MODEL_SHA  $original' | sha256sum --check --status &&
+             test \"\$(docker image inspect --format '{{.Id}}' '$web_image')\" = '$CERTIFIED_WEB_IMAGE_ID' &&
+             test \"\$(docker image inspect --format '{{.Id}}' '$model_image')\" = '$CERTIFIED_SERVER_IMAGE_ID'"
+          echo "PASS: previously transferred official model and exact Docker images verified read-only"
+
+      - name: Install only reviewed dual-network manifest with verified hardlinked official weights
+        shell: bash
+        env:
+          HOST: ${{ steps.host.outputs.address }}
+        run: |
+          set -euo pipefail
+          [[ "$HOST" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 3
+          [[ "$GITHUB_RUN_ID" =~ ^[0-9]{8,14}$ ]] || exit 3
+          old="/home/kipnerter/.local/state/kipnerter-lfm3/local-cpu/$CERTIFIED_SOURCE_SHA-$CERTIFIED_RUN"
+          new="/home/kipnerter/.local/state/kipnerter-lfm3/local-cpu/$CERTIFIED_SOURCE_SHA-$GITHUB_RUN_ID"
+          tailscale ssh "kipnerter@$HOST" \
+            "umask 077; mkdir -p '$new/models'; ln '$old/models/LFM3-1.7B-Q4_K_M.gguf' '$new/models/LFM3-1.7B-Q4_K_M.gguf'"
+          cat deploy/lfm3/compose.local-cpu-real-v2.yml |
+            tailscale ssh "kipnerter@$HOST" \
+              "umask 077; set -C; cat > '$new/compose.local-cpu-real-v2.yml'"
+
+      - name: Exercise actual model and Next.js with corrected dual networking
+        shell: bash
+        env:
+          HOST: ${{ steps.host.outputs.address }}
+        run: |
+          set -euo pipefail
+          [[ "$HOST" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 3
+          tailscale ssh "kipnerter@$HOST" \
+            "bash -s -- '$CERTIFIED_SOURCE_SHA' '$CERTIFIED_WEB_IMAGE_ID' '$CERTIFIED_SERVER_IMAGE_ID' '$GITHUB_RUN_ID'" \
+            < scripts/lfm3_local_cpu_activate_v2.sh
+
+      - name: Record real-only staging decision
+        if: always()
+        run: |
+          {
+            echo '### Actual real LFM3 product stage retry'
+            echo '- Reuses source/image/official model identities verified independently in run 42075860987.'
+            echo '- Only new change is the web bridge network; model stays on an internal-only network.'
+            echo '- A real HTTP model reply is required; failures remove only the two newly created containers.'
+            echo '- No public Caddy route, secrets, iOS release, or existing production web container changed.'
+          } >> "$GITHUB_STEP_SUMMARY"
