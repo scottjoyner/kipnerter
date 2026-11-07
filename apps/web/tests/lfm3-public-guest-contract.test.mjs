@@ -6,6 +6,7 @@ const root = new URL("../../../", import.meta.url);
 const nginx = readFileSync(new URL("infra/nginx/lfm3-public-guest.conf", root), "utf8");
 const caddy = readFileSync(new URL("infra/caddy/Caddyfile.lfm3-public-guest.example", root), "utf8");
 const audit = readFileSync(new URL("scripts/lfm3_public_guest_audit.py", root), "utf8");
+const runbook = readFileSync(new URL("deploy/lfm3/PUBLIC_GUEST_RELEASE.md", root), "utf8");
 const workflow = readFileSync(new URL(".github/workflows/lfm3-public-guest-contract.yml", root), "utf8");
 
 test("public entry redirects only Chat, preserving original site and API domains", () => {
@@ -103,4 +104,18 @@ test("synthetic CI has no production network, secrets, or mutation permissions",
     "tailscale/github-action", "environment: production", "secrets.",
     "docker run", "ssh ", "workflow_dispatch", "curl https://",
   ]) assert.ok(!workflow.includes(bad), bad);
+});
+
+test("rollback runbook pins current live Caddy digest, not stale guest candidate", () => {
+  const live = audit.match(/^PUBLIC_CADDY_SHA = "([a-f0-9]{64})"$/m)?.[1];
+  const prior = audit.match(/^PREVIOUS_CADDY_SHA = "([a-f0-9]{64})"$/m)?.[1];
+  const intermediate = audit.match(/^GUEST_BEFORE_IOS_SHA = "([a-f0-9]{64})"$/m)?.[1];
+  assert.ok(live && prior && intermediate, "reviewed exact SHA pins");
+  assert.notEqual(live, intermediate, "current and historical Caddy are distinct");
+  assert.ok(runbook.includes("| **Current live public Caddyfile**"), "current file labeled precisely");
+  assert.ok(runbook.includes(`**\`\${live}\`**`), "runbook must identify current live SHA");
+  assert.ok(runbook.includes(`\`\${prior}\``), "runbook must pin protected rollback SHA");
+  assert.ok(runbook.includes(`\`\${intermediate}\``), "historical guest candidate kept distinguishable");
+  assert.ok(runbook.includes("If any live file or backup differs, **HOLD**"),
+    "rollback must fail closed on unexpected live or backup identity");
 });
