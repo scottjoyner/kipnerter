@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 const root=new URL("../../../",import.meta.url);
 const wf=readFileSync(new URL(".github/workflows/lfm3-live-real-stage-audit.yml",root),"utf8");
 const audit=readFileSync(new URL("scripts/lfm3_local_cpu_readonly_audit.py",root),"utf8");
@@ -34,4 +36,14 @@ test("real-model audit measures one successful request without adding extra prob
   assert.equal((audit.match(/urllib\.request\.urlopen\(request,timeout=54\)/g)||[]).length,1,
     "no additional real-generation requests");
   assert.ok(!audit.includes("docker stats"),"no extra Docker resource polling");
+});
+
+test("offline mocked real-audit runtime enforces request and retry bounds",()=>{
+  const script=fileURLToPath(new URL("apps/web/tests/lfm3-live-real-stage-audit-runtime.py",root));
+  const run=spawnSync("python3",[script],{
+    cwd:fileURLToPath(root),encoding:"utf8",timeout:15000,
+    env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"},
+  });
+  assert.equal(run.error,undefined,String(run.error));
+  assert.equal(run.status,0,`offline audit tests failed:\n${run.stdout}\n${run.stderr}`);
 });
