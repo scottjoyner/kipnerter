@@ -1,0 +1,29 @@
+[Unit]
+Description=Kipnerter LFM3 fast private Next.js chat (x1-370, PR96)
+Requires=kipnerter-lfm3-fast-model.service
+After=kipnerter-lfm3-fast-model.service
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=simple
+EnvironmentFile=/home/scott/.config/kipnerter/lfm3-fast.env
+Environment=NODE_ENV=production
+Environment=NEXT_TELEMETRY_DISABLED=1
+WorkingDirectory=/home/scott/git/kipnerter-lfm3-fast-stage-20261105/apps/web
+ExecStartPre=/usr/bin/python3 /home/scott/.local/share/kipnerter-lfm3-fast/lfm3_x1_durable_preflight.py web
+ExecStart=/usr/bin/node /home/scott/git/kipnerter-lfm3-fast-stage-20261105/apps/web/node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port ${LFM3_WEB_PORT}
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=60
+MemoryMax=384M
+MemorySwapMax=0
+CPUQuota=75%
+TasksMax=110
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+
+[Install]
+WantedBy=default.target
