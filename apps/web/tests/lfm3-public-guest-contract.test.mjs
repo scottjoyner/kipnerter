@@ -13,6 +13,8 @@ test("public entry redirects only Chat, preserving original site and API domains
     "kipnerter.com, www.kipnerter.com {",
     "@lfm3_guest_entry path /chat /chat/*",
     "redir @lfm3_guest_entry https://preview.kipnerter.com{uri} 302",
+    "@native_lfm3_api path /api/chat/completions",
+    "handle @native_lfm3_api {",
     "reverse_proxy kipnerter-web-public-v01:3000",
     "api.kipnerter.com {",
     "reverse_proxy spatial-api:8000",
@@ -41,7 +43,8 @@ test("guest paths are narrow and all other preview paths preserve operator Basic
   const operatorHandle = caddy.indexOf("\n    handle {\n        basic_auth {");
   assert.ok(operatorHandle > caddy.indexOf("handle @public_assets"),
     "authentication remains on the last fallback handler");
-  assert.equal((caddy.match(/header_up X-Kipnerter-Client-IP \{remote_host\}/g) || []).length, 3);
+  // One trusted identity assignment for canonical API and three for preview routes.
+  assert.equal((caddy.match(/header_up X-Kipnerter-Client-IP \{remote_host\}/g) || []).length, 4);
   assert.ok(!/\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{45,}/.test(caddy),
     "no operator bcrypt hash committed");
 });
