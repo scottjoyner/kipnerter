@@ -113,9 +113,9 @@ test("rollback runbook pins current live Caddy digest, not stale guest candidate
   assert.ok(live && prior && intermediate, "reviewed exact SHA pins");
   assert.notEqual(live, intermediate, "current and historical Caddy are distinct");
   assert.ok(runbook.includes("| **Current live public Caddyfile**"), "current file labeled precisely");
-  assert.ok(runbook.includes(`**\`\${live}\`**`), "runbook must identify current live SHA");
-  assert.ok(runbook.includes(`\`\${prior}\``), "runbook must pin protected rollback SHA");
-  assert.ok(runbook.includes(`\`\${intermediate}\``), "historical guest candidate kept distinguishable");
+  assert.ok(runbook.includes(`**\`${live}\`**`), "runbook must identify current live SHA");
+  assert.ok(runbook.includes(`\`${prior}\``), "runbook must pin protected rollback SHA");
+  assert.ok(runbook.includes(`\`${intermediate}\``), "historical guest candidate kept distinguishable");
   assert.ok(runbook.includes("If any live file or backup differs, **HOLD**"),
     "rollback must fail closed on unexpected live or backup identity");
 });
