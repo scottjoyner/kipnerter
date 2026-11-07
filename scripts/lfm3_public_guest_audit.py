@@ -128,11 +128,14 @@ def main():
     redirect, _, location = fetch("https://kipnerter.com/chat", follow=False)
     guest, page, _ = fetch("https://preview.kipnerter.com/chat")
     operator, _, _ = fetch("https://preview.kipnerter.com/")
+    operator_fleet, _, _ = fetch("https://preview.kipnerter.com/fleet")
     fleet, _, _ = fetch("https://preview.kipnerter.com/api/chat/fleet-status")
+    operator_research, _, _ = fetch("https://preview.kipnerter.com/api/chat/research")
     ready, _, _ = fetch("https://api.kipnerter.com/health/ready")
     canonical_get, _, _ = fetch("https://kipnerter.com/api/chat/completions")
-    if ((home, redirect, guest, operator, fleet, ready) !=
-            (200, 302, 200, 401, 401, 200) or canonical_get != 403 or
+    if ((home, redirect, guest, operator, operator_fleet, fleet,
+         operator_research, ready) !=
+            (200, 302, 200, 401, 401, 401, 401, 200) or canonical_get != 403 or
             location != "https://preview.kipnerter.com/chat" or
             b"Message Kipnerter" not in page):
         hold("public/guest/operator route separation failed")
