@@ -12,7 +12,7 @@ from unittest import mock
 AUDIT = Path(__file__).resolve().parents[3] / "scripts" / "lfm3_public_guest_audit.py"
 
 class GuestAuditTests(unittest.TestCase):
-    def run_case(self, cli):
+    def run_case(self, cli, scenario=None):
         scope = {"__name__": "lfm3_guest_metadata_offline", "__file__": str(AUDIT)}
         exec(compile(AUDIT.read_text(), str(AUDIT), "exec"), scope)
         caddy = "\n".join([
@@ -33,6 +33,8 @@ class GuestAuditTests(unittest.TestCase):
         ])
         call_count = {"inspect": 0, "get": 0, "post": 0}
         def digest(path):
+            if scenario == "wrong_caddy_sha" and path == scope["CADDY"]:
+                return "0" * 64
             return {
                 scope["CADDY"]: scope["PUBLIC_CADDY_SHA"],
                 scope["ROOT"] / "Caddyfile.before": scope["PREVIOUS_CADDY_SHA"],
@@ -61,6 +63,8 @@ class GuestAuditTests(unittest.TestCase):
                 item = {"Image": scope["CADDY_IMAGE"], "State": {"Running": True}}
             else:
                 self.fail("unrecognized container")
+            if scenario == "oversized_gateway" and name == "kipnerter-lfm3-public-gate-v01":
+                item["HostConfig"]["Memory"] += 1
             return json.dumps([item]).encode()
         def fake_fetch(url, *, body=None, timeout=15, follow=True):
             if body is not None:
@@ -83,6 +87,8 @@ class GuestAuditTests(unittest.TestCase):
             self.assertIn(url, cases)
             if url == "https://kipnerter.com/chat":
                 self.assertFalse(follow)
+            if scenario == "operator_exposed" and url == "https://preview.kipnerter.com/":
+                return 200, b"exposed", ""
             return cases[url]
         scope["digest"] = digest
         scope["fetch"] = fake_fetch
@@ -121,6 +127,26 @@ class GuestAuditTests(unittest.TestCase):
         self.assertIn("PUBLIC_GUEST_LFM3_RELEASE_PASS", out)
         self.assertIn("sample_count=1", out)
         self.assertNotIn("PUBLIC_GUEST_METADATA_PASS", out)
+
+    def test_wrong_live_caddy_hash_fails_without_generation(self):
+        code, count, out = self.run_case(["--metadata-only"], "wrong_caddy_sha")
+        self.assertEqual(code, 3)
+        self.assertEqual(count["post"], 0)
+        self.assertEqual(count["inspect"], 0)
+        self.assertIn("PUBLIC_GUEST_RELEASE_HOLD", out)
+
+    def test_resource_limit_drift_fails_without_generation(self):
+        code, count, out = self.run_case(["--metadata-only"], "oversized_gateway")
+        self.assertEqual(code, 3)
+        self.assertEqual(count["post"], 0)
+        self.assertEqual(count["get"], 0)
+        self.assertIn("PUBLIC_GUEST_RELEASE_HOLD", out)
+
+    def test_operator_route_exposure_fails_without_generation(self):
+        code, count, out = self.run_case(["--metadata-only"], "operator_exposed")
+        self.assertEqual(code, 3)
+        self.assertEqual(count["post"], 0)
+        self.assertIn("PUBLIC_GUEST_RELEASE_HOLD", out)
 
     def test_unsupported_flag_fails_before_access(self):
         code, count, out = self.run_case(["--no-model"])
