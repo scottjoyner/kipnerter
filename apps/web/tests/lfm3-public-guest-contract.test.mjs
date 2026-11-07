@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const root = new URL("../../../", import.meta.url);
 const nginx = readFileSync(new URL("infra/nginx/lfm3-public-guest.conf", root), "utf8");
@@ -118,4 +120,15 @@ test("rollback runbook pins current live Caddy digest, not stale guest candidate
   assert.ok(runbook.includes(`\`${intermediate}\``), "historical guest candidate kept distinguishable");
   assert.ok(runbook.includes("If any live file or backup differs, **HOLD**"),
     "rollback must fail closed on unexpected live or backup identity");
+});
+
+test("metadata-only and full audit use strictly bounded mocked request counts", () => {
+  const script = fileURLToPath(new URL("apps/web/tests/lfm3-public-guest-metadata-offline.py", root));
+  const result = spawnSync("python3", [script], {
+    cwd: fileURLToPath(root), encoding: "utf8", timeout: 15000,
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
+  });
+  assert.equal(result.error, undefined, String(result.error));
+  assert.equal(result.status, 0,
+    `offline metadata tests failed:\n${result.stdout}\n${result.stderr}`);
 });
