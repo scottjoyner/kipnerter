@@ -59,6 +59,10 @@ def fetch(url, *, body=None, timeout=15, follow=True):
 
 
 def main():
+    args = sys.argv[1:]
+    if args not in ([], ["--metadata-only"]):
+        hold("unsupported audit arguments")
+    metadata_only = args == ["--metadata-only"]
     if socket.gethostname() != "kipnerter-prod-01" or pwd.getpwuid(os.getuid()).pw_name != "kipnerter":
         hold("unexpected host or operator")
     inputs = (
@@ -139,6 +143,13 @@ def main():
     asset_code, _, _ = fetch("https://preview.kipnerter.com" + asset_path)
     if asset_code != 200:
         hold("new chat assets not served")
+
+    if metadata_only:
+        print("PUBLIC_GUEST_METADATA_PASS", "pinned_release=true",
+              "bounded_nginx_gateway=true", "guest_routes=true",
+              "operator_isolated=true", "guest_assets=true",
+              "model_requests=0", "sample_count=0")
+        return
 
     payload = json.dumps({"messages": [{
         "role": "user", "content": "What is 2 + 2? Reply with the digit 4."
