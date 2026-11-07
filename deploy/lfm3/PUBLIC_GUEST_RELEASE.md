@@ -48,11 +48,13 @@ All runtime release files are scoped to `/home/kipnerter/.local/state/lfm3-publi
 | Runtime artifact | SHA-256 |
 |---|---|
 | Original protected Caddyfile, `Caddyfile.before` | `2e4ba38cd67316b6469c740aee7fc4e19b9c2cc3754a1a2a92b00bb01819d23a` |
-| Current guest Caddyfile, `Caddyfile.public-candidate` | `0788282cee590569e2a519678cc9cb4afa02c61ce29813ce27b70e1878635471` |
+| Earlier guest candidate / pre-iOS-api backup, `Caddyfile.before-ios-api` | `0788282cee590569e2a519678cc9cb4afa02c61ce29813ce27b70e1878635471` |
+| **Current live public Caddyfile**, `/opt/kipnerter/infra/caddy/Caddyfile` | **`ef9bf65190d0ae0661b8782cf04bf7064fda57b29a0f437437bdb2c2073d5260`** |
+| Pinned current candidate backup, `Caddyfile.ios-api-candidate` | `ef9bf65190d0ae0661b8782cf04bf7064fda57b29a0f437437bdb2c2073d5260` |
 | Nginx rate gateway, `nginx.conf.prod` | `17c7b5033d000547a79917f63235675bad038bb24cc02e0d920320bd69d9bc85` |
 | Trust bundle, `verified-host-ca.pem` | `0e4c9a8eb123513b1c131c0aec2d3f9ddaad02b77b8af53bff30e1e7fc3c6b71` |
 
-**Emergency rollback:** First verify the live Caddyfile SHA is the known deployed SHA and the backup SHA is the known prior SHA. Copy the backup's bytes into a temporary file **in the existing production Caddyfile directory**, set mode 0644, atomically replace `/opt/kipnerter/infra/caddy/Caddyfile`, and call:
+**Emergency rollback:** This runbook must be evaluated against the **current pinned release**, not the older public-candidate SHA. First verify the live `/opt/kipnerter/infra/caddy/Caddyfile` SHA-256 equals `ef9bf65190d0ae0661b8782cf04bf7064fda57b29a0f437437bdb2c2073d5260` and the original protected backup `Caddyfile.before` equals `2e4ba38cd67316b6469c740aee7fc4e19b9c2cc3754a1a2a92b00bb01819d23a`. The intermediate `Caddyfile.before-ios-api` (`0788282c...`) is **not** the current file. If any live file or backup differs, **HOLD** for an operator review; never restore an unverified or guessed snapshot. This is an emergency operator procedure, **not authorization to perform rollback**. When authorized, copy the verified prior protected backup only. Copy the backup's bytes into a temporary file **in the existing production Caddyfile directory**, set mode 0644, atomically replace `/opt/kipnerter/infra/caddy/Caddyfile`, and call:
 
 ```bash
 docker exec kipnerter-caddy-1 caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
@@ -63,6 +65,12 @@ Verify `kipnerter.com/` remains **200**, `kipnerter.com/chat` still redirects to
 ## Repeatable proof
 
 Run `scripts/lfm3_public_guest_audit.py` on `kipnerter-prod-01` as `kipnerter`. It verifies hardcoded release SHA identities, gateway Docker isolation/resource limits, TLS policy, exact public/private route boundaries, Next.js assets, and **one bounded real-model answer**. No credentials or response text are printed. The GitHub CI contract tests only source policies and syntax; it does not reach the production host.
+
+## November 6 read-only revalidation — exact recorded observation
+
+The source-controlled `scripts/lfm3_public_guest_audit.py` from PR #102 head `6cbad72063e0b67b0af456adb1b4a238afd9b48c` ran as the unprivileged `kipnerter` user on the role-identified production host, via existing scoped Tailscale SSH from x1-370. It **exited 0** with `PUBLIC_GUEST_LFM3_RELEASE_PASS`: current Caddy, original/intermediate rollback backups, Nginx config, pinned TLS CA bundle, both image identities, no published Nginx host ports, and runtime resource caps all matched the reviewed pins. Public redirect, anonymous guest HTML and assets, 403 non-POST canonical API, 401 operator/fleet surfaces, and independent health 200 passed. The one real `LFM3-1.7B` POST completed with `single_generation_latency_ms=1587 sample_count=1` (bounded 15-second acceptance). No Docker, Caddy, Tailscale, credential, or filesystem mutations were performed.
+
+This is **one additional warm-path operational observation** for the currently pinned guest beta, not a percentile, capacity study, availability SLO, cold start, or permission to relax per-client/global/concurrency quotas. Do not pool it with production-host CPU-fallback measurements (such as the unrelated 25,205 ms localhost sample); they are different backends. To establish an SLO, define request population, prompt/output-token buckets, failures/timeouts, real client-experienced latency boundary and observation window, then obtain separately authorized **bounded** independent measurements.
 
 ## Outstanding gates
 
