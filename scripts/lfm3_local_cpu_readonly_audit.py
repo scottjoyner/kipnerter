@@ -62,6 +62,7 @@ request=urllib.request.Request(origin+"/api/chat/completions", data=payload, met
     headers={"Content-Type":"application/json"})
 for attempt in range(5):
     try:
+        start_ns=time.monotonic_ns()
         with urllib.request.urlopen(request,timeout=54) as response:
             raw=response.read(32769)
             if len(raw)>32768: hold("oversized generated response")
@@ -69,6 +70,7 @@ for attempt in range(5):
             text=answer.get("reply")
             if response.status!=200 or answer.get("model")!="LFM3-1.7B" or not isinstance(text,str) or not re.search(r"\b4\b",text) or "SIMULATED DEMO RESPONSE" in text or "LOCAL HTTP FIXTURE" in text:
                 hold("actual model response failed acceptance")
+        successful_request_ms=(time.monotonic_ns()-start_ns)//1_000_000
         break
     except urllib.error.HTTPError as e:
         if e.code not in (429,503) or attempt==4: hold("live model HTTP failure")
@@ -80,3 +82,4 @@ else:
 print("LIVE_REAL_LFM3_STAGE_PASS: persistent Next.js + official model-generated answer")
 print("runtime=real-lfm3-1.7b-q4-k-m staging_host_port=127.0.0.1:3356")
 print("web_memory_cap_mib=384 model_memory_cap_mib=1536 public_traffic_changed=no")
+print(f"successful_generation_request_latency_ms={successful_request_ms} attempt_count={attempt+1} sample_count=1")
