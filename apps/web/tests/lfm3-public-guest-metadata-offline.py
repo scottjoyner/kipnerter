@@ -79,7 +79,9 @@ class GuestAuditTests(unittest.TestCase):
                 "https://kipnerter.com/chat": (302, b"", "https://preview.kipnerter.com/chat"),
                 "https://preview.kipnerter.com/chat": (200, b'Message Kipnerter /_next/static/chunk.js"', ""),
                 "https://preview.kipnerter.com/": (401, b"", ""),
+                "https://preview.kipnerter.com/fleet": (401, b"", ""),
                 "https://preview.kipnerter.com/api/chat/fleet-status": (401, b"", ""),
+                "https://preview.kipnerter.com/api/chat/research": (401, b"", ""),
                 "https://api.kipnerter.com/health/ready": (200, b"", ""),
                 "https://kipnerter.com/api/chat/completions": (403, b"", ""),
                 "https://preview.kipnerter.com/_next/static/chunk.js": (200, b"", ""),
@@ -88,6 +90,10 @@ class GuestAuditTests(unittest.TestCase):
             if url == "https://kipnerter.com/chat":
                 self.assertFalse(follow)
             if scenario == "operator_exposed" and url == "https://preview.kipnerter.com/":
+                return 200, b"exposed", ""
+            if scenario == "fleet_view_exposed" and url == "https://preview.kipnerter.com/fleet":
+                return 200, b"exposed", ""
+            if scenario == "research_exposed" and url == "https://preview.kipnerter.com/api/chat/research":
                 return 200, b"exposed", ""
             return cases[url]
         scope["digest"] = digest
@@ -115,7 +121,7 @@ class GuestAuditTests(unittest.TestCase):
     def test_metadata_only_has_zero_model_requests(self):
         code, count, out = self.run_case(["--metadata-only"])
         self.assertEqual(code, 0)
-        self.assertEqual(count, {"inspect": 2, "get": 8, "post": 0})
+        self.assertEqual(count, {"inspect": 2, "get": 10, "post": 0})
         self.assertIn("PUBLIC_GUEST_METADATA_PASS", out)
         self.assertIn("model_requests=0 sample_count=0", out)
         self.assertNotIn("single_generation_latency_ms=", out)
@@ -123,7 +129,7 @@ class GuestAuditTests(unittest.TestCase):
     def test_default_full_audit_retains_single_model_request(self):
         code, count, out = self.run_case([])
         self.assertEqual(code, 0)
-        self.assertEqual(count, {"inspect": 2, "get": 8, "post": 1})
+        self.assertEqual(count, {"inspect": 2, "get": 10, "post": 1})
         self.assertIn("PUBLIC_GUEST_LFM3_RELEASE_PASS", out)
         self.assertIn("sample_count=1", out)
         self.assertNotIn("PUBLIC_GUEST_METADATA_PASS", out)
@@ -144,6 +150,18 @@ class GuestAuditTests(unittest.TestCase):
 
     def test_operator_route_exposure_fails_without_generation(self):
         code, count, out = self.run_case(["--metadata-only"], "operator_exposed")
+        self.assertEqual(code, 3)
+        self.assertEqual(count["post"], 0)
+        self.assertIn("PUBLIC_GUEST_RELEASE_HOLD", out)
+
+    def test_operator_fleet_exposure_fails_closed(self):
+        code, count, out = self.run_case(["--metadata-only"], "fleet_view_exposed")
+        self.assertEqual(code, 3)
+        self.assertEqual(count["post"], 0)
+        self.assertIn("PUBLIC_GUEST_RELEASE_HOLD", out)
+
+    def test_research_route_exposure_fails_closed(self):
+        code, count, out = self.run_case(["--metadata-only"], "research_exposed")
         self.assertEqual(code, 3)
         self.assertEqual(count["post"], 0)
         self.assertIn("PUBLIC_GUEST_RELEASE_HOLD", out)
