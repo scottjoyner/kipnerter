@@ -72,6 +72,20 @@ The source-controlled `scripts/lfm3_public_guest_audit.py` from PR #102 head `6c
 
 This is **one additional warm-path operational observation** for the currently pinned guest beta, not a percentile, capacity study, availability SLO, cold start, or permission to relax per-client/global/concurrency quotas. Do not pool it with production-host CPU-fallback measurements (such as the unrelated 25,205 ms localhost sample); they are different backends. To establish an SLO, define request population, prompt/output-token buckets, failures/timeouts, real client-experienced latency boundary and observation window, then obtain separately authorized **bounded** independent measurements.
 
+## Zero-inference drift verification
+
+For a frequent **non-generating** identity and route check, the reviewed auditor now accepts `--metadata-only`. It checks the same host/principal identity, pinned live and rollback file hashes, deployed Caddy/Nginx image IDs, gateway resource/isolation policy, guest/operator HTTPS route separation, and actual Next.js assets. It performs bounded HTTP **GET** checks and Docker **inspect** reads only; it does **not** issue a model completion request.
+
+Run with an exact reviewed source checkout using the preexisting authorized `kipnerter` production identity, for example when the audited Python source is already available locally on the verified host:
+
+```bash
+python3 scripts/lfm3_public_guest_audit.py --metadata-only
+```
+
+Expected success is `PUBLIC_GUEST_METADATA_PASS ... model_requests=0 sample_count=0`. A mismatch is `PUBLIC_GUEST_RELEASE_HOLD` (exit 3); never auto-repair or restore Caddy, credentials, containers, or Tailnet settings based on this check. Never point it at a different host or change the source's trusted pins to make it pass.
+
+The default invocation **without** `--metadata-only` retains exactly one genuine generation request, to be run only when a new inference sample is explicitly justified. Both modes remain observational, not public SLO or rollback authorization. The metadata-only result cannot establish active model inference, latency, concurrency, or availability. The operator should verify the checked-out exact source commit before running either mode.
+
 ## Outstanding gates
 
 Native physical iPhone Safari has **not** been operated; testing an iPhone User-Agent from the fleet returned HTTP 200 but is not a device test. The iOS app's signing, build disk-space and TestFlight gates remain separate. Full x1-370 reboot recovery has not been tested; controlled service restart and SIGKILL recovery were verified in the preceding stage. Larger-scale concurrency/performance and external abuse-resilience evaluation are still needed before removing low-volume beta quotas.
