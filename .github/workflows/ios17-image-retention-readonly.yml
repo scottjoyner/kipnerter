@@ -1,0 +1,64 @@
+name: Kipnerter 1.7 Legacy Docker Image Rollback Size Qualification
+
+on:
+  push:
+    branches: [release/17-legacy-image-retention-20261019]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kipnerter-17-legacy-image-footprint-readonly
+  cancel-in-progress: false
+
+jobs:
+  witness:
+    if: >-
+      ${{ github.repository == 'scottjoyner/kipnerter' &&
+          github.actor == github.repository_owner &&
+          contains(github.event.head_commit.message, '[ios17-image-footprint-readonly]') }}
+    name: Inspect pinned live image sizes without exporting or changing images
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout exact first-party inspected script
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Enforce deny-only capacity tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest scripts.tests.test_portal_legacy_image_retention_preflight -q
+          python3 -m py_compile scripts/portal_legacy_image_retention_preflight.py
+      - name: Join intended production CI Tailscale principal
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kipnerter-ci
+      - name: Inspect exactly seven local image identities and logical footprint
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="$(tailscale status --json |
+            python3 scripts/portal_deploy_target.py --environment production)"
+          [[ "$TARGET" =~ ^100[.][0-9]+[.][0-9]+[.][0-9]+$ ]]
+          tailscale ping --timeout=8s "$TARGET" >/dev/null
+          cat scripts/portal_legacy_image_retention_preflight.py |
+            timeout 80 tailscale ssh "kipnerter@$TARGET" 'python3 -'
+      - name: Preserve strict deployment and image-export HOLD
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "### Legacy image recovery sizing"
+            echo "- Exact 7 running Compose services and local OCI image identifiers: inspected"
+            echo "- Image bytes exported, Docker image archive created: NO"
+            echo "- Old image restoration/rollback proven: NO"
+            echo "- External independent image backup custodian: NO"
+            echo "- Production API/web/volume changes: NONE"
+            echo "- Production deployment: HOLD"
+          } >> "$GITHUB_STEP_SUMMARY"
