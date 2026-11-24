@@ -4,6 +4,8 @@
 The privileged Docker command runs only in the scheduled one-shot publisher,
 never from the HTTP observer. No credentials, transcripts or event payloads
 cross the container boundary. Snapshot is replace-only, never a raw archive.
+A closed-enum failure-code count aggregate is derived from the five scalars;
+the per-record five-scalar schema and privacy contract are unchanged.
 """
 import json
 import os
@@ -14,6 +16,11 @@ import stat
 import subprocess
 import tempfile
 from pathlib import Path
+
+try:
+    from .assistx_failure_code import failure_code_counts
+except ImportError:  # executed directly as a script
+    from assistx_failure_code import failure_code_counts
 
 MAX_BYTES = 65536
 CONTAINER = "assistx-api"
@@ -95,8 +102,11 @@ def refresh(run=None, destination=None):
             safe[key] = value
         sanitized.append(safe)
     # Defense in depth: discard every other producer key before disk write.
+    # The only addition is a closed-enum aggregate derived from the five
+    # scalars; per-record schema and the privacy contract are untouched.
     data = {"source":"assistx_trace_index", "observed_at":ts.isoformat(),
-            "traces":sanitized}
+            "traces":sanitized,
+            "failure_code_counts":failure_code_counts(sanitized)}
     target = destination or snapshot_path()
     directory = target.parent
     if directory.is_symlink():
