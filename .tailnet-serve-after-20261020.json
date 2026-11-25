@@ -1,0 +1,74 @@
+{
+  "TCP": {
+    "8443": {
+      "HTTPS": true
+    },
+    "8445": {
+      "HTTPS": true
+    },
+    "8446": {
+      "HTTPS": true
+    },
+    "8448": {
+      "HTTPS": true
+    },
+    "8449": {
+      "HTTPS": true
+    }
+  },
+  "Web": {
+    "x1-370.tailcb8954.ts.net:8443": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://127.0.0.1:8081"
+        },
+        "/api/v1/agent/chat/completions": {
+          "Proxy": "http://127.0.0.1:8000/api/v1/agent/chat/completions"
+        },
+        "/api/v1/auth/whoami": {
+          "Proxy": "http://127.0.0.1:8000/api/v1/auth/whoami"
+        },
+        "/api/v1/model/chat/completions": {
+          "Proxy": "http://127.0.0.1:8000/api/v1/model/chat/completions"
+        },
+        "/api/v1/runtime/catalog": {
+          "Proxy": "http://127.0.0.1:8000/api/v1/runtime/catalog"
+        },
+        "/health": {
+          "Proxy": "http://127.0.0.1:8000/health"
+        },
+        "/relay/signals": {
+          "Proxy": "http://127.0.0.1:8790"
+        }
+      }
+    },
+    "x1-370.tailcb8954.ts.net:8445": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://127.0.0.1:8781"
+        }
+      }
+    },
+    "x1-370.tailcb8954.ts.net:8446": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://127.0.0.1:8123"
+        }
+      }
+    },
+    "x1-370.tailcb8954.ts.net:8448": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://127.0.0.1:8769"
+        }
+      }
+    },
+    "x1-370.tailcb8954.ts.net:8449": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://127.0.0.1:13300"
+        }
+      }
+    }
+  }
+}
