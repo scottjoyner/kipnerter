@@ -39,3 +39,47 @@ test("explicit matching model normal completion remains accepted",async()=>{
  const fetchImpl=async url=>url.endsWith("/v1/models")?catalog():completion();
  assert.equal((await completeFleetChat(body,{nodes:[{...base,name:"matching-model"}],fetchImpl})).status,200);
 });
+
+test("fallback rechecks cooldown after a concurrent failure",async()=>{
+ const first={...base,name:"fallback-first",baseUrl:"http://127.0.0.1:19201"};
+ const second={...base,name:"fallback-second",baseUrl:"http://127.0.0.1:19202",role:"overflow"};
+ let announce,unblock;
+ const entered=new Promise(r=>{announce=r});
+ const pending=new Promise(r=>{unblock=r});
+ let secondRequests=0;
+ const fetchImpl=async url=>{
+   if(url.startsWith(first.baseUrl)){announce();await pending;return new Response("",{status:503});}
+   secondRequests++;return catalog();
+ };
+ const work=completeFleetChat(body,{nodes:[first,second],fetchImpl});
+ await entered;
+ try{
+   const failure=await completeFleetChat(body,{nodes:[second],fetchImpl:async()=>new Response("",{status:503})});
+   assert.equal(failure.status,503);
+   assert.equal(fleetRuntimeSnapshot(second).cooldown,true);
+ }finally{unblock();}
+ assert.equal((await work).status,503);
+ assert.equal(secondRequests,0);
+});
+
+test("cancelled failed catalog does not penalize endpoint",async()=>{
+ const n={...base,name:"catalog-cancel-failed"};
+ const c=new AbortController();
+ const result=await completeFleetChat(body,{nodes:[n],signal:c.signal,fetchImpl:async()=>{c.abort();return new Response("",{status:503});}});
+ assert.equal(result.status,499);
+ assert.equal(fleetRuntimeSnapshot(n).cooldown,false);
+ assert.equal(fleetRuntimeSnapshot(n).inFlight,0);
+});
+
+test("cancellation between fallback iterations never probes another endpoint",async()=>{
+ const first={...base,name:"abort-first",baseUrl:"http://127.0.0.1:19203"};
+ const second={...base,name:"abort-second",baseUrl:"http://127.0.0.1:19204",role:"overflow"};
+ const c=new AbortController();let secondRequests=0;
+ const result=await completeFleetChat(body,{nodes:[first,second],signal:c.signal,fetchImpl:async url=>{
+   if(url.startsWith(second.baseUrl))secondRequests++;
+   c.abort();return Response.json({data:[]});
+ }});
+ assert.equal(result.status,499);
+ assert.equal(secondRequests,0);
+ assert.equal(fleetRuntimeSnapshot(first).cooldown,false);
+});

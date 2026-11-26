@@ -110,7 +110,8 @@ function registerSuccess(node, startedAt) {
   blockedUntil.delete(node.name);
 }
 function reserve(node) {
-  if ((active.get(node.name) || 0) >= node.maxInflight) return false;
+  if ((blockedUntil.get(node.name) || 0) > Date.now() ||
+      (active.get(node.name) || 0) >= node.maxInflight) return false;
   active.set(node.name, (active.get(node.name) || 0) + 1);
   return true;
 }
@@ -214,6 +215,7 @@ export async function completeFleetChat(messages, {
   const itinerary = orderedNodes(nodes);
   const deadlineAt = Date.now() + 43000; // iOS client timeout is 55s; reserve room for network overhead.
   for (const [index, node] of itinerary.entries()) {
+    if (signal?.aborted) return { status: 499, error: "Request cancelled." };
     if (Date.now() >= deadlineAt - 1000) break;
     hadFree = true;
     if (!reserve(node)) continue;
@@ -221,7 +223,9 @@ export async function completeFleetChat(messages, {
       const startedAt = Date.now();
       const nodeToken = resolveToken ? resolveToken(node) : token;
       if (node.credentialEnv && !nodeToken) continue;
-      if (!await endpointReady(node, { fetchImpl, token: nodeToken, signal })) {
+      const ready = await endpointReady(node, { fetchImpl, token: nodeToken, signal });
+      if (signal?.aborted) return { status: 499, error: "Request cancelled." };
+      if (!ready) {
         registerFailure(node);
         continue;
       }
@@ -244,6 +248,7 @@ export async function completeFleetChat(messages, {
           ...(node.disableThinking === true ? { chat_template_kwargs: { enable_thinking: false } } : {}) }),
         cache: "no-store",
       });
+      if (signal?.aborted) return { status: 499, error: "Request cancelled." };
       if (!upstream.ok) {
         registerFailure(node);
         continue;
