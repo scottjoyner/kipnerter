@@ -9,6 +9,27 @@ function physicalHost(node) {
   catch { return null; }
 }
 
+// Find a complete, distinct-host matching before spending any tokens.
+// At most three perspectives and sixteen configured endpoints. Preserve
+// the existing GPU-first order whenever a complete matching permits it.
+function matchContexts(prompts, candidates) {
+  const payloads = prompts.map(validateMessages);
+  const used = new Set();
+  function search(index) {
+    if (index === payloads.length) return [];
+    for (const node of candidates) {
+      const host = physicalHost(node);
+      if (!host || used.has(host) || fitNodeContext(payloads[index], node) === null) continue;
+      used.add(host);
+      const rest = search(index + 1);
+      used.delete(host);
+      if (rest !== null) return [node, ...rest];
+    }
+    return null;
+  }
+  return search(0);
+}
+
 // A response can succeed on every worker but fail during synthesis if 2–3
 // long excerpts plus the user question overflow the small local model context.
 // Allocate one equal Unicode-safe excerpt budget and check the *actual*
@@ -49,7 +70,7 @@ export async function runParallelLFM3Research({
   if (!limit(question, 700) || !Array.isArray(subtasks) ||
       subtasks.length < 2 || subtasks.length > 3 ||
       !subtasks.every(task => limit(task, 200)) ||
-      !Array.isArray(nodes) || nodes.length < subtasks.length) {
+      !Array.isArray(nodes) || nodes.length < subtasks.length || nodes.length > 16) {
     return { status: 400, error: "Requires 2–3 independent bounded tasks and at least two dedicated nodes." };
   }
   // Different aliases, ports, or model instances on the same machine are
@@ -107,12 +128,15 @@ export async function runParallelLFM3Research({
   if (unique.length < subtasks.length) {
     return { status: 503, error: "Not enough distinct idle LFM3 workers for parallel research." };
   }
-  const assigned = unique.slice(0, subtasks.length);
-  const spares = unique.slice(subtasks.length);
   const prompt = task => [{
     role: "user", content: "Question: " + question + "\nAssigned perspective: " + task +
       "\nAnalyze briefly and independently. Do not execute tools or claim external verification.",
   }];
+  const prompts = subtasks.map(prompt);
+  const assigned = matchContexts(prompts, unique);
+  if (!assigned) return { status: 413, error: "No distinct idle LFM3 worker assignment fits every perspective." };
+  const assignedHosts = new Set(assigned.map(physicalHost));
+  const spares = unique.filter(node => !assignedHosts.has(physicalHost(node)));
   const workerSignal = phaseSignal(timeoutPolicy.fanoutMs);
   const workers = await Promise.all(subtasks.map((task, index) =>
     completeFleetChat(prompt(task), { ...options, nodes: [assigned[index]], signal: workerSignal })));
@@ -127,9 +151,14 @@ export async function runParallelLFM3Research({
     return { status: 503, error: "A parallel LFM3 worker was unavailable; no partial synthesis was published." };
   }
   if (totalSignal.aborted) return stopped();
+  const spareAssignment = matchContexts(failed.map(index => prompts[index]), spares.filter(node => {
+    const snapshot = fleetRuntimeSnapshot(node);
+    return !snapshot.cooldown && snapshot.inFlight < snapshot.maxInflight;
+  }));
+  if (!spareAssignment) return { status: 503, error: "No distinct available spare fits the failed perspectives." };
   const spareSignal = phaseSignal(timeoutPolicy.spareMs);
   const recovered = await Promise.all(failed.map((index, i) =>
-    completeFleetChat(prompt(subtasks[index]), { ...options, nodes: [spares[i]], signal: spareSignal })));
+    completeFleetChat(prompts[index], { ...options, nodes: [spareAssignment[i]], signal: spareSignal })));
   for (let i = 0; i < failed.length; i++) workers[failed[i]] = recovered[i];
   if (spareSignal.aborted) return stopped();
   if (workers.some(result => result.status !== 200)) {
