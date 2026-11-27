@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { completeFleetChat } from "../lib/lfm3-fleet.mjs";
 import { runParallelLFM3Research } from "../lib/lfm3-parallel.mjs";
 const model="lfm3-1.7b-research";
 function node(name,host,role="interactive"){return {name,baseUrl:"http://"+host+":19176",model,adapter:"openai",maxInflight:1,role};}
@@ -38,4 +39,22 @@ test("failed perspectives are matched to fitting distinct spare workers",async()
  const r=await runParallelLFM3Research({authorized:true,question,subtasks:[short,long],nodes:[a,b,gpu,cpu],fetchImpl});
  assert.equal(r.status,200);assert.deepEqual(r.workerRuntimes,["spare-fit-cpu","spare-fit-gpu"]);
  assert.equal(calls.filter(c=>c.method==="POST").length,5);
+});
+
+test("busy synthesis-only GPU does not burn worker inference",async()=>{
+ const gpu=node("busy-synthesis-gpu","10.4.0.1"),a=node("busy-synthesis-cpu-a","10.4.0.2","overflow"),b=node("busy-synthesis-cpu-b","10.4.0.3","overflow");
+ let entered,release;
+ const started=new Promise(r=>{entered=r}),held=new Promise(r=>{release=r});
+ const occupying=completeFleetChat([{role:"user",content:"hold"}],{nodes:[gpu],fetchImpl:async(url)=>{
+  if(url.endsWith("/v1/models"))return Response.json({data:[{id:model}]});
+  entered();await held;
+  return Response.json({model,choices:[{message:{content:"done"},finish_reason:"stop"}]});
+ }});
+ await started;
+ try {
+  const {calls,fetchImpl}=transport();
+  const r=await runParallelLFM3Research({authorized:true,question:"Q".repeat(401),subtasks:["short","other"],nodes:[gpu,a,b],fetchImpl});
+  assert.equal(r.status,503);
+  assert.equal(calls.length,0,"no worker tokens before an eligible synthesis context exists");
+ } finally {release();await occupying;}
 });

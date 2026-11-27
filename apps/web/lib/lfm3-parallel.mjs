@@ -116,16 +116,10 @@ export async function runParallelLFM3Research({
     const snapshot = fleetRuntimeSnapshot(node);
     return !snapshot.cooldown && snapshot.inFlight < snapshot.maxInflight;
   }).sort((a, b) => Number(a.role === "overflow") - Number(b.role === "overflow"));
-  const unique = [];
-  const hostsSeen = new Set();
-  for (const node of available) {
-    const host = physicalHost(node);
-    if (host && !hostsSeen.has(host)) {
-      hostsSeen.add(host);
-      unique.push(node);
-    }
+  if (!fitResearchSynthesis(question, baseline, available)) {
+    return { status: 503, error: "No idle LFM3 runtime fits the minimum synthesis context." };
   }
-  if (unique.length < subtasks.length) {
+  if (new Set(available.map(physicalHost)).size < subtasks.length) {
     return { status: 503, error: "Not enough distinct idle LFM3 workers for parallel research." };
   }
   const prompt = task => [{
@@ -133,10 +127,10 @@ export async function runParallelLFM3Research({
       "\nAnalyze briefly and independently. Do not execute tools or claim external verification.",
   }];
   const prompts = subtasks.map(prompt);
-  const assigned = matchContexts(prompts, unique);
+  const assigned = matchContexts(prompts, available);
   if (!assigned) return { status: 413, error: "No distinct idle LFM3 worker assignment fits every perspective." };
   const assignedHosts = new Set(assigned.map(physicalHost));
-  const spares = unique.filter(node => !assignedHosts.has(physicalHost(node)));
+  const spares = available.filter(node => !assignedHosts.has(physicalHost(node)));
   const workerSignal = phaseSignal(timeoutPolicy.fanoutMs);
   const workers = await Promise.all(subtasks.map((task, index) =>
     completeFleetChat(prompt(task), { ...options, nodes: [assigned[index]], signal: workerSignal })));
@@ -147,7 +141,7 @@ export async function runParallelLFM3Research({
   // most one failed task; no repeated probes or surprise model loading.
   const failed = workers.flatMap((worker, index) =>
     worker.status === 200 ? [] : [index]);
-  if (failed.length > spares.length) {
+  if (failed.length > new Set(spares.map(physicalHost)).size) {
     return { status: 503, error: "A parallel LFM3 worker was unavailable; no partial synthesis was published." };
   }
   if (totalSignal.aborted) return stopped();
@@ -176,15 +170,22 @@ export async function runParallelLFM3Research({
       new Set(physicalRuntimes).size !== workers.length) {
     return { status: 503, error: "Distinct LFM3 workers were not available for independent research." };
   }
-  const synthesis = fitResearchSynthesis(question, workers, nodes);
-  if (!synthesis) {
+  if (!fitResearchSynthesis(question, workers, nodes)) {
     return { status: 413, error: "Question and independent LFM3 summaries exceed the available synthesis context." };
+  }
+  const synthesisNodes = nodes.filter(node => {
+    const snapshot = fleetRuntimeSnapshot(node);
+    return !snapshot.cooldown && snapshot.inFlight < snapshot.maxInflight;
+  });
+  const synthesis = fitResearchSynthesis(question, workers, synthesisNodes);
+  if (!synthesis) {
+    return { status: 503, error: "No idle LFM3 runtime fits the synthesis context." };
   }
   if (totalSignal.aborted) return stopped();
   const synthesisSignal = phaseSignal(timeoutPolicy.synthesisMs);
   const composed = await completeFleetChat([
     { role: "user", content: synthesis },
-  ], { ...options, nodes, signal: synthesisSignal });
+  ], { ...options, nodes: synthesisNodes, signal: synthesisSignal });
   if (synthesisSignal.aborted) return stopped();
   if (composed.status !== 200) {
     return { status: 503, error: "LFM3 synthesis unavailable." };
