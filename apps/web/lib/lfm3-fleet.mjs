@@ -26,6 +26,7 @@ export function endpointConfig(raw) {
   const parsed = JSON.parse(raw);
   if (!Array.isArray(parsed) || parsed.length > 16) throw new Error("invalid endpoint configuration");
   const names = new Set();
+  const origins = new Set();
   return parsed.map(row => {
     if (!row || typeof row !== "object" || Array.isArray(row)) throw new Error("invalid endpoint");
     const { name, baseUrl, model, adapter = "lmstudio", maxInflight = 1, credentialEnv = null, role = "interactive", disableThinking = false, maxOutputTokens = null } = row;
@@ -37,6 +38,8 @@ export function endpointConfig(raw) {
         url.hash || !["", "/"].includes(url.pathname) || !privateHost(url.hostname)) {
       throw new Error("endpoint must be on the private fleet");
     }
+    if (origins.has(url.origin)) throw new Error("duplicate endpoint origin");
+    origins.add(url.origin);
     if (typeof model !== "string" || model.length > 128 || !MODEL_ID.test(model)) throw new Error("endpoint must serve LFM3-1.7B");
     if (!["lmstudio", "openai"].includes(adapter) || !Number.isInteger(maxInflight) || maxInflight < 1 || maxInflight > 8) throw new Error("invalid endpoint adapter or limit");
     if (credentialEnv !== null && (typeof credentialEnv !== "string" || !/^KIPNERTER_LFM3_TOKEN_[A-Z0-9_]{1,48}$/.test(credentialEnv))) throw new Error("invalid per-node credential reference");
@@ -107,7 +110,8 @@ function registerSuccess(node, startedAt) {
   blockedUntil.delete(node.name);
 }
 function reserve(node) {
-  if ((active.get(node.name) || 0) >= node.maxInflight) return false;
+  if ((blockedUntil.get(node.name) || 0) > Date.now() ||
+      (active.get(node.name) || 0) >= node.maxInflight) return false;
   active.set(node.name, (active.get(node.name) || 0) + 1);
   return true;
 }
@@ -199,6 +203,7 @@ export async function completeFleetChat(messages, {
   nodes, fetchImpl = fetch, token = "", resolveToken = null, signal,
 } = {}) {
   const payload = validateMessages(messages);
+  if (signal?.aborted) return { status: 499, error: "Request cancelled." };
   if (!Array.isArray(nodes) || nodes.length === 0) return { status: 503, error: "LFM3 fleet is not configured." };
   // A newest prompt that does not fit *any* configured model context is a
   // client-size error, not evidence that GPUs are down. Do this before
@@ -210,6 +215,7 @@ export async function completeFleetChat(messages, {
   const itinerary = orderedNodes(nodes);
   const deadlineAt = Date.now() + 43000; // iOS client timeout is 55s; reserve room for network overhead.
   for (const [index, node] of itinerary.entries()) {
+    if (signal?.aborted) return { status: 499, error: "Request cancelled." };
     if (Date.now() >= deadlineAt - 1000) break;
     hadFree = true;
     if (!reserve(node)) continue;
@@ -217,10 +223,14 @@ export async function completeFleetChat(messages, {
       const startedAt = Date.now();
       const nodeToken = resolveToken ? resolveToken(node) : token;
       if (node.credentialEnv && !nodeToken) continue;
-      if (!await endpointReady(node, { fetchImpl, token: nodeToken, signal })) {
+      const ready = await endpointReady(node, { fetchImpl, token: nodeToken, signal });
+      if (signal?.aborted) return { status: 499, error: "Request cancelled." };
+      if (!ready) {
         registerFailure(node);
         continue;
       }
+      if (signal?.aborted) return { status: 499, error: "Request cancelled." };
+      if (Date.now() >= deadlineAt - 1000) break;
       const attemptsLeft = itinerary.length - index;
       const attemptMs = Math.min(42000, Math.max(1000,
         Math.floor((deadlineAt - Date.now() - 1000) / attemptsLeft)));
@@ -238,12 +248,24 @@ export async function completeFleetChat(messages, {
           ...(node.disableThinking === true ? { chat_template_kwargs: { enable_thinking: false } } : {}) }),
         cache: "no-store",
       });
+      if (signal?.aborted) return { status: 499, error: "Request cancelled." };
       if (!upstream.ok) {
         registerFailure(node);
         continue;
       }
       const response = await boundedJson(upstream, 128000);
-      const content = response?.choices?.[0]?.message?.content;
+      if (signal?.aborted) return { status: 499, error: "Request cancelled." };
+      const choice = response?.choices?.[0];
+      // Older adapters may omit model and finish_reason. Reject explicit
+      // contradictory identity or non-chat terminal reasons rather than
+      // crediting them as successful LFM3 responses.
+      if ((response.model !== undefined && response.model !== node.model) ||
+          (choice?.finish_reason !== undefined && !["stop", "length"].includes(choice.finish_reason)) ||
+          (Array.isArray(choice?.message?.tool_calls) && choice.message.tool_calls.length)) {
+        registerFailure(node);
+        continue;
+      }
+      const content = choice?.message?.content;
       if (typeof content !== "string" || !content.trim() || content.length > 16000) {
         registerFailure(node);
         continue;
