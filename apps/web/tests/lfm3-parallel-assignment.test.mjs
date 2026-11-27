@@ -52,7 +52,12 @@ test("busy synthesis-only GPU does not burn worker inference",async()=>{
  }});
  await started;
  try {
-  const {calls,fetchImpl}=transport();
+  const calls=[];
+  const fetchImpl=async(url,opts)=>{
+   calls.push({url,method:opts.method});
+   if(url.endsWith("/v1/models"))return Response.json({data:[{id:model}]});
+   return Response.json({model,choices:[{message:{content:"detailed perspective ".repeat(20)},finish_reason:"stop"}]});
+  };
   const r=await runParallelLFM3Research({authorized:true,question:"Q".repeat(401),subtasks:["short","other"],nodes:[gpu,a,b],fetchImpl});
   assert.equal(r.status,503);
   assert.equal(calls.length,0,"no worker tokens before an eligible synthesis context exists");
